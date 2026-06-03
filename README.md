@@ -1,4 +1,4 @@
-<h1 align="center">linearctl <code>·</code> lw</h1>
+<h1 align="center">linearctl</h1>
 
 <p align="center">
   <em>The Linear workflows you keep re-improvising by hand — as one fast, headless CLI.</em>
@@ -10,7 +10,7 @@
   <img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white">
   <img alt="@linear/sdk ^86" src="https://img.shields.io/badge/%40linear%2Fsdk-%5E86-5e6ad2?logo=linear&logoColor=white">
   <img alt="status pre-code M0" src="https://img.shields.io/badge/status-pre--code%20(M0)-orange">
-  <img alt="license proprietary" src="https://img.shields.io/badge/license-proprietary-lightgrey">
+  <img alt="license MIT" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
 ---
@@ -43,8 +43,8 @@ Linear's own limits). Positioning table: [`docs/spec.md` §3](./docs/spec.md).
 mise use -g "github:cerebral-work/linearctl"
 
 # prove auth, then go
-lw whoami
-lw digest --since 7d --team CER --json | jq
+linearctl whoami
+linearctl digest --since 7d --team CER --json | jq
 ```
 
 <details>
@@ -61,13 +61,13 @@ bun run build               # bun build --compile → dist/linearctl
 
 ## Authentication
 
-`lw` reads a Linear personal API key from `LINEAR_API_KEY`. It renders from
-1Password (`Cerebral · Linear API`, vault `cloud`) into `~/.config/zsh/secrets.env`
-at `chezmoi apply`, or inject it for one run:
+`linearctl` reads a Linear personal API key from `LINEAR_API_KEY`. Provision it
+however you like — render it from a secret manager into your shell env, or inject
+it for a single run:
 
 ```bash
-# stable item id (copy-paste-safe; the title's space + `·` is not)
-LINEAR_API_KEY="op://cloud/wk3h5dwd2rnaurejrovhac4gm4/<field>" op run -- lw whoami
+# inject the key from your secret manager for one run (1Password shown)
+LINEAR_API_KEY="op://<vault>/<item>/<field>" op run -- linearctl whoami
 ```
 
 The key is **never** stored, cached, logged, or printed, and `*.env` is git-ignored.
@@ -76,15 +76,15 @@ The key is **never** stored, cached, logged, or printed, and `*.env` is git-igno
 
 | Command | Status | Summary |
 |---|---|---|
-| `lw whoami [--json]` | ✅ implemented | Resolve the authenticated viewer — proves auth. |
-| `lw digest [--since 7d] [--team CER]` | 📝 specified | Recent issue activity grouped by status. |
-| `lw file <title> --team CER` | 📝 specified | Create an issue headless (batch-friendly). |
-| `lw triage --team CER` | 📝 specified | List issues needing triage. |
-| `lw milestone [--project ID]` | 📝 specified | Milestone burn-down. |
+| `linearctl whoami [--json]` | ✅ implemented | Resolve the authenticated viewer — proves auth. |
+| `linearctl digest [--since 7d] [--team CER]` | 📝 specified | Recent issue activity grouped by status. |
+| `linearctl file <title> --team CER` | 📝 specified | Create an issue headless (batch-friendly). |
+| `linearctl triage --team CER` | 📝 specified | List issues needing triage. |
+| `linearctl milestone [--project ID]` | 📝 specified | Milestone burn-down. |
 
 Stubbed commands exit `2` with a pointer to their spec section — never a silent
 no-op. More on the roadmap (`cycle`, `stale`, `xref`, `release-notes`, `standup`,
-and a native `lw watch` agent): [`docs/spec.md` §7, §10](./docs/spec.md).
+and a native `linearctl watch` agent): [`docs/spec.md` §7, §10](./docs/spec.md).
 
 ## How it ships
 
@@ -96,9 +96,9 @@ Diagram + caveats (binary size, the bun#11785 mitigation): [`docs/spec.md`
 ## Dogfooding
 
 `linearctl` is a Linear CLI, so it files its own backlog: the tickets in
-[`docs/spec.md` §12](./docs/spec.md) get created via `lw file` once that command
+[`docs/spec.md` §12](./docs/spec.md) get created via `linearctl file` once that command
 lands (M2). The project is its own first user.
 
 ---
 
-<p align="center"><sub>Built for the Cerebral workspace · proprietary · <code>chris@todie.io</code></sub></p>
+<p align="center"><sub>Built for the Cerebral workspace · MIT · <code>chris@todie.io</code></sub></p>

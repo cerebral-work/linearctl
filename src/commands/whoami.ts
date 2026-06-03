@@ -6,7 +6,7 @@ export interface WhoamiOptions {
 }
 
 /**
- * `lw whoami` — resolve the authenticated viewer.
+ * `linearctl whoami` — resolve the authenticated viewer.
  *
  * The thin vertical slice that proves the auth path end-to-end: a single
  * read-only `viewer` (+ `organization`) query. Run this first on any new

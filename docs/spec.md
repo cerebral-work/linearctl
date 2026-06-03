@@ -1,4 +1,4 @@
-# `linearctl` (`lw`) — Specification
+# `linearctl` — Specification
 
 **Status:** v0.1 scaffold, pre-code. `whoami` implemented **and verified against
 the live API**; `digest` / `file` / `triage` / `milestone` are
@@ -45,15 +45,15 @@ The in-session skills are **interactive** — a human/agent drives them one issu
 a time through the MCP server. `linearctl` is the **headless / batch / CI**
 complement to the same jobs, in a **different rate-limit domain** (§9).
 
-| `lw` command | Complements skill | Why a CLI is the gap-filler |
+| `linearctl` command | Complements skill | Why a CLI is the gap-filler |
 |---|---|---|
-| `lw digest` | *(none — net-new)* | The session-start "what have we been up to" summary, made reproducible and pipeable. |
-| `lw file` | `file-bug`, `linear-file-spec` | Interactive + MCP-bound today; `lw file` runs in scripts/CI/loops and **sidesteps the local MCP `save_issue` rate-guard**. |
-| `lw triage` | `issue-triage` | The skill reasons about one issue; `lw triage` is a fast headless *listing* to feed it, a standup, or a CI gate. |
-| `lw milestone` | *(none — net-new)* | Milestone burn-down for the release-readiness check. |
-| `lw whoami` | *(none)* | Auth smoke-test / the thin slice. |
+| `linearctl digest` | *(none — net-new)* | The session-start "what have we been up to" summary, made reproducible and pipeable. |
+| `linearctl file` | `file-bug`, `linear-file-spec` | Interactive + MCP-bound today; `linearctl file` runs in scripts/CI/loops and **sidesteps the local MCP `save_issue` rate-guard**. |
+| `linearctl triage` | `issue-triage` | The skill reasons about one issue; `linearctl triage` is a fast headless *listing* to feed it, a standup, or a CI gate. |
+| `linearctl milestone` | *(none — net-new)* | Milestone burn-down for the release-readiness check. |
+| `linearctl whoami` | *(none)* | Auth smoke-test / the thin slice. |
 
-Rule of thumb: **skills decide, `lw` enumerates and executes in bulk.**
+Rule of thumb: **skills decide, `linearctl` enumerates and executes in bulk.**
 
 ## 4. Architecture
 
@@ -66,7 +66,7 @@ flowchart LR
     CMD --> CLIENT["client.ts<br/>makeClient()"]
     CMD --> LIB["lib/*<br/>time · output"]
   end
-  U -->|"lw &lt;cmd&gt; [--json]"| CLI
+  U -->|"linearctl &lt;cmd&gt; [--json]"| CLI
   ENV["env: LINEAR_API_KEY<br/>(secrets.env / op run)"] -.->|injects| CLIENT
   CLIENT --> SDK["@linear/sdk"]
   SDK -->|GraphQL| API["Linear API"]
@@ -83,14 +83,13 @@ flowchart LR
 
 ## 5. Authentication & secrets
 
-`lw` reads a Linear **personal API key** from `LINEAR_API_KEY`. Operator-provisioned
-in 1Password (**`Cerebral · Linear API`**, vault `cloud`, item id
-`wk3h5dwd2rnaurejrovhac4gm4`), rendered into `~/.config/zsh/secrets.env` at
-`chezmoi apply`, or injected per-run:
+`linearctl` reads a Linear **personal API key** from `LINEAR_API_KEY`. Provision it
+from your secret manager (e.g. 1Password rendered into your shell at `chezmoi
+apply` time), or inject it per-run:
 
 ```bash
-# stable item id (copy-paste-safe; the title's space + `·` is not)
-LINEAR_API_KEY="op://cloud/wk3h5dwd2rnaurejrovhac4gm4/<field>" op run -- lw whoami
+# inject the key from your secret manager for one run (1Password shown)
+LINEAR_API_KEY="op://<vault>/<item>/<field>" op run -- linearctl whoami
 ```
 
 The key is **never** stored, cached, logged, or printed; `*.env` is git-ignored. A
@@ -98,40 +97,40 @@ native OAuth `actor=app` path is future work (§10).
 
 ## 6. Command reference
 
-### 6.1 `lw whoami` — *implemented + verified*
-`lw whoami [--json]`. Resolves `client.viewer` + `client.organization`. The thin
+### 6.1 `linearctl whoami` — *implemented + verified*
+`linearctl whoami [--json]`. Resolves `client.viewer` + `client.organization`. The thin
 slice proving auth end-to-end; run it first on any new machine.
 
-### 6.2 `lw digest` — *specified*
-`lw digest [--since 7d] [--team CER] [--json]`. Issues updated within the window,
+### 6.2 `linearctl digest` — *specified*
+`linearctl digest [--since 7d] [--team CER] [--json]`. Issues updated within the window,
 grouped by workflow-state type (completed / started / triage / backlog). Filter
 `{ updatedAt: { gte }, team?: { key: { eq } } }`, `orderBy: updatedAt`, paginate via
 `fetchNext()`.
 
-### 6.3 `lw file` — *specified*
-`lw file <title> --team CER [--project ID] [--desc <md|->] [--label name...] [--json]`.
+### 6.3 `linearctl file` — *specified*
+`linearctl file <title> --team CER [--project ID] [--desc <md|->] [--label name...] [--json]`.
 Create an issue headless; `--desc -` reads markdown from stdin. Resolve team by key,
 `createIssue({ teamId, title, description, projectId })`, print `identifier` + `url`.
 Batch-friendly with backoff (§9).
 
-### 6.4 `lw triage` — *specified*
-`lw triage --team CER [--json]`. Issues in the **Triage** state, **or** unassigned,
+### 6.4 `linearctl triage` — *specified*
+`linearctl triage --team CER [--json]`. Issues in the **Triage** state, **or** unassigned,
 **or** unestimated. Output flags *why* each surfaced.
 
-### 6.5 `lw milestone` — *specified*
-`lw milestone [--project ID] [--json]`. Per-milestone burn-down (done vs open,
+### 6.5 `linearctl milestone` — *specified*
+`linearctl milestone [--project ID] [--json]`. Per-milestone burn-down (done vs open,
 percent + bar) for a project. Backs the release-readiness check.
 
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
 
-1. **`lw cycle`** — current-cycle review: scope, completed, carry-over, scope-change.
-2. **`lw stale [--older 30d]`** — in-progress issues untouched for *N* days (rot detector).
-3. **`lw xref [--pr N]`** — PR ↔ issue cross-ref audit (complements `pr-triage`; ties to linear-release linkage).
-4. **`lw release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
-5. **`lw standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
-6. **`lw watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
+1. **`linearctl cycle`** — current-cycle review: scope, completed, carry-over, scope-change.
+2. **`linearctl stale [--older 30d]`** — in-progress issues untouched for *N* days (rot detector).
+3. **`linearctl xref [--pr N]`** — PR ↔ issue cross-ref audit (complements `pr-triage`; ties to linear-release linkage).
+4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
+5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
+6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
 
 ## 8. Distribution & release
 
@@ -170,12 +169,12 @@ flowchart LR
 
 ## 9. Rate-limit posture (honest)
 
-| Limiter | Whose | What `lw` does |
+| Limiter | Whose | What `linearctl` does |
 |---|---|---|
-| Local MCP `save_issue` guard ("5 in 10 min") | **Ours** (hypervisor) | **Sidestepped** — `lw` calls Linear directly, not via the local MCP. The batch-filing win. |
+| Local MCP `save_issue` guard ("5 in 10 min") | **Ours** (hypervisor) | **Sidestepped** — `linearctl` calls Linear directly, not via the local MCP. The batch-filing win. |
 | Linear API complexity / `RATELIMITED` | **Linear's** | **Still applies.** Back off, batch, prefer one filtered query over N round-trips. A higher ceiling, not magic. |
 
-Claiming `lw` "fixes rate limits" would be false. It moves batch work out from under
+Claiming `linearctl` "fixes rate limits" would be false. It moves batch work out from under
 a *self-imposed* guard; Linear's real limits remain and are respected.
 
 ## 10. Roadmap: CLI → native Linear agent
@@ -213,7 +212,7 @@ flowchart TD
   `agentSession.activities()`, narrowing on `content.__typename`.
 - **Attribution:** issues created by the agent use `createAsUser` + `displayIconUrl`.
 - **Roadmap-adjacent (not infra now):** **Pulse** (AI summaries) and **project
-  updates / status updates** are surfaces `lw` can read into `digest` / write from
+  updates / status updates** are surfaces `linearctl` can read into `digest` / write from
   `standup` later — captured here, not scaffolded.
 
 This is the structural upgrade the "surface insights from agents" ask points at.
@@ -223,13 +222,13 @@ Cross-cutting SDK practice: resolve relations in the query (the SDK lazy-fetches
 ## 11. Verification checklist (before any command is "working")
 
 - [ ] `bun run typecheck` clean · `bun test` green · `bun run build` compiles + runs.
-- [ ] `lw whoami` returns the expected viewer + org (✓ done).
+- [ ] `linearctl whoami` returns the expected viewer + org (✓ done).
 - [ ] Each read command verified against live data before M1 is declared done.
 - [ ] No secret in git history; `*.env` ignored (verified pre-first-commit).
 
 ## 12. First-pass tickets (the backlog)
 
-These live here for now. The project **files its own backlog via `lw file`** once
+These live here for now. The project **files its own backlog via `linearctl file`** once
 M2 lands — the dogfooding loop (don't hand-file them to Linear; that's outward-facing
 and would hit the rate-guard). Titles are Conventional-Commit-ready.
 
@@ -248,6 +247,6 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T11 | `feat(release-notes): notes from completed issues` | M3 | range → grouped by label |
 | T12 | `feat(standup): render digest (+ operator-gated Slack)` | M3 | never auto-post |
 | T13 | `feat(agent): OAuth actor=app scaffolding` | M4 | app registration, scopes, token storage |
-| T14 | `feat(agent): lw watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities |
+| T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities |
 | T15 | `chore(release): macOS notarization / codesign` | M2 | Gatekeeper quarantine fix for darwin assets |
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |

@@ -4,11 +4,11 @@ export interface MilestoneOptions {
 }
 
 /**
- * `lw milestone` — project / milestone progress (issues done vs open per
+ * `linearctl milestone` — project / milestone progress (issues done vs open per
  * milestone). Ties to the "knock out the existing milestones before the
- * release-please swap" tracking. See SPEC.md §6.5.
+ * release-please swap" tracking. See docs/spec.md §6.5.
  *
- * Intended implementation (see SPEC.md §6.5):
+ * Intended implementation (see docs/spec.md §6.5):
  *   const client = makeClient();
  *   const project = await resolveProject(client, opts.project);
  *   const milestones = await project.projectMilestones();
@@ -18,8 +18,8 @@ export interface MilestoneOptions {
  */
 export async function milestone(opts: MilestoneOptions): Promise<void> {
   console.error(
-    `lw milestone: specified, not yet implemented` +
-      `${opts.project ? ` (project=${opts.project})` : ""}. See SPEC.md §6.5.`,
+    `linearctl milestone: specified, not yet implemented` +
+      `${opts.project ? ` (project=${opts.project})` : ""}. See docs/spec.md §6.5.`,
   );
   process.exit(2);
 }

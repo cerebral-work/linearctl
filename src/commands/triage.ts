@@ -4,12 +4,12 @@ export interface TriageOptions {
 }
 
 /**
- * `lw triage` — surface issues needing attention: in the Triage state, or
+ * `linearctl triage` — surface issues needing attention: in the Triage state, or
  * unassigned / unestimated in the backlog. Complements the `issue-triage` skill
  * with a headless, scriptable listing (pipe to `jq`, feed a standup, gate CI).
- * See SPEC.md §6.4.
+ * See docs/spec.md §6.4.
  *
- * Intended implementation (see SPEC.md §6.4):
+ * Intended implementation (see docs/spec.md §6.4):
  *   const client = makeClient();
  *   const issues = await client.issues({
  *     filter: {
@@ -28,7 +28,7 @@ export interface TriageOptions {
  */
 export async function triage(opts: TriageOptions): Promise<void> {
   console.error(
-    `lw triage: specified, not yet implemented (team=${opts.team}). See SPEC.md §6.4.`,
+    `linearctl triage: specified, not yet implemented (team=${opts.team}). See docs/spec.md §6.4.`,
   );
   process.exit(2);
 }

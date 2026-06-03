@@ -3,10 +3,9 @@ import { LinearClient } from "@linear/sdk";
 /**
  * Build a {@link LinearClient} from the `LINEAR_API_KEY` environment variable.
  *
- * The key is operator-provisioned: it renders from 1Password
- * ("Cerebral · Linear API", vault `cloud`) into `~/.config/zsh/secrets.env` at
- * `chezmoi apply`, and is exported into the interactive shell. This CLI never
- * stores, prints, or persists the key — it only reads it from the process
+ * The key is read from the environment only — provision it however you like (a
+ * secret manager rendered into your shell, an untracked `.env`, etc.). This CLI
+ * never stores, prints, or persists the key; it only reads it from the process
  * environment at call time.
  */
 export function makeClient(): LinearClient {
