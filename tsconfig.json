@@ -1,19 +1,19 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "types": ["node"],
-    "outDir": "dist",
-    "rootDir": "src",
+    // Bun compiles + runs the code; tsc is the type-checker only (`bun run
+    // typecheck` → `tsc --noEmit`). No tsc emit, so no outDir/rootDir.
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "noEmit": true,
     "strict": true,
-    "noEmitOnError": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "sourceMap": true,
     "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

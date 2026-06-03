@@ -1,0 +1,72 @@
+name: Linear Release (prod)
+
+# PROD pipeline — tag-driven (released versions only). Mirrors the pattern used by
+# revenant / unsigned-paas. Syncs each tagged linearctl release to its Linear
+# "linearctl" release pipeline (Settings → Releases), scanning the commit range
+# for issue refs (CER-NNN / TOD-NNN) + PR numbers, then marking the release
+# complete.
+#
+# DORMANT-UNTIL-KEYED: no-op-safe skip when LINEAR_ACCESS_KEY is absent, so it
+# never red-X's a release before the operator provisions the pipeline + key.
+# Activate: create the `linearctl` pipeline in Linear → add repo secret
+# LINEAR_ACCESS_KEY (its access key; store in 1Password vault `cloud`).
+
+on:
+  push:
+    tags:
+      - "v[0-9]*" # release-please semver tags (no component prefix)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag/version to (re)sync, e.g. v0.2.0"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  linear-release:
+    name: Sync release to Linear
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for access key
+        id: gate
+        env:
+          LINEAR_ACCESS_KEY: ${{ secrets.LINEAR_ACCESS_KEY }}
+        run: |
+          if [ -z "${LINEAR_ACCESS_KEY:-}" ]; then
+            echo "::warning::LINEAR_ACCESS_KEY not set — skipping Linear release sync."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0 # full history — the CLI scans commits to the prior release
+
+      - name: Resolve version
+        id: ver
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          RAW: ${{ inputs.version || github.ref_name }}
+        run: echo "version=${RAW}" >> "$GITHUB_OUTPUT"
+
+      - uses: linear/linear-release-action@v0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          command: sync
+          version: ${{ steps.ver.outputs.version }}
+          name: ${{ steps.ver.outputs.version }}
+
+      # Tag-driven (release-please) → sync THEN complete, per the linear-release
+      # README's tag-driven guidance (sync alone leaves the release in-progress).
+      - uses: linear/linear-release-action@v0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          command: complete
+          version: ${{ steps.ver.outputs.version }}
