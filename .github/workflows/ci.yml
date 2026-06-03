@@ -32,9 +32,10 @@ jobs:
       - name: Test
         run: bun test
 
-      # Compile the real binary in CI so a graphql-realm regression (bun#11785,
-      # which @linear/sdk does not currently trip) is caught at PR time, never in
-      # a user's hands. See docs/decisions.md ADR-0001.
+      # Compile + run the real binary so a compile or module-load/bundling failure
+      # is caught at PR time (the @linear/sdk import executes at startup). The SDK
+      # client can't trip bun#11785 (no schema realm checks), so that is not what
+      # this guards — see docs/decisions.md ADR-0001.
       - name: Compile smoke
         run: |
           bun run build

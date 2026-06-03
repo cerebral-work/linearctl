@@ -37,10 +37,12 @@ identically to the operator's Go-built `ant`.
 - ⚠️ **Binary size ~60–92 MB per platform per release** (embeds the bun runtime) vs
   a ~7 MB Go binary. Accepted for a pinned-version internal CLI. `--bytecode` is
   **off** (it trades size up for startup; not worth it for a CLI).
-- ⚠️ bun#11785 is **open**. Mitigation: CI compiles the binary and runs it on every
-  PR, so a future regression surfaces at PR time. Workaround if it ever fires:
-  `overrides` pinning a single graphql (treat as a maybe — it did not reliably fix
-  the issue for others).
+- ⚠️ bun#11785 is **open**, but the SDK *client* cannot trip it (no schema realm
+  checks) — the residual risk is an unrelated bun bundler regression, not this bug.
+  Mitigation: CI compiles + module-load-smokes the binary every PR (the
+  `@linear/sdk` import runs at startup, so a bundling break fails the smoke).
+  Workaround if a bundler issue ever fires: `overrides` pinning a single graphql
+  (treat as a maybe — it did not reliably fix the issue for others).
 - ⚠️ macOS Mach-O binaries are Gatekeeper-quarantined unsigned → notarization /
   `xattr` is tracked (T15).
 

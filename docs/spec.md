@@ -59,13 +59,14 @@ Rule of thumb: **skills decide, `lw` enumerates and executes in bulk.**
 
 ```mermaid
 flowchart LR
-  U["operator · script · GitHub Action · cron"] -->|"lw &lt;cmd&gt; [--json]"| CLI
+  U["operator · script · GitHub Action · cron"]
   subgraph bin["linearctl — single bun binary"]
     CLI["index.ts<br/>commander dispatch"]
     CLI --> CMD["commands/*<br/>whoami · digest · file · triage · milestone"]
     CMD --> CLIENT["client.ts<br/>makeClient()"]
     CMD --> LIB["lib/*<br/>time · output"]
   end
+  U -->|"lw &lt;cmd&gt; [--json]"| CLI
   ENV["env: LINEAR_API_KEY<br/>(secrets.env / op run)"] -.->|injects| CLIENT
   CLIENT --> SDK["@linear/sdk"]
   SDK -->|GraphQL| API["Linear API"]
@@ -157,10 +158,13 @@ flowchart LR
 - **Caveat:** bun binaries embed the runtime → **~60–92 MB per platform per
   release** (vs a ~7 MB Go binary). Accepted for a pinned-version internal CLI; see
   ADR-0001. `--bytecode` is intentionally **off** (it grows the file).
-- **CI smoke** compiles the binary and runs `--version` on every PR, so a
-  graphql-realm regression ([bun#11785](https://github.com/oven-sh/bun/issues/11785),
-  which `@linear/sdk` does not currently trip) surfaces at PR time, never in a
-  user's hands.
+- **CI smoke** compiles the binary and runs it (`--version`) on every PR, so a
+  compile or **module-load / bundling** failure (the binary won't build or start —
+  the `@linear/sdk` import executes at module load) is caught at PR time. Note
+  [bun#11785](https://github.com/oven-sh/bun/issues/11785) is a graphql *server*
+  schema-realm fault; `@linear/sdk` is a client and never builds a schema, so it
+  cannot trip it — that is *why* bun is safe here (verified by the research
+  compile + run), not something the smoke can guard.
 - **macOS:** unsigned Mach-O binaries are Gatekeeper-quarantined on download —
   notarization / `xattr -d com.apple.quarantine` is a tracked ticket (T15).
 
@@ -185,14 +189,14 @@ flowchart TD
   M1 --> M2["M2 · write + batch<br/>file → dogfoods own backlog"]
   M2 --> M3["M3 · more workflows<br/>cycle · stale · xref · release-notes"]
   M3 --> M4["M4 · native agent"]
-  subgraph A["M4 · native agent — OAuth actor=app"]
+  subgraph A["M4 internals — OAuth actor=app"]
     direction LR
     WH["AgentSessionEvent webhook<br/>created · prompted"] --> LOOP["agent loop"]
     LOOP -->|"≤ 10s"| TH["emit thought"]
     LOOP --> ACT["action · response ·<br/>elicitation · error"]
     ACT --> CA["createAgentActivity"]
   end
-  M4 -.-> A
+  M4 --> WH
 ```
 
 **What a native agent implements** (from the Agent Interaction Guidelines):
