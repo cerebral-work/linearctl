@@ -100,7 +100,8 @@ key is operator-provisioned, in 1Password as **`Cerebral · Linear API`** (vault
 one-off run without the rendered file:
 
 ```bash
-LINEAR_API_KEY="op://cloud/Cerebral · Linear API/<field>" op run -- lw whoami
+# stable item ID (copy-paste-safe; the title's space + `·` is not)
+LINEAR_API_KEY="op://cloud/wk3h5dwd2rnaurejrovhac4gm4/<field>" op run -- lw whoami
 ```
 
 `lw` **never** stores, caches, logs, or prints the key — `client.ts` reads it at
