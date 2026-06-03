@@ -9,7 +9,7 @@ import { milestone } from "./commands/milestone.js";
 const program = new Command();
 
 program
-  .name("lw")
+  .name("linearctl")
   .description(
     "Headless CLI for frequently ad-hocced Linear workflows (built on @linear/sdk).",
   )

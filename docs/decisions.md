@@ -87,7 +87,7 @@ the maintainer's mise pins; no proto tasks, no moon.
 **Status:** Accepted (2026-06-03).
 
 **Decision.** No Dockerfile / image pipeline now. The CLI ships as a binary, not a
-container. A container becomes relevant only for **`lw watch`** (the long-running
+container. A container becomes relevant only for **`linearctl watch`** (the long-running
 webhook agent, M4), where it'll be scoped with its own runtime requirements
 (glibc base, etc.). Captured in the roadmap (spec §10), not scaffolded.
 
@@ -99,9 +99,9 @@ webhook agent, M4), where it'll be scoped with its own runtime requirements
 
 **Decision.** Issues are tracked in **Linear**, not GitHub Issues. The first-pass
 backlog lives in **`docs/spec.md` §12** until M2 lands; then the project **files its
-own tickets via `lw file`** — the dogfooding loop. The agent does **not** hand-file
+own tickets via `linearctl file`** — the dogfooding loop. The agent does **not** hand-file
 linearctl tickets into Linear (outward-facing + would hit the local MCP rate-guard,
-and the point is to exercise `lw file` itself).
+and the point is to exercise `linearctl file` itself).
 
 ---
 

@@ -1,6 +1,6 @@
 # linearctl — Claude Code project guide
 
-`linearctl` (`lw`) — a headless TypeScript CLI on **`@linear/sdk`** for recurring
+`linearctl` — a headless TypeScript CLI on **`@linear/sdk`** for recurring
 Linear workflows (digest, file, triage, milestone). Built + shipped with **bun**.
 Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
@@ -34,7 +34,7 @@ commit a key; `*.env` is git-ignored.
 - **PRs only** — no direct push to `main`. **Squash-merge** PRs (rebase-merge
   lands unsigned). release-please's own Release PRs: squash-merge too.
 - **Linear is the tracker**, not GitHub Issues. Tickets live in `docs/spec.md`'s
-  ticket table until the project files them itself via `lw file` (the dogfooding
+  ticket table until the project files them itself via `linearctl file` (the dogfooding
   loop) — do **not** hand-file linearctl tickets into Linear.
 
 ## Layout
