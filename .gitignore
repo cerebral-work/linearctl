@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# never let a rendered secret ride along
+.env
+*.env
+.env.*
+secrets.env
+
+*.log
+.DS_Store
