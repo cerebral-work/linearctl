@@ -1,0 +1,52 @@
+name: Linear Release (dev)
+
+# DEV pipeline — continuous (every main build is a dev release). Mirrors the
+# dormant dev pipelines on revenant / unsigned-paas. Syncs main-branch HEAD to a
+# Linear "linearctl-dev" continuous pipeline as `dev-<shortsha>`, so in-flight
+# issue linkage is visible before a tagged release.
+#
+# DORMANT-UNTIL-KEYED: no-op-safe skip when LINEAR_ACCESS_KEY_DEV is absent.
+# Activate: create the `linearctl-dev` continuous pipeline in Linear → add repo
+# secret LINEAR_ACCESS_KEY_DEV.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linear-release-dev:
+    name: Sync dev build to Linear
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for dev access key
+        id: gate
+        env:
+          LINEAR_ACCESS_KEY_DEV: ${{ secrets.LINEAR_ACCESS_KEY_DEV }}
+        run: |
+          if [ -z "${LINEAR_ACCESS_KEY_DEV:-}" ]; then
+            echo "::warning::LINEAR_ACCESS_KEY_DEV not set — skipping dev sync."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Resolve dev version
+        id: ver
+        if: steps.gate.outputs.enabled == 'true'
+        run: echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: linear/linear-release-action@v0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY_DEV }}
+          command: sync
+          version: ${{ steps.ver.outputs.version }}
+          name: ${{ steps.ver.outputs.version }}

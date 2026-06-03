@@ -1,0 +1,8 @@
+# Toolchain pins for contributors (proto reads this; mirrors the maintainer's
+# mise pins so local ↔ CI match). Run `proto use` to install.
+#
+# bun is the build + test + runtime toolchain. node is pinned only so editor /
+# LSP integrations that expect a Node resolve to the same major; the project
+# itself does not need a Node runtime.
+bun = "1.3.14"
+node = "24.16.0"
