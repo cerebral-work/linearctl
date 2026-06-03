@@ -4,12 +4,14 @@
 Linear workflows (digest, file, triage, milestone). Built + shipped with **bun**.
 Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
-## Status: pre-code (M0)
+## Status: M0 scaffold + early M2 dogfood
 
-`whoami` is implemented and verified against the live API. `digest` / `file` /
-`triage` / `milestone` are **specified-but-stubbed** — they exit `2` with a
-`docs/spec.md` section reference, never a silent no-op. Do **not** implement a
-command body until its milestone is scheduled (see the roadmap). Keep stubs honest.
+`whoami` and `project` (create / list) are implemented and verified against the
+live API. `digest` / `file` / `triage` / `milestone` are **specified-but-stubbed**
+— they exit `2` with a `docs/spec.md` section reference, never a silent no-op. Do
+**not** implement a command body until its milestone is scheduled (see the
+roadmap). Keep stubs honest. (`project` landed ahead of M2 to create the
+linearctl Project container; `file` fills it with the §12 backlog next.)
 
 ## Toolchain (bun — see docs/decisions.md ADR-0001)
 

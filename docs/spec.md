@@ -121,6 +121,15 @@ Batch-friendly with backoff (§9).
 `linearctl milestone [--project ID] [--json]`. Per-milestone burn-down (done vs open,
 percent + bar) for a project. Backs the release-readiness check.
 
+### 6.6 `linearctl project` — *implemented + verified (create, list)*
+`linearctl project create <name> --team CER [--desc <md|->] [--json]` and
+`linearctl project list [--team CER] [--json]`. The Project container that `file`'s
+issues attach to — the first half of the M2 dogfood loop (create the project, then
+`file` its backlog into it). `create` resolves the team by key
+(`teams({ filter: { key: { eq } } })`), calls `createProject({ name, teamIds, description })`,
+and prints `name` + `url` + `id`. `list` shows projects (optionally team-scoped) as a
+table of name / state / progress / id. `--desc -` reads markdown from stdin.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
@@ -250,3 +259,4 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities |
 | T15 | `chore(release): macOS notarization / codesign` | M2 | Gatekeeper quarantine fix for darwin assets |
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
+| T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
