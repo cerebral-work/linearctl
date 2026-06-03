@@ -5,11 +5,11 @@ export interface DigestOptions {
 }
 
 /**
- * `lw digest` — "what have we been up to": issues created / updated / completed
+ * `linearctl digest` — "what have we been up to": issues created / updated / completed
  * in a recent window, grouped by workflow-state type. The scriptable form of the
  * session-start Linear summary.
  *
- * Intended implementation (see SPEC.md §6.2):
+ * Intended implementation (see docs/spec.md §6.2):
  *   const client = makeClient();
  *   const since = sinceToDate(opts.since);
  *   let page = await client.issues({
@@ -29,9 +29,9 @@ export interface DigestOptions {
  */
 export async function digest(opts: DigestOptions): Promise<void> {
   console.error(
-    `lw digest: specified, not yet implemented ` +
+    `linearctl digest: specified, not yet implemented ` +
       `(window=${opts.since}${opts.team ? `, team=${opts.team}` : ""}). ` +
-      `See SPEC.md §6.2.`,
+      `See docs/spec.md §6.2.`,
   );
   process.exit(2);
 }

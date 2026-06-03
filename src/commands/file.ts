@@ -7,14 +7,14 @@ export interface FileOptions {
 }
 
 /**
- * `lw file <title>` — create a Linear issue from the CLI (headless / batch).
+ * `linearctl file <title>` — create a Linear issue from the CLI (headless / batch).
  *
  * Complements the `file-bug` / `linear-file-spec` skills for non-interactive use
  * (CI, scripts, loops). Bypasses the LOCAL MCP `save_issue` rate-guard, but is
  * still subject to Linear's own `RATELIMITED` complexity limits — batch with
- * backoff. See SPEC.md §6.3.
+ * backoff. See docs/spec.md §6.3.
  *
- * Intended implementation (see SPEC.md §6.3):
+ * Intended implementation (see docs/spec.md §6.3):
  *   const client = makeClient();
  *   const team = await resolveTeamByKey(client, opts.team);   // teams({ filter: { key: { eq } } })
  *   const desc = opts.desc === "-" ? await readStdin() : opts.desc;
@@ -25,8 +25,8 @@ export interface FileOptions {
  */
 export async function file(title: string, opts: FileOptions): Promise<void> {
   console.error(
-    `lw file: specified, not yet implemented ` +
-      `(title=${JSON.stringify(title)}, team=${opts.team}). See SPEC.md §6.3.`,
+    `linearctl file: specified, not yet implemented ` +
+      `(title=${JSON.stringify(title)}, team=${opts.team}). See docs/spec.md §6.3.`,
   );
   process.exit(2);
 }
