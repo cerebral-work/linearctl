@@ -107,11 +107,12 @@ grouped by workflow-state type (completed / started / triage / backlog). Filter
 `{ updatedAt: { gte }, team?: { key: { eq } } }`, `orderBy: updatedAt`, paginate via
 `fetchNext()`.
 
-### 6.3 `linearctl file` — *specified*
+### 6.3 `linearctl file` — *implemented + verified*
 `linearctl file <title> --team CER [--project ID] [--desc <md|->] [--label name...] [--json]`.
 Create an issue headless; `--desc -` reads markdown from stdin. Resolve team by key,
-`createIssue({ teamId, title, description, projectId })`, print `identifier` + `url`.
-Batch-friendly with backoff (§9).
+resolve `--label` names → IDs (case-insensitive, `pickLabelIds` errors on any
+unmatched), `createIssue({ teamId, title, description, projectId, labelIds })`, print
+`identifier` + `url`. Batch-friendly with backoff (§9; batch mode is T6, not yet built).
 
 ### 6.4 `linearctl triage` — *specified*
 `linearctl triage --team CER [--json]`. Issues in the **Triage** state, **or** unassigned,

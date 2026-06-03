@@ -6,12 +6,12 @@ Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
 ## Status: M0 scaffold + early M2 dogfood
 
-`whoami` and `project` (create / list) are implemented and verified against the
-live API. `digest` / `file` / `triage` / `milestone` are **specified-but-stubbed**
+`whoami`, `project` (create / list), and `file` are implemented and verified
+against the live API. `digest` / `triage` / `milestone` are **specified-but-stubbed**
 — they exit `2` with a `docs/spec.md` section reference, never a silent no-op. Do
 **not** implement a command body until its milestone is scheduled (see the
-roadmap). Keep stubs honest. (`project` landed ahead of M2 to create the
-linearctl Project container; `file` fills it with the §12 backlog next.)
+roadmap). Keep stubs honest. (`project` + `file` landed ahead of M2 for the
+dogfood loop; filing the §12 backlog into the linearctl Project via `file` is next.)
 
 ## Toolchain (bun — see docs/decisions.md ADR-0001)
 
