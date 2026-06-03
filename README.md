@@ -1,34 +1,63 @@
-# linear-workflows (`lw`)
+<h1 align="center">linearctl <code>·</code> lw</h1>
 
-A small, headless CLI for the Linear workflows we keep re-improvising by hand —
-**digest** ("what have we been up to"), **file** (headless issue creation),
-**triage**, and **milestone** burn-down — built on the official
-[`@linear/sdk`](https://www.npmjs.com/package/@linear/sdk).
+<p align="center">
+  <em>The Linear workflows you keep re-improvising by hand — as one fast, headless CLI.</em>
+</p>
 
-> **Status:** v0.1 scaffold. `whoami` is implemented; the rest are
-> **specified-but-stubbed** (the CLI surface is real — `--help` works — the bodies
-> are pending). See [`SPEC.md`](./SPEC.md) for the full design, the proposed
-> additional workflows, and the agent/SDK insights driving the roadmap.
->
-> **Auth is wired but unverified** — run `lw whoami` with a real key to confirm it
-> before trusting anything. Nothing here has been run against the live API yet.
+<p align="center">
+  <img alt="built with bun" src="https://img.shields.io/badge/built%20with-bun-000000?logo=bun&logoColor=white">
+  <img alt="bun 1.3.14" src="https://img.shields.io/badge/bun-1.3.14-fbf0df?logo=bun&logoColor=black">
+  <img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white">
+  <img alt="@linear/sdk ^86" src="https://img.shields.io/badge/%40linear%2Fsdk-%5E86-5e6ad2?logo=linear&logoColor=white">
+  <img alt="status pre-code M0" src="https://img.shields.io/badge/status-pre--code%20(M0)-orange">
+  <img alt="license proprietary" src="https://img.shields.io/badge/license-proprietary-lightgrey">
+</p>
+
+---
+
+`digest` what you've been up to · `file` issues headless · `triage` the backlog ·
+track `milestone` burn-down — built on the official
+[`@linear/sdk`](https://www.npmjs.com/package/@linear/sdk), shipped as a single
+attested binary.
+
+> [!NOTE]
+> **Status: pre-code (M0).** `whoami` is implemented and verified against the live
+> API. `digest` / `file` / `triage` / `milestone` are **specified-but-stubbed** —
+> the CLI surface is real (`--help`, `--json`, required-options all work); the
+> bodies land milestone by milestone. The full design, roadmap, mermaid diagrams,
+> and ticket backlog live in [`docs/spec.md`](./docs/spec.md); the tooling
+> rationale in [`docs/decisions.md`](./docs/decisions.md).
 
 ## Why a CLI when there's an MCP server + skills?
 
-The in-session skills (`file-bug`, `issue-triage`, `linear-file-spec`, …) are
-**interactive**. `lw` is the **headless / batch / CI** complement — same jobs, but
-runnable from cron, a git hook, or a `| jq` pipeline, and it **sidesteps the local
-MCP `save_issue` rate-guard** for batch filing (while still respecting Linear's own
-limits). Full positioning table in [`SPEC.md` §3](./SPEC.md).
+The in-session skills (`file-bug`, `issue-triage`, `linear-file-spec`, `pr-triage`)
+are **interactive**. `linearctl` is the **headless / batch / CI** complement — same
+jobs, runnable from cron, a git hook, or a `| jq` pipeline — and it **sidesteps the
+local MCP `save_issue` rate-guard** for batch filing (while still respecting
+Linear's own limits). Positioning table: [`docs/spec.md` §3](./docs/spec.md).
 
-## Install / develop
+## Quickstart
 
 ```bash
-npm install              # deps (Node ≥ 24)
-npm run dev -- --help    # run from source via tsx (no build step)
-npm run build            # emit dist/ + the `lw` bin
-npm link                 # optional: put `lw` on PATH
+# install the released binary via mise (no Node runtime needed)
+mise use -g "github:cerebral-work/linearctl"
+
+# prove auth, then go
+lw whoami
+lw digest --since 7d --team CER --json | jq
 ```
+
+<details>
+<summary><strong>Develop from source</strong></summary>
+
+```bash
+bun install                 # bun ≥ 1.3 (see .prototools)
+bun run dev -- whoami       # run from source
+bun run typecheck           # tsc --noEmit
+bun test                    # unit tests
+bun run build               # bun build --compile → dist/linearctl
+```
+</details>
 
 ## Authentication
 
@@ -37,13 +66,11 @@ npm link                 # optional: put `lw` on PATH
 at `chezmoi apply`, or inject it for one run:
 
 ```bash
-# resolves the "Cerebral · Linear API" item (vault `cloud`) by its stable ID —
-# the UUID is copy-paste-safe; the title contains a space + `·` that is not.
+# stable item id (copy-paste-safe; the title's space + `·` is not)
 LINEAR_API_KEY="op://cloud/wk3h5dwd2rnaurejrovhac4gm4/<field>" op run -- lw whoami
 ```
 
-The key is **never** stored, cached, logged, or printed by this tool, and `*.env`
-is git-ignored.
+The key is **never** stored, cached, logged, or printed, and `*.env` is git-ignored.
 
 ## Commands
 
@@ -55,14 +82,23 @@ is git-ignored.
 | `lw triage --team CER` | 📝 specified | List issues needing triage. |
 | `lw milestone [--project ID]` | 📝 specified | Milestone burn-down. |
 
-Stubbed commands exit `2` with a pointer to their SPEC section — never a silent
-no-op.
+Stubbed commands exit `2` with a pointer to their spec section — never a silent
+no-op. More on the roadmap (`cycle`, `stale`, `xref`, `release-notes`, `standup`,
+and a native `lw watch` agent): [`docs/spec.md` §7, §10](./docs/spec.md).
 
-## First run
+## How it ships
 
-```bash
-npm run build && lw whoami      # or: npm run whoami
-```
+Conventional Commits → **release-please** Release PR → tag → **bun cross-compiles**
+4 targets → **SLSA-attested** tarballs → `mise` install verifies the attestation.
+Diagram + caveats (binary size, the bun#11785 mitigation): [`docs/spec.md`
+§8](./docs/spec.md).
 
-If you see your name + org, auth works and the M1 read commands can be
-implemented + verified. See [`SPEC.md` §10](./SPEC.md) for the roadmap.
+## Dogfooding
+
+`linearctl` is a Linear CLI, so it files its own backlog: the tickets in
+[`docs/spec.md` §12](./docs/spec.md) get created via `lw file` once that command
+lands (M2). The project is its own first user.
+
+---
+
+<p align="center"><sub>Built for the Cerebral workspace · proprietary · <code>chris@todie.io</code></sub></p>

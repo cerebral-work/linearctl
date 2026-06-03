@@ -2,6 +2,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# bun build / release artifacts
+/linearctl
+*.tar.gz
+*.sha256
+
 # never let a rendered secret ride along
 .env
 *.env

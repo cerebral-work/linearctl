@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.ts   text
+*.json text
+*.md   text
+*.yml  text
+
+# generated — collapse in diffs/reviews
+bun.lock linguist-generated=true -diff

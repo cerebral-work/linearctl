@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck · test · compile-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2 # pin ≥ v2.2.0 — Node 20 left the runners 2026-06-02
+        with:
+          bun-version: 1.3.14
+
+      - name: Install (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      # Compile the real binary in CI so a graphql-realm regression (bun#11785,
+      # which @linear/sdk does not currently trip) is caught at PR time, never in
+      # a user's hands. See docs/decisions.md ADR-0001.
+      - name: Compile smoke
+        run: |
+          bun run build
+          ./dist/linearctl --version
