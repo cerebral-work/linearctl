@@ -37,7 +37,9 @@ npm link                 # optional: put `lw` on PATH
 at `chezmoi apply`, or inject it for one run:
 
 ```bash
-LINEAR_API_KEY="op://cloud/Cerebral · Linear API/<field>" op run -- lw whoami
+# resolves the "Cerebral · Linear API" item (vault `cloud`) by its stable ID —
+# the UUID is copy-paste-safe; the title contains a space + `·` that is not.
+LINEAR_API_KEY="op://cloud/wk3h5dwd2rnaurejrovhac4gm4/<field>" op run -- lw whoami
 ```
 
 The key is **never** stored, cached, logged, or printed by this tool, and `*.env`
