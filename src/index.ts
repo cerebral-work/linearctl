@@ -5,6 +5,7 @@ import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
 import { milestone } from "./commands/milestone.js";
+import { projectCreate, projectList } from "./commands/project.js";
 
 const program = new Command();
 
@@ -53,6 +54,26 @@ program
   .option("--project <id>", "restrict to a project")
   .option("--json", "emit JSON")
   .action((opts) => milestone(opts));
+
+const projectCmd = program
+  .command("project")
+  .description("Create and list Linear projects (the dogfood-loop container for `file`).");
+
+projectCmd
+  .command("create")
+  .description("Create a Linear project.")
+  .argument("<name>", "project name")
+  .requiredOption("--team <key>", "team key (e.g. CER)")
+  .option("--desc <markdown>", "short description (markdown; '-' reads stdin)")
+  .option("--json", "emit JSON")
+  .action((name, opts) => projectCreate(name, opts));
+
+projectCmd
+  .command("list")
+  .description("List projects (optionally restricted to a team).")
+  .option("--team <key>", "restrict to a team key (e.g. CER)")
+  .option("--json", "emit JSON")
+  .action((opts) => projectList(opts));
 
 program.parseAsync().catch((err: unknown) => {
   console.error(err instanceof Error ? `error: ${err.message}` : err);
