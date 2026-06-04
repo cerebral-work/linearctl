@@ -3,9 +3,10 @@ import type { LinearClient, Team } from "@linear/sdk";
 /**
  * Resolve a {@link Team} by its key (e.g. `"CER"`), case-insensitively.
  *
- * Shared by the commands that take `--team <key>` (`project`, and `file` /
- * `triage` when implemented). Throws a clear error rather than returning
- * `undefined` so callers can let it bubble to the top-level handler.
+ * Domain logic shared by everything that takes a `--team <key>` (issues,
+ * projects). Throws a clear error rather than returning `undefined` so callers
+ * can let it bubble to the top-level handler. Moved here from `lib/resolve.ts`
+ * so the CLI and the MCP server share one team resolver.
  */
 export async function resolveTeamByKey(
   client: LinearClient,
