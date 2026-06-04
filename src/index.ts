@@ -6,6 +6,7 @@ import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
 import { milestone } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
+import { update, close } from "./commands/update.js";
 import { serve } from "./mcp/serve.js";
 
 const program = new Command();
@@ -75,6 +76,25 @@ projectCmd
   .option("--team <key>", "restrict to a team key (e.g. CER)")
   .option("--json", "emit JSON")
   .action((opts) => projectList(opts));
+
+program
+  .command("update")
+  .description("Update an issue: state / assignee / labels / project / priority.")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .option("--state <name>", "workflow state name (e.g. 'In Progress')")
+  .option("--assignee <who>", "assignee: 'me', an email, a display name, or a user id")
+  .option("--label <name...>", "label(s) to set (replaces existing)")
+  .option("--project <id>", "move to a project")
+  .option("--priority <0-4>", "priority: 0=None 1=Urgent 2=High 3=Medium 4=Low")
+  .option("--json", "emit JSON")
+  .action((id, opts) => update(id, opts));
+
+program
+  .command("close")
+  .description("Close an issue (move it to the team's completed state).")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => close(id, opts));
 
 const mcpCmd = program
   .command("mcp")

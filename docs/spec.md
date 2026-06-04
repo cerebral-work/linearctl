@@ -140,6 +140,15 @@ v1 tools call the same `src/core/*` fns as the CLI: `whoami` / `project_list`
 Speaks JSON-RPC on stdout (logs to stderr only); `LINEAR_API_KEY` validated at
 startup. Tool errors are returned as `isError` results, never crashes.
 
+### 6.8 `linearctl update` / `close` — *implemented + verified*
+`linearctl update <id> [--state <name>] [--assignee me|email|name|id] [--label name...]
+[--project ID] [--priority 0-4] [--json]` and `linearctl close <id> [--json]`. Mutate
+an issue: state / assignee / labels (replace) / project / priority, resolved by name
+against the issue's own team; `<id>` accepts a UUID **or** an identifier (`CER-123`).
+`close` moves the issue to the team's completed state (prefers one named "Done").
+Backs the MCP `issue_update` / `issue_close` tools — the headless write loop
+(file → update → close). No delete/archive (`docs/plugin-spec.md` D6).
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
