@@ -9,7 +9,7 @@
   <img alt="bun 1.3.14" src="https://img.shields.io/badge/bun-1.3.14-fbf0df?logo=bun&logoColor=black">
   <img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white">
   <img alt="@linear/sdk ^86" src="https://img.shields.io/badge/%40linear%2Fsdk-%5E86-5e6ad2?logo=linear&logoColor=white">
-  <img alt="status pre-code M0" src="https://img.shields.io/badge/status-pre--code%20(M0)-orange">
+  <img alt="status commands complete" src="https://img.shields.io/badge/status-commands%20complete-brightgreen">
   <img alt="license MIT" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
@@ -21,12 +21,13 @@ track `milestone` burn-down — built on the official
 attested binary.
 
 > [!NOTE]
-> **Status: pre-code (M0).** `whoami` is implemented and verified against the live
-> API. `digest` / `file` / `triage` / `milestone` are **specified-but-stubbed** —
-> the CLI surface is real (`--help`, `--json`, required-options all work); the
-> bodies land milestone by milestone. The full design, roadmap, mermaid diagrams,
-> and ticket backlog live in [`docs/spec.md`](./docs/spec.md); the tooling
-> rationale in [`docs/decisions.md`](./docs/decisions.md).
+> **Every command in the spec is implemented and verified against the live API** —
+> `whoami`, `project`, `file`, `update` / `close`, `digest`, `triage`, `stale`,
+> `xref`, `milestone`, plus `mcp serve` (a Model Context Protocol server that
+> exposes the same capabilities to Claude Desktop / Claude Code). The full design,
+> roadmap, mermaid diagrams, and ticket backlog live in
+> [`docs/spec.md`](./docs/spec.md); the tooling rationale in
+> [`docs/decisions.md`](./docs/decisions.md).
 
 ## Why a CLI when there's an MCP server + skills?
 
@@ -74,17 +75,53 @@ The key is **never** stored, cached, logged, or printed, and `*.env` is git-igno
 
 ## Commands
 
-| Command | Status | Summary |
-|---|---|---|
-| `linearctl whoami [--json]` | ✅ implemented | Resolve the authenticated viewer — proves auth. |
-| `linearctl digest [--since 7d] [--team CER]` | 📝 specified | Recent issue activity grouped by status. |
-| `linearctl file <title> --team CER` | 📝 specified | Create an issue headless (batch-friendly). |
-| `linearctl triage --team CER` | 📝 specified | List issues needing triage. |
-| `linearctl milestone [--project ID]` | 📝 specified | Milestone burn-down. |
+All commands are implemented and honor `--json`; mutating verbs are
+safe-by-default.
 
-Stubbed commands exit `2` with a pointer to their spec section — never a silent
-no-op. More on the roadmap (`cycle`, `stale`, `xref`, `release-notes`, `standup`,
-and a native `linearctl watch` agent): [`docs/spec.md` §7, §10](./docs/spec.md).
+| Command | Summary |
+|---|---|
+| `linearctl whoami` | Resolve the authenticated viewer — proves auth. |
+| `linearctl digest [--since 7d] [--team CER...]` | Recent activity grouped by workflow state. |
+| `linearctl file <title> --team CER [--project ID] [--label ...]` | Create an issue headless (batch-friendly). |
+| `linearctl update <id> [--state] [--assignee] [--label] [--priority]` | Mutate an issue's fields. |
+| `linearctl close <id>` | Move an issue to its team's completed state. |
+| `linearctl triage [--team CER...]` | Surface issues needing triage, with *why*-reasons. |
+| `linearctl stale [--older-than 30d] [--label N [--apply]]` | Sweep stale issues; report-only unless `--apply`. |
+| `linearctl xref [--repo owner/repo]` | Reconcile GitHub PRs ↔ Linear tickets (read-only). |
+| `linearctl milestone [--project ID]` | Per-milestone burn-down (done vs total + bar). |
+| `linearctl project create\|list` | Create / list Linear projects. |
+| `linearctl mcp serve` | Stdio MCP server (10 tools) for Claude — see below. |
+
+Safe-by-default: `stale --label` is a dry-run unless `--apply`; `xref` is
+read-only; there are no delete/archive operations. Full reference:
+[`docs/spec.md` §6](./docs/spec.md). Roadmap (`cycle`, `release-notes`, `standup`,
+native `linearctl watch` agent): [`docs/spec.md` §7, §10](./docs/spec.md).
+
+## Use it in Claude (plugin + Desktop extension)
+
+`linearctl mcp serve` exposes the same capabilities as MCP tools — 6 read
+(`whoami`, `project_list`, `digest`, `triage`, `milestone`, `stale`) + 4 write
+(`file_issue`, `project_create`, `issue_update`, `issue_close`). Both surfaces
+launch the installed `linearctl` binary, so install the CLI first (Quickstart).
+
+**Claude Code** — add the marketplace, then install the plugin (it reads
+`LINEAR_API_KEY` from your environment):
+
+```bash
+claude plugin marketplace add cerebral-work/linearctl
+claude plugin install linearctl@cerebral-work
+```
+
+**Claude Desktop** — pack the `.mcpb` extension and open it in the app:
+
+```bash
+npx @anthropic-ai/mcpb pack mcpb/ dist/linearctl.mcpb
+# Claude Desktop → Settings → Extensions → install dist/linearctl.mcpb
+```
+
+Desktop prompts once for your Linear API key (a masked field) and stores it in
+the OS keychain — never in a file. Details: [`mcpb/README.md`](./mcpb/README.md)
+and [`docs/plugin-spec.md`](./docs/plugin-spec.md).
 
 ## How it ships
 
@@ -96,8 +133,9 @@ Diagram + caveats (binary size, the bun#11785 mitigation): [`docs/spec.md`
 ## Dogfooding
 
 `linearctl` is a Linear CLI, so it files its own backlog: the tickets in
-[`docs/spec.md` §12](./docs/spec.md) get created via `linearctl file` once that command
-lands (M2). The project is its own first user.
+[`docs/spec.md` §12](./docs/spec.md) were created in Linear via `linearctl file`
+itself (team CER), and are groomed with `triage` / `stale` / `xref`. The project
+is its own first user.
 
 ---
 
