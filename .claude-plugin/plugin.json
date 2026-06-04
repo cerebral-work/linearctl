@@ -1,0 +1,17 @@
+{
+  "name": "linearctl",
+  "description": "Linear workflows in Claude — read context and file / update / close issues, via the linearctl MCP server.",
+  "version": "0.1.0",
+  "author": { "name": "Cerebral Work Institute" },
+  "homepage": "https://github.com/cerebral-work/linearctl",
+  "repository": "https://github.com/cerebral-work/linearctl",
+  "license": "MIT",
+  "keywords": ["linear", "mcp", "automation", "issues"],
+  "mcpServers": {
+    "linearctl": {
+      "command": "linearctl",
+      "args": ["mcp", "serve"],
+      "env": { "LINEAR_API_KEY": "${LINEAR_API_KEY}" }
+    }
+  }
+}
