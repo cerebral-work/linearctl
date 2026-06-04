@@ -4,16 +4,14 @@
 Linear workflows (digest, file, triage, milestone). Built + shipped with **bun**.
 Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
-## Status: M0 scaffold + early M2 dogfood
+## Status: command surface complete + plugin/MCP shipped
 
 `whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
-`triage`, `stale`, `xref`, and `mcp serve` (stdio MCP server, v1 tools incl.
-`issue_update` / `issue_close`) are implemented and verified against the live
-API. `milestone` is the last **specified-but-stubbed** command
-— they exit `2` with a `docs/spec.md` section reference, never a silent no-op. Do
-**not** implement a command body until its milestone is scheduled (see the
-roadmap). Keep stubs honest. (`project` + `file` landed ahead of M2 for the
-dogfood loop; filing the §12 backlog into the linearctl Project via `file` is next.)
+`triage`, `stale`, `xref`, `milestone`, and `mcp serve` (stdio MCP server, v1
+tools incl. `issue_update` / `issue_close`) are implemented and verified against
+the live API — **every command in §6 is implemented; no stubs remain.** The
+linearctl Project + backlog are dogfood-filed in Linear (team CER). If you add a
+*new* command, keep it honest: ship a verified body, not a silent no-op.
 
 ## Toolchain (bun — see docs/decisions.md ADR-0001)
 
