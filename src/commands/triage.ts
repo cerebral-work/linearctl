@@ -1,34 +1,35 @@
+import { makeClient } from "../client.js";
+import { triage as triageCore } from "../core/grooming.js";
+import { printJson, printTable } from "../lib/output.js";
+
 export interface TriageOptions {
-  team: string;
+  team?: string[];
   json?: boolean;
 }
 
 /**
- * `linearctl triage` — surface issues needing attention: in the Triage state, or
- * unassigned / unestimated in the backlog. Complements the `issue-triage` skill
- * with a headless, scriptable listing (pipe to `jq`, feed a standup, gate CI).
- * See docs/spec.md §6.4.
- *
- * Intended implementation (see docs/spec.md §6.4):
- *   const client = makeClient();
- *   const issues = await client.issues({
- *     filter: {
- *       team: { key: { eq: opts.team } },
- *       or: [
- *         { state: { type: { eq: "triage" } } },
- *         { assignee: { null: true } },
- *         { estimate: { null: true } },
- *       ],
- *     },
- *     first: 100,
- *   });
- *   // render identifier / title / state / assignee / why-flagged
- *
- * Status: specified, not yet implemented.
+ * `linearctl triage [--team KEY...]` — surface issues needing triage (Triage
+ * state, or unassigned / unestimated / no-priority in an active state). The
+ * grooming SURFACE step (RFC §3.2). Delegates to `core.triage`; this layer only
+ * formats. See docs/spec.md §6.4.
  */
 export async function triage(opts: TriageOptions): Promise<void> {
-  console.error(
-    `linearctl triage: specified, not yet implemented (team=${opts.team}). See docs/spec.md §6.4.`,
+  const client = makeClient();
+  const items = await triageCore(client, opts.team);
+
+  if (opts.json) {
+    printJson(items);
+    return;
+  }
+
+  printTable(
+    items.map((i) => ({
+      identifier: i.identifier,
+      state: i.state,
+      assignee: i.assignee ?? "—",
+      why: i.reasons.join("+"),
+      title: i.title,
+    })),
+    ["identifier", "state", "assignee", "why", "title"],
   );
-  process.exit(2);
 }

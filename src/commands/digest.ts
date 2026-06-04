@@ -1,37 +1,42 @@
+import { makeClient } from "../client.js";
+import { digest as digestCore } from "../core/grooming.js";
+import { sinceToDate } from "../lib/time.js";
+import { printJson, printTable } from "../lib/output.js";
+
 export interface DigestOptions {
   since: string;
-  team?: string;
+  team?: string[];
   json?: boolean;
 }
 
 /**
- * `linearctl digest` — "what have we been up to": issues created / updated / completed
- * in a recent window, grouped by workflow-state type. The scriptable form of the
- * session-start Linear summary.
- *
- * Intended implementation (see docs/spec.md §6.2):
- *   const client = makeClient();
- *   const since = sinceToDate(opts.since);
- *   let page = await client.issues({
- *     filter: {
- *       ...(opts.team ? { team: { key: { eq: opts.team } } } : {}),
- *       updatedAt: { gte: since },
- *     },
- *     first: 100,
- *     orderBy: LinearDocument.PaginationOrderBy.UpdatedAt,
- *   });
- *   const all = [...page.nodes];
- *   while (page.pageInfo.hasNextPage) { page = await page.fetchNext(); all.push(...page.nodes); }
- *   // group by (await issue.state).type → completed / started / triage / backlog
- *
- * Status: specified, not yet implemented. Left as a stub so it can't ship a
- * subtly-wrong filter/await pattern unverified — `whoami` is the verified slice.
+ * `linearctl digest [--since 7d] [--team KEY...]` — recent issue activity grouped
+ * by workflow-state type. Delegates to `core.digest`; this layer parses the
+ * window and formats. See docs/spec.md §6.2.
  */
 export async function digest(opts: DigestOptions): Promise<void> {
-  console.error(
-    `linearctl digest: specified, not yet implemented ` +
-      `(window=${opts.since}${opts.team ? `, team=${opts.team}` : ""}). ` +
-      `See docs/spec.md §6.2.`,
+  const client = makeClient();
+  const since = sinceToDate(opts.since);
+  const result = await digestCore(client, since, opts.team);
+
+  if (opts.json) {
+    printJson(result);
+    return;
+  }
+
+  process.stdout.write(
+    `${result.total} issue(s) updated since ${result.since}\n`,
   );
-  process.exit(2);
+  for (const group of result.groups) {
+    process.stdout.write(`\n${group.type} (${group.count})\n`);
+    printTable(
+      group.items.map((i) => ({
+        identifier: i.identifier,
+        state: i.state,
+        assignee: i.assignee ?? "—",
+        title: i.title,
+      })),
+      ["identifier", "state", "assignee", "title"],
+    );
+  }
 }

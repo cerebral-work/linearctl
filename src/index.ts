@@ -28,7 +28,7 @@ program
   .command("digest")
   .description('"What have we been up to": recent issue activity grouped by status.')
   .option("--since <window>", "look-back window (e.g. 7d, 24h, 2w)", "7d")
-  .option("--team <key>", "restrict to a team key (e.g. CER)")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
   .option("--json", "emit JSON")
   .action((opts) => digest(opts));
 
@@ -45,8 +45,8 @@ program
 
 program
   .command("triage")
-  .description("Surface issues needing triage: in Triage state, or unassigned/unestimated.")
-  .requiredOption("--team <key>", "team key (e.g. CER)")
+  .description("Surface issues needing triage: Triage state, or unassigned/unestimated/no-priority.")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
   .option("--json", "emit JSON")
   .action((opts) => triage(opts));
 

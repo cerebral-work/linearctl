@@ -6,10 +6,11 @@ Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
 ## Status: M0 scaffold + early M2 dogfood
 
-`whoami`, `project` (create / list), `file`, `update` / `close`, and `mcp serve`
-(stdio MCP server, v1 tools incl. `issue_update` / `issue_close`) are implemented
-and verified against the live API. `digest` / `triage` / `milestone` are
-**specified-but-stubbed**
+`whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
+`triage`, and `mcp serve` (stdio MCP server, v1 tools incl. `issue_update` /
+`issue_close`) are implemented and verified against the live API. `milestone`
+is **specified-but-stubbed** (and `stale` / `xref` grooming verbs are in flight,
+CER-1144/1145)
 — they exit `2` with a `docs/spec.md` section reference, never a silent no-op. Do
 **not** implement a command body until its milestone is scheduled (see the
 roadmap). Keep stubs honest. (`project` + `file` landed ahead of M2 for the
