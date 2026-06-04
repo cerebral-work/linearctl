@@ -131,6 +131,15 @@ issues attach to — the first half of the M2 dogfood loop (create the project, 
 and prints `name` + `url` + `id`. `list` shows projects (optionally team-scoped) as a
 table of name / state / progress / id. `--desc -` reads markdown from stdin.
 
+### 6.7 `linearctl mcp serve` — *implemented + verified (v1 tools)*
+`linearctl mcp serve`. Runs a stdio Model Context Protocol server
+(`@modelcontextprotocol/sdk`) exposing linearctl's capabilities as tools to Claude
+Desktop / Claude Code — the shared core behind the plugin track (`docs/plugin-spec.md`).
+v1 tools call the same `src/core/*` fns as the CLI: `whoami` / `project_list`
+(`readOnlyHint`), `file_issue` / `project_create` (writes; no destructive ops).
+Speaks JSON-RPC on stdout (logs to stderr only); `LINEAR_API_KEY` validated at
+startup. Tool errors are returned as `isError` results, never crashes.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
