@@ -1,9 +1,9 @@
 # `linearctl` — Specification
 
-**Status:** v0.1 scaffold, pre-code. `whoami` implemented **and verified against
-the live API**; `digest` / `file` / `triage` / `milestone` are
-specified-but-stubbed (full CLI surface — `--help`, `--json`, required-options —
-with bodies that exit `2` and point here). Built + shipped with **bun**.
+**Status:** command surface complete. Every command in §6 — `whoami`, `digest`,
+`file`, `triage`, `milestone`, `project`, `update`/`close`, `stale`, `xref`, and
+`mcp serve` (MCP server for Claude Desktop / Code) — is implemented **and verified
+against the live API**. Built + shipped with **bun**.
 
 **Tooling rationale** (bun vs npm, what we declined and why) lives in
 [`docs/decisions.md`](./decisions.md). This document is the product + design
