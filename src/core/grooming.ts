@@ -1,6 +1,7 @@
 import type { LinearClient, Issue } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
+import { mapPool } from "../lib/pool.js";
 
 type IssuesArgs = Parameters<LinearClient["issues"]>[0];
 
@@ -28,29 +29,6 @@ async function collectIssues(client: LinearClient, args: IssuesArgs): Promise<Is
 function scopedTeams(teamKeys?: string[]): string[] | undefined {
   if (!teamKeys || teamKeys.length === 0 || teamKeys.includes("all")) return undefined;
   return teamKeys;
-}
-
-/**
- * Map over items with bounded concurrency, preserving order. Tames the
- * per-issue `.state`/`.assignee` N+1 (spec §10): instead of 2×N *serial*
- * round-trips (sluggish + a cron foot-gun on a big team), at most `limit` run at
- * once — fast without flooding into `RATELIMITED`.
- */
-async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 export interface TriageItem {
