@@ -8,6 +8,7 @@ import { milestone } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
+import { xref } from "./commands/xref.js";
 import { serve } from "./mcp/serve.js";
 
 const program = new Command();
@@ -106,6 +107,15 @@ program
   .option("--apply", "actually write --label (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => stale(opts));
+
+program
+  .command("xref")
+  .description("Reconcile GitHub PRs <-> Linear tickets (read-only; needs `gh`).")
+  .option("--repo <owner/repo>", "GitHub repo (default: current directory's repo)")
+  .option("--team <key...>", "only count refs with these team-key prefix(es)")
+  .option("--limit <n>", "how many merged PRs to scan", "50")
+  .option("--json", "emit JSON")
+  .action((opts) => xref(opts));
 
 const mcpCmd = program
   .command("mcp")

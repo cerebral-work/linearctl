@@ -162,6 +162,17 @@ surfaced issues via `addedLabelIds` (preserves existing labels), but only writes
 with `--apply` — otherwise it is a dry-run preview. Never closes an issue. Fully
 paginated; `--team` repeatable. With `triage`, satisfies the RFC §3.4 audit.
 
+### 6.10 `linearctl xref` — *implemented + verified*
+`linearctl xref [--repo owner/repo] [--team CER...] [--limit 50] [--json]`.
+**Read-only** PR↔ticket reconcile (RFC §3.4). Scans open + merged GitHub PRs (via
+`gh`) for `KEY-N` refs, validates each against Linear (so non-tickets like
+`UTF-8` are ignored), and reports: in-flight PRs naming no ticket, merged PRs
+naming no ticket, merged PRs whose ticket isn't Done, and — when `--team` scopes
+the prefixes — prefix-matching refs pointing at no real ticket. **Requires the
+GitHub CLI (`gh`) installed + authenticated** — the only verb with a non-Linear
+dependency; it errors clearly (never crashes) if `gh` is unavailable. `--repo`
+omitted uses the current directory's repo.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
