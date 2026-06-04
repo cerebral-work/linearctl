@@ -1,25 +1,44 @@
+import { makeClient } from "../client.js";
+import { milestones } from "../core/milestones.js";
+import { printJson } from "../lib/output.js";
+
 export interface MilestoneOptions {
   project?: string;
   json?: boolean;
 }
 
+/** A 20-cell ASCII progress bar, e.g. `[██████████░░░░░░░░░░]`. */
+function bar(percent: number, width = 20): string {
+  const filled = Math.round((percent / 100) * width);
+  return `[${"█".repeat(filled)}${"░".repeat(width - filled)}]`;
+}
+
 /**
- * `linearctl milestone` — project / milestone progress (issues done vs open per
- * milestone). Ties to the "knock out the existing milestones before the
- * release-please swap" tracking. See docs/spec.md §6.5.
- *
- * Intended implementation (see docs/spec.md §6.5):
- *   const client = makeClient();
- *   const project = await resolveProject(client, opts.project);
- *   const milestones = await project.projectMilestones();
- *   // for each milestone: count issues by completed vs open → percent + bar
- *
- * Status: specified, not yet implemented.
+ * `linearctl milestone [--project ID]` — per-milestone burn-down (done vs open,
+ * percent + bar). Delegates to `core.milestones`; this layer formats.
+ * See docs/spec.md §6.5.
  */
 export async function milestone(opts: MilestoneOptions): Promise<void> {
-  console.error(
-    `linearctl milestone: specified, not yet implemented` +
-      `${opts.project ? ` (project=${opts.project})` : ""}. See docs/spec.md §6.5.`,
+  const client = makeClient();
+  const result = await milestones(client, opts.project);
+
+  if (opts.json) {
+    printJson(result);
+    return;
+  }
+
+  process.stdout.write(
+    `${result.project ?? "(all projects)"} — ${result.milestones.length} milestone(s)\n`,
   );
-  process.exit(2);
+  if (result.milestones.length === 0) {
+    process.stdout.write("(none)\n");
+    return;
+  }
+  const nameW = Math.max(...result.milestones.map((m) => m.name.length));
+  for (const m of result.milestones) {
+    process.stdout.write(
+      `  ${m.name.padEnd(nameW)}  ${bar(m.percent)} ${String(m.percent).padStart(3)}%  ` +
+        `${m.done}/${m.total}${m.targetDate ? `  (due ${m.targetDate})` : ""}\n`,
+    );
+  }
 }

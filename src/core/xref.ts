@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LinearClient } from "@linear/sdk";
+import { mapPool } from "../lib/pool.js";
 
 const pexec = promisify(execFile);
 
@@ -101,20 +102,6 @@ async function ticketState(client: LinearClient, ref: string): Promise<TicketSta
     // Non-existent identifier (or a non-ticket like UTF-8) — treat as not a ticket.
     return { exists: false, done: false, state: null };
   }
-}
-
-/** Bounded-concurrency map (keeps the per-ref Linear lookups from flooding). */
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 /**

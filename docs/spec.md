@@ -122,9 +122,12 @@ canceled excluded) in the **Triage** state, **or** unassigned, **or** unestimate
 Fully paginated. `--team` is repeatable; omit it (or `all`) for every team. The
 grooming SURFACE step (RFC §3.2).
 
-### 6.5 `linearctl milestone` — *specified*
-`linearctl milestone [--project ID] [--json]`. Per-milestone burn-down (done vs open,
-percent + bar) for a project. Backs the release-readiness check.
+### 6.5 `linearctl milestone` — *implemented + verified*
+`linearctl milestone [--project ID] [--json]`. Per-milestone burn-down (issues done
+vs total, percent + ASCII bar) for a project; omit `--project` for all accessible
+milestones. `--project` accepts a UUID, slug id, or name. Counts come from two
+filtered issue queries per milestone (total, and `state.type = completed`) — no
+per-issue N+1. Backs the release-readiness check.
 
 ### 6.6 `linearctl project` — *implemented + verified (create, list)*
 `linearctl project create <name> --team CER [--desc <md|->] [--json]` and
