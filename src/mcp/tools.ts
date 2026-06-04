@@ -5,6 +5,9 @@ import type { LinearClient } from "@linear/sdk";
 import { getWhoami } from "../core/whoami.js";
 import { createIssue, updateIssue, closeIssue } from "../core/issues.js";
 import { createProject, listProjects } from "../core/projects.js";
+import { triage, digest, stale } from "../core/grooming.js";
+import { milestones } from "../core/milestones.js";
+import { sinceToDate } from "../lib/time.js";
 
 /**
  * Run a core call and shape it into a tool result: the JSON payload as a text
@@ -136,5 +139,72 @@ export function registerTools(server: McpServer, client: LinearClient): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ id }) => run(() => closeIssue(client, id)),
+  );
+
+  // --- read / grooming tools (CER-1162) ---
+
+  server.registerTool(
+    "digest",
+    {
+      title: "Recent activity digest",
+      description:
+        "Issues updated within a window, grouped by workflow-state type (completed / started / …).",
+      inputSchema: {
+        since: z.string().optional().describe("look-back window, e.g. 7d / 24h / 2w (default 7d)"),
+        team: z.array(z.string()).optional().describe("team key(s); omit for every team"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ since, team }) => run(() => digest(client, sinceToDate(since ?? "7d"), team)),
+  );
+
+  server.registerTool(
+    "triage",
+    {
+      title: "Triage surface",
+      description:
+        "Issues needing triage: in Triage state, or unassigned / unestimated / no-priority (active only). Each row flags why it surfaced.",
+      inputSchema: {
+        team: z.array(z.string()).optional().describe("team key(s); omit for every team"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ team }) => run(() => triage(client, team)),
+  );
+
+  server.registerTool(
+    "milestone",
+    {
+      title: "Milestone burn-down",
+      description:
+        "Per-milestone done-vs-total (with percent) for a project, or all accessible milestones.",
+      inputSchema: {
+        project: z.string().optional().describe("project UUID, slug id, or name"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project }) => run(() => milestones(client, project)),
+  );
+
+  server.registerTool(
+    "stale",
+    {
+      title: "Stale sweep",
+      description:
+        "Active issues by last-update age, bucketed warn (>older-than) / critical (>~90d). Read-only — surfacing only.",
+      inputSchema: {
+        team: z.array(z.string()).optional().describe("team key(s); omit for every team"),
+        olderThan: z.string().optional().describe("warn threshold, e.g. 30d / 2w (default 30d)"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ team, olderThan }) =>
+      run(() => {
+        const now = new Date();
+        const warnCutoff = sinceToDate(olderThan ?? "30d", now);
+        const ninetyCutoff = sinceToDate("90d", now);
+        const criticalCutoff = warnCutoff < ninetyCutoff ? warnCutoff : ninetyCutoff;
+        return stale(client, { teamKeys: team, warnCutoff, criticalCutoff, now });
+      }),
   );
 }
