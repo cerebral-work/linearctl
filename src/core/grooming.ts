@@ -1,5 +1,6 @@
 import type { LinearClient, Issue } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
+import { pickLabelIds } from "../lib/labels.js";
 
 type IssuesArgs = Parameters<LinearClient["issues"]>[0];
 
@@ -186,4 +187,116 @@ export async function digest(
     .sort((a, b) => order(a.type) - order(b.type));
 
   return { since: since.toISOString(), total: issues.length, groups };
+}
+
+const DAY_MS = 86_400_000;
+
+export interface StaleItem {
+  id: string;
+  identifier: string;
+  title: string;
+  state: string;
+  assignee: string | null;
+  updatedAt: string;
+  daysStale: number;
+  bucket: "warn" | "critical";
+  url: string;
+}
+
+export interface StaleResult {
+  olderThanDays: number;
+  criticalDays: number;
+  warn: number;
+  critical: number;
+  items: StaleItem[];
+}
+
+/**
+ * Sweep active-state issues by last-update age. Two buckets: `warn` (older than
+ * `warnCutoff`) and `critical` (older than `criticalCutoff`, ~90d → close-or-
+ * justify). Read-only: surfaces, never mutates. Completed/canceled excluded.
+ * See docs/spec.md §6.9.
+ */
+export async function stale(
+  client: LinearClient,
+  opts: { teamKeys?: string[]; warnCutoff: Date; criticalCutoff: Date; now: Date },
+): Promise<StaleResult> {
+  const teams = scopedTeams(opts.teamKeys);
+  const issues = await collectIssues(client, {
+    first: 100,
+    orderBy: LinearDocument.PaginationOrderBy.UpdatedAt,
+    filter: {
+      ...(teams ? { team: { key: { in: teams } } } : {}),
+      and: [
+        { state: { type: { nin: ["completed", "canceled"] } } },
+        { updatedAt: { lte: opts.warnCutoff } },
+      ],
+    },
+  });
+
+  const items = await mapPool(issues, 10, async (issue) => {
+    const [state, assignee] = await Promise.all([issue.state, issue.assignee]);
+    const updated = new Date(issue.updatedAt);
+    const daysStale = Math.floor((opts.now.getTime() - updated.getTime()) / DAY_MS);
+    const bucket: "warn" | "critical" =
+      updated <= opts.criticalCutoff ? "critical" : "warn";
+    return {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      state: state?.name ?? "",
+      assignee: assignee?.displayName ?? null,
+      updatedAt: updated.toISOString(),
+      daysStale,
+      bucket,
+      url: issue.url,
+    } satisfies StaleItem;
+  });
+  items.sort((a, b) => b.daysStale - a.daysStale);
+
+  return {
+    olderThanDays: Math.round((opts.now.getTime() - opts.warnCutoff.getTime()) / DAY_MS),
+    criticalDays: Math.round((opts.now.getTime() - opts.criticalCutoff.getTime()) / DAY_MS),
+    warn: items.filter((i) => i.bucket === "warn").length,
+    critical: items.filter((i) => i.bucket === "critical").length,
+    items,
+  };
+}
+
+export interface StaleLabelResult {
+  label: string;
+  labelId: string;
+  applied: boolean;
+  count: number;
+  identifiers: string[];
+}
+
+/**
+ * Apply a label to a set of stale issues (the only mutation `stale` offers, and
+ * only via `--label` + `--apply`). Uses `addedLabelIds` so existing labels are
+ * preserved. `apply: false` is a dry-run — resolves/validates the label but
+ * writes nothing. Never closes an issue (close-or-justify is human; RFC §3.2).
+ */
+export async function applyStaleLabel(
+  client: LinearClient,
+  items: StaleItem[],
+  labelName: string,
+  apply: boolean,
+): Promise<StaleLabelResult> {
+  const labels = await client.issueLabels({ filter: { name: { eqIgnoreCase: labelName } } });
+  const [labelId] = pickLabelIds(labels.nodes, [labelName]);
+  if (apply) {
+    await mapPool(items, 10, async (i) => {
+      const res = await client.updateIssue(i.id, { addedLabelIds: [labelId] });
+      if (!res.success) throw new Error(`failed to label ${i.identifier}`);
+      return i.identifier;
+    });
+  }
+  return {
+    label: labelName,
+    labelId,
+    applied: apply,
+    count: items.length,
+    identifiers: items.map((i) => i.identifier),
+  };
 }
