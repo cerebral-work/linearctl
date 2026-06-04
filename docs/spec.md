@@ -153,6 +153,15 @@ against the issue's own team; `<id>` accepts a UUID **or** an identifier (`CER-1
 Backs the MCP `issue_update` / `issue_close` tools — the headless write loop
 (file → update → close). No delete/archive (`docs/plugin-spec.md` D6).
 
+### 6.9 `linearctl stale` — *implemented + verified*
+`linearctl stale [--team CER...] [--older-than 30d] [--label NAME [--apply]] [--json]`.
+Sweep active-state issues by last-update age (RFC §3.2 stale-sweep), bucketed
+**warn** (older than `--older-than`, default 30d) and **critical** (older than ~90d
+→ close-or-justify). **Read-only by default.** `--label NAME` adds a label to the
+surfaced issues via `addedLabelIds` (preserves existing labels), but only writes
+with `--apply` — otherwise it is a dry-run preview. Never closes an issue. Fully
+paginated; `--team` repeatable. With `triage`, satisfies the RFC §3.4 audit.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
