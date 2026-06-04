@@ -223,6 +223,10 @@ flowchart LR
   schema-realm fault; `@linear/sdk` is a client and never builds a schema, so it
   cannot trip it — that is *why* bun is safe here (verified by the research
   compile + run), not something the smoke can guard.
+- **MCP handshake smoke** (`test/mcp-handshake.test.ts`, runs in `bun test`):
+  spawns `mcp serve`, completes the initialize + `tools/list` handshake, and
+  asserts the tool surface — catches a broken server or bad tool registration at
+  PR time. Runs offline (a dummy `LINEAR_API_KEY`; registration makes no API call).
 - **macOS:** unsigned Mach-O binaries are Gatekeeper-quarantined on download —
   notarization / `xattr -d com.apple.quarantine` is a tracked ticket (T15).
 
