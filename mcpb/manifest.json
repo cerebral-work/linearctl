@@ -1,0 +1,31 @@
+{
+  "manifest_version": "0.3",
+  "name": "linearctl",
+  "display_name": "linearctl",
+  "version": "0.1.0",
+  "description": "Linear workflows in Claude Desktop — read context and file / update / close issues.",
+  "author": { "name": "Cerebral Work Institute", "url": "https://github.com/cerebral-work/linearctl" },
+  "homepage": "https://github.com/cerebral-work/linearctl",
+  "license": "MIT",
+  "server": {
+    "type": "binary",
+    "entry_point": "linearctl",
+    "mcp_config": {
+      "command": "linearctl",
+      "args": ["mcp", "serve"],
+      "env": { "LINEAR_API_KEY": "${user_config.linear_api_key}" }
+    }
+  },
+  "user_config": {
+    "linear_api_key": {
+      "type": "string",
+      "title": "Linear API Key",
+      "description": "Personal Linear API key — create one at https://linear.app/settings/api",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}

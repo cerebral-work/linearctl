@@ -1,0 +1,13 @@
+{
+  "name": "cerebral-work",
+  "description": "Cerebral Work Institute plugins for Claude Code.",
+  "owner": { "name": "Cerebral Work Institute" },
+  "plugins": [
+    {
+      "name": "linearctl",
+      "source": "./",
+      "description": "Linear workflows in Claude via the linearctl MCP server (read context, file / update / close issues).",
+      "version": "0.1.0"
+    }
+  ]
+}
