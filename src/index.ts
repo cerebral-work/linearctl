@@ -7,6 +7,7 @@ import { triage } from "./commands/triage.js";
 import { milestone } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
+import { stale } from "./commands/stale.js";
 import { serve } from "./mcp/serve.js";
 
 const program = new Command();
@@ -95,6 +96,16 @@ program
   .argument("<id>", "issue id or identifier (e.g. CER-123)")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
+
+program
+  .command("stale")
+  .description("Sweep stale issues by last-update age (report-only; --label + --apply to relabel).")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--older-than <window>", "warn threshold (e.g. 30d, 2w)", "30d")
+  .option("--label <name>", "label to add to stale issues (mutating; dry-run unless --apply)")
+  .option("--apply", "actually write --label (default is a dry-run preview)")
+  .option("--json", "emit JSON")
+  .action((opts) => stale(opts));
 
 const mcpCmd = program
   .command("mcp")
