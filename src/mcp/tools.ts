@@ -3,7 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { LinearClient } from "@linear/sdk";
 import { getWhoami } from "../core/whoami.js";
-import { createIssue } from "../core/issues.js";
+import { createIssue, updateIssue, closeIssue } from "../core/issues.js";
 import { createProject, listProjects } from "../core/projects.js";
 
 /**
@@ -97,5 +97,44 @@ export function registerTools(server: McpServer, client: LinearClient): void {
     },
     async ({ name, team, description }) =>
       run(() => createProject(client, { name, teamKey: team, description })),
+  );
+
+  server.registerTool(
+    "issue_update",
+    {
+      title: "Update an issue",
+      description:
+        "Update a Linear issue's state, assignee, labels, project, or priority. State/assignee/labels resolve by name against the issue's team.",
+      inputSchema: {
+        id: z.string().describe("issue id or identifier, e.g. CER-123"),
+        state: z.string().optional().describe("workflow state name, e.g. 'In Progress'"),
+        assignee: z.string().optional().describe("'me', an email, a display name, or a user id"),
+        labels: z.array(z.string()).optional().describe("label names (replaces existing)"),
+        project: z.string().optional().describe("project id to move the issue to"),
+        priority: z.number().int().min(0).max(4).optional().describe("0=None 1=Urgent 2=High 3=Medium 4=Low"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ id, state, assignee, labels, project, priority }) =>
+      run(() =>
+        updateIssue(client, id, {
+          state,
+          assignee,
+          labels,
+          projectId: project,
+          priority,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "issue_close",
+    {
+      title: "Close an issue",
+      description: "Move a Linear issue to its team's completed state.",
+      inputSchema: { id: z.string().describe("issue id or identifier, e.g. CER-123") },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ id }) => run(() => closeIssue(client, id)),
   );
 }
