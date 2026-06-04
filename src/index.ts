@@ -6,6 +6,7 @@ import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
 import { milestone } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
+import { serve } from "./mcp/serve.js";
 
 const program = new Command();
 
@@ -74,6 +75,15 @@ projectCmd
   .option("--team <key>", "restrict to a team key (e.g. CER)")
   .option("--json", "emit JSON")
   .action((opts) => projectList(opts));
+
+const mcpCmd = program
+  .command("mcp")
+  .description("Model Context Protocol server (for Claude Desktop / Claude Code).");
+
+mcpCmd
+  .command("serve")
+  .description("Run the stdio MCP server exposing linearctl's tools.")
+  .action(() => serve());
 
 program.parseAsync().catch((err: unknown) => {
   console.error(err instanceof Error ? `error: ${err.message}` : err);
