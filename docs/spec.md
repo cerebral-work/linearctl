@@ -101,11 +101,12 @@ native OAuth `actor=app` path is future work (§10).
 `linearctl whoami [--json]`. Resolves `client.viewer` + `client.organization`. The thin
 slice proving auth end-to-end; run it first on any new machine.
 
-### 6.2 `linearctl digest` — *specified*
-`linearctl digest [--since 7d] [--team CER] [--json]`. Issues updated within the window,
-grouped by workflow-state type (completed / started / triage / backlog). Filter
-`{ updatedAt: { gte }, team?: { key: { eq } } }`, `orderBy: updatedAt`, paginate via
-`fetchNext()`.
+### 6.2 `linearctl digest` — *implemented + verified*
+`linearctl digest [--since 7d] [--team CER...] [--json]`. Issues updated within the
+window, grouped by workflow-state type (completed / started / unstarted / triage /
+backlog / canceled). Filter `{ updatedAt: { gte }, team?: { key: { in } } }`,
+`orderBy: updatedAt`, fully paginated via `fetchNext()`. `--team` is repeatable;
+omit it (or pass `all`) for every accessible team.
 
 ### 6.3 `linearctl file` — *implemented + verified*
 `linearctl file <title> --team CER [--project ID] [--desc <md|->] [--label name...] [--json]`.
@@ -114,9 +115,12 @@ resolve `--label` names → IDs (case-insensitive, `pickLabelIds` errors on any
 unmatched), `createIssue({ teamId, title, description, projectId, labelIds })`, print
 `identifier` + `url`. Batch-friendly with backoff (§9; batch mode is T6, not yet built).
 
-### 6.4 `linearctl triage` — *specified*
-`linearctl triage --team CER [--json]`. Issues in the **Triage** state, **or** unassigned,
-**or** unestimated. Output flags *why* each surfaced.
+### 6.4 `linearctl triage` — *implemented + verified*
+`linearctl triage [--team CER...] [--json]`. Active-state issues (completed /
+canceled excluded) in the **Triage** state, **or** unassigned, **or** unestimated,
+**or** no-priority. Each row flags *why* it surfaced (reasons computed per issue).
+Fully paginated. `--team` is repeatable; omit it (or `all`) for every team. The
+grooming SURFACE step (RFC §3.2).
 
 ### 6.5 `linearctl milestone` — *specified*
 `linearctl milestone [--project ID] [--json]`. Per-milestone burn-down (done vs open,
