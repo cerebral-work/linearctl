@@ -1,10 +1,15 @@
 name: Linear Release (prod)
 
-# PROD pipeline — tag-driven (released versions only). Mirrors the pattern used by
-# revenant / unsigned-paas. Syncs each tagged linearctl release to its Linear
-# "linearctl" release pipeline (Settings → Releases), scanning the commit range
-# for issue refs (CER-NNN / TOD-NNN) + PR numbers, then marking the release
-# complete.
+# PROD pipeline — released versions only. Syncs each tagged linearctl release to
+# its Linear "linearctl" release pipeline (Settings → Releases), scanning the
+# commit range for issue refs (CER-NNN / TOD-NNN) + PR numbers, then marking the
+# release complete.
+#
+# CALLED, NOT TAG-TRIGGERED: release-please creates the tag with the default
+# GITHUB_TOKEN, and GitHub by design does NOT fire `push: tags` workflows from
+# token-created events — a tag trigger here would silently never run. So this is
+# a reusable workflow invoked by release.yml in the same run that creates the
+# release (release_created == true). workflow_dispatch stays for manual re-syncs.
 #
 # DORMANT-UNTIL-KEYED: no-op-safe skip when LINEAR_ACCESS_KEY is absent, so it
 # never red-X's a release before the operator provisions the pipeline + key.
@@ -12,9 +17,12 @@ name: Linear Release (prod)
 # LINEAR_ACCESS_KEY (its access key; store in 1Password vault `cloud`).
 
 on:
-  push:
-    tags:
-      - "v[0-9]*" # release-please semver tags (no component prefix)
+  workflow_call:
+    inputs:
+      version:
+        description: "Tag/version to sync, e.g. v0.2.0"
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -51,7 +59,7 @@ jobs:
         id: ver
         if: steps.gate.outputs.enabled == 'true'
         env:
-          RAW: ${{ inputs.version || github.ref_name }}
+          RAW: ${{ inputs.version }}
         run: echo "version=${RAW}" >> "$GITHUB_OUTPUT"
 
       - uses: linear/linear-release-action@v0
