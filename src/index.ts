@@ -10,6 +10,7 @@ import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { serve } from "./mcp/serve.js";
+import pkg from "../package.json";
 
 const program = new Command();
 
@@ -18,7 +19,7 @@ program
   .description(
     "Headless CLI for frequently ad-hocced Linear workflows (built on @linear/sdk).",
   )
-  .version("0.1.0");
+  .version(pkg.version);
 
 program
   .command("whoami")
