@@ -62,8 +62,13 @@ jobs:
           RAW: ${{ inputs.version }}
         run: echo "version=${RAW}" >> "$GITHUB_OUTPUT"
 
+      # Best-effort: the sync is release *reporting*, not the deliverable. A
+      # failure (e.g. a duplicate-version collision in the pipeline) must not red
+      # the caller's release run. continue-on-error lives here because a reusable-
+      # workflow caller job can't carry it.
       - uses: linear/linear-release-action@v0
         if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
           command: sync
@@ -74,6 +79,7 @@ jobs:
       # README's tag-driven guidance (sync alone leaves the release in-progress).
       - uses: linear/linear-release-action@v0
         if: steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
         with:
           access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
           command: complete

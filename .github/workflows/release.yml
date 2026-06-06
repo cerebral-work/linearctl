@@ -33,6 +33,9 @@ jobs:
   # on linear-release.yml) because release-please tags with the default
   # GITHUB_TOKEN, which never fires tag-push workflows. `secrets: inherit` passes
   # LINEAR_ACCESS_KEY through; the called workflow self-skips when it's absent.
+  # The sync is best-effort (reporting, not the deliverable): linear-release.yml
+  # marks its action steps continue-on-error so a sync hiccup — e.g. a duplicate-
+  # version collision — can't red this release run or block distribution.
   linear-release:
     name: Sync release to Linear
     needs: release-please
