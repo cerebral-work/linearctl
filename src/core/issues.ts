@@ -1,6 +1,7 @@
 import type { LinearClient, Issue } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
+import { withRetry } from "../lib/retry.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -38,13 +39,15 @@ export async function createIssue(
     labelIds = pickLabelIds(labels.nodes, params.labels);
   }
 
-  const res = await client.createIssue({
-    teamId: team.id,
-    title: params.title,
-    ...(params.description ? { description: params.description } : {}),
-    ...(params.projectId ? { projectId: params.projectId } : {}),
-    ...(labelIds.length ? { labelIds } : {}),
-  });
+  const res = await withRetry(() =>
+    client.createIssue({
+      teamId: team.id,
+      title: params.title,
+      ...(params.description ? { description: params.description } : {}),
+      ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(labelIds.length ? { labelIds } : {}),
+    }),
+  );
   if (!res.success) {
     throw new Error("Linear reported the issue create did not succeed.");
   }
@@ -144,7 +147,7 @@ export async function updateIssue(
   id: string,
   params: UpdateIssueParams,
 ): Promise<UpdatedIssue> {
-  const issue = await client.issue(id);
+  const issue = await withRetry(() => client.issue(id));
 
   let stateId: string | undefined;
   if (params.state) {
@@ -175,7 +178,7 @@ export async function updateIssue(
     );
   }
 
-  const res = await client.updateIssue(issue.id, input);
+  const res = await withRetry(() => client.updateIssue(issue.id, input));
   if (!res.success) {
     throw new Error("Linear reported the issue update did not succeed.");
   }
@@ -188,7 +191,7 @@ export async function updateIssue(
 
 /** Close an issue: move it to the team's completed state (prefers one named "Done"). */
 export async function closeIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
-  const issue = await client.issue(id);
+  const issue = await withRetry(() => client.issue(id));
   const team = await issue.team;
   if (!team) throw new Error("issue has no team; cannot resolve a completed state.");
 
@@ -200,7 +203,7 @@ export async function closeIssue(client: LinearClient, id: string): Promise<Upda
     throw new Error("no completed workflow state found for this team.");
   }
 
-  const res = await client.updateIssue(issue.id, { stateId: done.id });
+  const res = await withRetry(() => client.updateIssue(issue.id, { stateId: done.id }));
   if (!res.success) {
     throw new Error("Linear reported the issue close did not succeed.");
   }

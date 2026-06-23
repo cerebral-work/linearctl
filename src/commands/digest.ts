@@ -6,6 +6,7 @@ import { printJson, printTable } from "../lib/output.js";
 export interface DigestOptions {
   since: string;
   team?: string[];
+  project?: string;
   json?: boolean;
 }
 
@@ -17,7 +18,7 @@ export interface DigestOptions {
 export async function digest(opts: DigestOptions): Promise<void> {
   const client = makeClient();
   const since = sinceToDate(opts.since);
-  const result = await digestCore(client, since, opts.team);
+  const result = await digestCore(client, since, opts.team, opts.project);
 
   if (opts.json) {
     printJson(result);

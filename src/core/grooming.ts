@@ -2,6 +2,8 @@ import type { LinearClient, Issue } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
 import { mapPool } from "../lib/pool.js";
+import { withRetry } from "../lib/retry.js";
+import { batchUpdateIssues } from "./batch.js";
 
 type IssuesArgs = Parameters<LinearClient["issues"]>[0];
 
@@ -16,10 +18,11 @@ type IssuesArgs = Parameters<LinearClient["issues"]>[0];
  * one round-trip each; acceptable for v1, the thing to watch on a full-workspace run.
  */
 async function collectIssues(client: LinearClient, args: IssuesArgs): Promise<Issue[]> {
-  let page = await client.issues(args);
+  let page = await withRetry(() => client.issues(args));
   const all = [...page.nodes];
   while (page.pageInfo.hasNextPage) {
-    page = await page.fetchNext();
+    const current = page;
+    page = await withRetry(() => current.fetchNext());
     all.push(...page.nodes);
   }
   return all;
@@ -29,6 +32,27 @@ async function collectIssues(client: LinearClient, args: IssuesArgs): Promise<Is
 function scopedTeams(teamKeys?: string[]): string[] | undefined {
   if (!teamKeys || teamKeys.length === 0 || teamKeys.includes("all")) return undefined;
   return teamKeys;
+}
+
+const PROJECT_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * An issue-filter `and`-clause scoping to a project by id OR name (case-insensitive);
+ * `[]` when unscoped. Pushed into each grooming query's `and` array so project
+ * selection happens server-side (no cross-project client-side noise).
+ *
+ * Branches on the ref shape: a UUID filters `project.id`, anything else filters
+ * `project.name` — feeding a name into the `id` comparator is a server-side ID
+ * validation error, so the two must not be OR'd. See spec §6.4.
+ */
+function projectClause(project?: string): Record<string, unknown>[] {
+  if (!project) return [];
+  return [
+    PROJECT_UUID_RE.test(project)
+      ? { project: { id: { eq: project } } }
+      : { project: { name: { eqIgnoreCase: project } } },
+  ];
 }
 
 export interface TriageItem {
@@ -52,6 +76,7 @@ export interface TriageItem {
 export async function triage(
   client: LinearClient,
   teamKeys?: string[],
+  project?: string,
 ): Promise<TriageItem[]> {
   const teams = scopedTeams(teamKeys);
   const issues = await collectIssues(client, {
@@ -60,6 +85,7 @@ export async function triage(
       ...(teams ? { team: { key: { in: teams } } } : {}),
       and: [
         { state: { type: { nin: ["completed", "canceled"] } } },
+        ...projectClause(project),
         {
           or: [
             { state: { type: { eq: "triage" } } },
@@ -124,6 +150,7 @@ export async function digest(
   client: LinearClient,
   since: Date,
   teamKeys?: string[],
+  project?: string,
 ): Promise<DigestResult> {
   const teams = scopedTeams(teamKeys);
   const issues = await collectIssues(client, {
@@ -132,6 +159,7 @@ export async function digest(
     filter: {
       ...(teams ? { team: { key: { in: teams } } } : {}),
       updatedAt: { gte: since },
+      ...(project ? { and: projectClause(project) } : {}),
     },
   });
 
@@ -197,7 +225,7 @@ export interface StaleResult {
  */
 export async function stale(
   client: LinearClient,
-  opts: { teamKeys?: string[]; warnCutoff: Date; criticalCutoff: Date; now: Date },
+  opts: { teamKeys?: string[]; project?: string; warnCutoff: Date; criticalCutoff: Date; now: Date },
 ): Promise<StaleResult> {
   const teams = scopedTeams(opts.teamKeys);
   const issues = await collectIssues(client, {
@@ -208,6 +236,7 @@ export async function stale(
       and: [
         { state: { type: { nin: ["completed", "canceled"] } } },
         { updatedAt: { lte: opts.warnCutoff } },
+        ...projectClause(opts.project),
       ],
     },
   });
@@ -261,14 +290,23 @@ export async function applyStaleLabel(
   labelName: string,
   apply: boolean,
 ): Promise<StaleLabelResult> {
-  const labels = await client.issueLabels({ filter: { name: { eqIgnoreCase: labelName } } });
+  const labels = await withRetry(() =>
+    client.issueLabels({ filter: { name: { eqIgnoreCase: labelName } } }),
+  );
   const [labelId] = pickLabelIds(labels.nodes, [labelName]);
   if (apply) {
-    await mapPool(items, 10, async (i) => {
-      const res = await client.updateIssue(i.id, { addedLabelIds: [labelId] });
-      if (!res.success) throw new Error(`failed to label ${i.identifier}`);
-      return i.identifier;
-    });
+    // Batched: one request per chunk of issues instead of one round-trip each.
+    const res = await batchUpdateIssues(
+      client,
+      items.map((i) => ({ uuid: i.id, ref: i.identifier, input: { addedLabelIds: [labelId] } })),
+    );
+    if (res.failed.length) {
+      throw new Error(
+        `failed to label ${res.failed.length}/${items.length} issue(s): ` +
+          res.failed.slice(0, 5).map((f) => f.ref).join(", ") +
+          (res.failed.length > 5 ? ", …" : ""),
+      );
+    }
   }
   return {
     label: labelName,

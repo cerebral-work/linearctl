@@ -5,6 +5,7 @@ import { printJson, printTable } from "../lib/output.js";
 
 export interface StaleOptions {
   team?: string[];
+  project?: string;
   olderThan?: string;
   label?: string;
   apply?: boolean;
@@ -28,6 +29,7 @@ export async function stale(opts: StaleOptions): Promise<void> {
 
   const result = await staleCore(client, {
     teamKeys: opts.team,
+    project: opts.project,
     warnCutoff,
     criticalCutoff,
     now,
