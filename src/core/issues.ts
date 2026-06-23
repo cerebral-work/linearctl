@@ -32,12 +32,9 @@ export async function createIssue(
 ): Promise<CreatedIssue> {
   const team = await resolveTeamByKey(client, params.teamKey);
 
-  let labelIds: string[] = [];
-  if (params.labels?.length) {
-    const filter = { or: params.labels.map((n) => ({ name: { eqIgnoreCase: n } })) };
-    const labels = await client.issueLabels({ filter });
-    labelIds = pickLabelIds(labels.nodes, params.labels);
-  }
+  const labelIds = params.labels?.length
+    ? await resolveLabelIds(client, team.id, params.labels)
+    : [];
 
   const res = await withRetry(() =>
     client.createIssue({
@@ -106,6 +103,30 @@ async function resolveAssignee(client: LinearClient, who: string): Promise<strin
   return user.id;
 }
 
+/**
+ * Resolve label names to IDs, SCOPED to the target team (plus workspace-global
+ * labels), case-insensitively.
+ *
+ * Linear labels are team-scoped: a workspace-wide name match can return a
+ * *different* team's label, which the API then rejects with "LabelIds for
+ * incorrect team". Filtering by `team.id` (or null = workspace) prevents that.
+ * Throws — listing every miss — on any unmatched name (via `pickLabelIds`).
+ */
+async function resolveLabelIds(
+  client: LinearClient,
+  teamId: string,
+  names: string[],
+): Promise<string[]> {
+  const filter = {
+    and: [
+      { or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] },
+      { or: names.map((n) => ({ name: { eqIgnoreCase: n } })) },
+    ],
+  };
+  const labels = await withRetry(() => client.issueLabels({ filter }));
+  return pickLabelIds(labels.nodes, names);
+}
+
 /** Resolve a workflow-state name to its ID within a team (case-insensitive). */
 async function resolveStateId(
   client: LinearClient,
@@ -149,21 +170,20 @@ export async function updateIssue(
 ): Promise<UpdatedIssue> {
   const issue = await withRetry(() => client.issue(id));
 
-  let stateId: string | undefined;
-  if (params.state) {
+  // State + labels both resolve against the issue's own team.
+  let teamId: string | undefined;
+  if (params.state || params.labels?.length) {
     const team = await issue.team;
-    if (!team) throw new Error("issue has no team; cannot resolve a state.");
-    stateId = await resolveStateId(client, team.id, params.state);
+    if (!team) throw new Error("issue has no team; cannot resolve state/labels.");
+    teamId = team.id;
   }
+  const stateId = params.state ? await resolveStateId(client, teamId!, params.state) : undefined;
   const assigneeId = params.assignee
     ? await resolveAssignee(client, params.assignee)
     : undefined;
-  let labelIds: string[] | undefined;
-  if (params.labels?.length) {
-    const filter = { or: params.labels.map((n) => ({ name: { eqIgnoreCase: n } })) };
-    const labels = await client.issueLabels({ filter });
-    labelIds = pickLabelIds(labels.nodes, params.labels);
-  }
+  const labelIds = params.labels?.length
+    ? await resolveLabelIds(client, teamId!, params.labels)
+    : undefined;
 
   const input = {
     ...(stateId ? { stateId } : {}),
