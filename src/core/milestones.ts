@@ -1,5 +1,6 @@
 import type { LinearClient, Project, ProjectMilestone } from "@linear/sdk";
 import { mapPool } from "../lib/pool.js";
+import { withRetry } from "../lib/retry.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -30,6 +31,7 @@ async function countIssues(
 }
 
 export interface MilestoneProgress {
+  id: string;
   name: string;
   targetDate: string | null;
   done: number;
@@ -74,6 +76,7 @@ export async function milestones(
       countIssues(client, { ...base, state: { type: { eq: "completed" } } }),
     ]);
     return {
+      id: m.id,
       name: m.name,
       targetDate: m.targetDate ? new Date(m.targetDate).toISOString().slice(0, 10) : null,
       done,
@@ -83,4 +86,30 @@ export async function milestones(
   });
 
   return { project: projectName, milestones: progress };
+}
+
+export interface DeletedMilestone {
+  id: string;
+  name: string;
+  deleted: boolean;
+}
+
+/**
+ * Delete a project milestone by UUID. Fetches it first (to surface the name and
+ * fail clearly on a bad id), then deletes only when `apply` — `apply: false` is
+ * a dry-run preview, mirroring `stale`'s contract for a destructive op. Deleting
+ * a milestone removes the grouping only; its issues are not deleted. spec §6.5.
+ */
+export async function deleteMilestone(
+  client: LinearClient,
+  id: string,
+  apply: boolean,
+): Promise<DeletedMilestone> {
+  const milestone = await withRetry(() => client.projectMilestone(id));
+  if (!milestone) throw new Error(`no milestone with id ${JSON.stringify(id)}.`);
+  if (apply) {
+    const res = await withRetry(() => client.deleteProjectMilestone(id));
+    if (!res.success) throw new Error("Linear reported the milestone delete did not succeed.");
+  }
+  return { id, name: milestone.name, deleted: apply };
 }

@@ -1,10 +1,35 @@
 import { makeClient } from "../client.js";
-import { milestones } from "../core/milestones.js";
+import { milestones, deleteMilestone } from "../core/milestones.js";
 import { printJson } from "../lib/output.js";
 
 export interface MilestoneOptions {
   project?: string;
   json?: boolean;
+}
+
+export interface MilestoneDeleteOptions {
+  yes?: boolean;
+  json?: boolean;
+}
+
+/**
+ * `linearctl milestone delete <id> [--yes]` — delete a project milestone by UUID.
+ * Dry-run by default (prints what would be deleted); `--yes` performs the delete.
+ * Find ids via `milestone --json`. See docs/spec.md §6.5.
+ */
+export async function milestoneDelete(id: string, opts: MilestoneDeleteOptions): Promise<void> {
+  const client = makeClient();
+  const res = await deleteMilestone(client, id, opts.yes === true);
+
+  if (opts.json) {
+    printJson(res);
+    return;
+  }
+  process.stdout.write(
+    res.deleted
+      ? `deleted milestone "${res.name}" (${res.id}).\n`
+      : `[dry-run] would delete milestone "${res.name}" (${res.id}); re-run with --yes to delete.\n`,
+  );
 }
 
 /** A 20-cell ASCII progress bar, e.g. `[██████████░░░░░░░░░░]`. */

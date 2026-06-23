@@ -4,7 +4,7 @@ import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
-import { milestone } from "./commands/milestone.js";
+import { milestone, milestoneDelete } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
@@ -55,12 +55,20 @@ program
   .option("--json", "emit JSON")
   .action((opts) => triage(opts));
 
-program
+const milestoneCmd = program
   .command("milestone")
   .description("Project / milestone progress (done vs open).")
   .option("--project <id>", "restrict to a project")
   .option("--json", "emit JSON")
   .action((opts) => milestone(opts));
+
+milestoneCmd
+  .command("delete")
+  .description("Delete a project milestone by id (dry-run unless --yes).")
+  .argument("<id>", "milestone UUID (find via `milestone --json`)")
+  .option("--yes", "perform the delete (default is a dry-run preview)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => milestoneDelete(id, opts));
 
 const projectCmd = program
   .command("project")
