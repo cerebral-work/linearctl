@@ -2,6 +2,7 @@ import type { LinearClient, Issue } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
+import { resolveMilestoneId } from "./milestones.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -67,6 +68,7 @@ export interface UpdateIssueParams {
   labels?: string[];
   projectId?: string;
   priority?: number;
+  milestone?: string;
 }
 
 export interface UpdatedIssue {
@@ -184,6 +186,11 @@ export async function updateIssue(
   const labelIds = params.labels?.length
     ? await resolveLabelIds(client, teamId!, params.labels)
     : undefined;
+  let projectMilestoneId: string | undefined;
+  if (params.milestone) {
+    const project = await issue.project;
+    projectMilestoneId = await resolveMilestoneId(client, params.milestone, project?.id);
+  }
 
   const input = {
     ...(stateId ? { stateId } : {}),
@@ -191,6 +198,7 @@ export async function updateIssue(
     ...(labelIds?.length ? { labelIds } : {}),
     ...(params.projectId ? { projectId: params.projectId } : {}),
     ...(params.priority !== undefined ? { priority: params.priority } : {}),
+    ...(projectMilestoneId ? { projectMilestoneId } : {}),
   };
   if (Object.keys(input).length === 0) {
     throw new Error(

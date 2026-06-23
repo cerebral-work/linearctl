@@ -1,5 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
+import { withRetry } from "../lib/retry.js";
+import { resolveMilestoneId } from "./milestones.js";
 import { resolveIssueUuids, batchUpdateIssues, type BatchResult } from "./batch.js";
 
 /**
@@ -21,6 +23,17 @@ export interface BulkSpecItem {
   priority?: number;
   project?: string;
   assignee?: string;
+  milestone?: string;
+}
+
+/** Team keys (e.g. OPS) inferred from identifier-style ids — scopes label resolution. */
+function inferTeamKeys(ids: string[]): string[] {
+  const keys = new Set<string>();
+  for (const id of ids) {
+    const m = /^([A-Za-z][A-Za-z0-9]*)-\d+$/.exec(id.trim());
+    if (m) keys.add(m[1].toUpperCase());
+  }
+  return [...keys];
 }
 
 export interface BulkPlanRow {
@@ -64,14 +77,31 @@ function coerce(x: unknown, i: number): BulkSpecItem {
 }
 
 /** Resolve distinct label names (case-insensitive) to IDs in one query. */
-async function resolveLabelMap(client: LinearClient, names: string[]): Promise<Map<string, string>> {
+async function resolveLabelMap(
+  client: LinearClient,
+  names: string[],
+  teamKeys: string[],
+): Promise<Map<string, string>> {
   const distinct = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
   if (distinct.length === 0) return new Map();
-  const filter = { or: distinct.map((n) => ({ name: { eqIgnoreCase: n } })) };
-  const labels = await client.issueLabels({ filter });
+  const nameOr = { or: distinct.map((n) => ({ name: { eqIgnoreCase: n } })) };
+  // Scope to the involved teams (+ workspace-global labels) so a name can't
+  // resolve to another team's label and get rejected ("LabelIds for incorrect team").
+  const filter = teamKeys.length
+    ? { and: [{ or: [{ team: { key: { in: teamKeys } } }, { team: { null: true } }] }, nameOr] }
+    : nameOr;
+  const labels = await withRetry(() => client.issueLabels({ filter }));
   // pickLabelIds throws (listing every miss) if any requested name is unmatched.
   const ids = pickLabelIds(labels.nodes, distinct);
   return new Map(distinct.map((n, idx) => [n.toLowerCase(), ids[idx]]));
+}
+
+/** Resolve distinct milestone refs (id or name) to ids. */
+async function resolveMilestoneMap(client: LinearClient, refs: string[]): Promise<Map<string, string>> {
+  const distinct = [...new Set(refs.filter(Boolean))];
+  const map = new Map<string, string>();
+  for (const r of distinct) map.set(r, await resolveMilestoneId(client, r));
+  return map;
 }
 
 /** Resolve distinct assignees ('me' / email / name / uuid) to user IDs in one query. */
@@ -135,9 +165,11 @@ export async function bulkUpdate(
   const labelMap = await resolveLabelMap(
     client,
     items.flatMap((i) => [...(i.labels ?? []), ...(i.addLabels ?? [])]),
+    inferTeamKeys(items.map((i) => i.id)),
   );
   const assigneeMap = await resolveAssigneeMap(client, items.map((i) => i.assignee).filter((x): x is string => !!x));
   const projectMap = await resolveProjectMap(client, items.map((i) => i.project).filter((x): x is string => !!x));
+  const milestoneMap = await resolveMilestoneMap(client, items.map((i) => i.milestone).filter((x): x is string => !!x));
   const uuidMap = await resolveIssueUuids(client, items.map((i) => i.id));
 
   const rows: BulkPlanRow[] = [];
@@ -150,6 +182,7 @@ export async function bulkUpdate(
     if (it.priority !== undefined) input.priority = it.priority;
     if (it.assignee) input.assigneeId = assigneeMap.get(it.assignee);
     if (it.project) input.projectId = projectMap.get(it.project);
+    if (it.milestone) input.projectMilestoneId = milestoneMap.get(it.milestone);
     if (Object.keys(input).length === 0) {
       rows.push({ ref: it.id, uuid: resolved?.uuid ?? null, input, skipped: "no fields to update" });
       continue;

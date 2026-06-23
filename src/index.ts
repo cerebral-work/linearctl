@@ -99,9 +99,10 @@ program
   .option("--label <name...>", "label(s) to set (replaces existing)")
   .option("--project <id>", "move to a project")
   .option("--priority <0-4>", "priority: 0=None 1=Urgent 2=High 3=Medium 4=Low")
+  .option("--milestone <ref>", "project milestone (name or id)")
   .option(
     "--stdin",
-    "bulk: read a JSON-array/NDJSON plan of {id,labels?,addLabels?,priority?,project?,assignee?} from stdin",
+    "bulk: read a JSON-array/NDJSON plan of {id,labels?,addLabels?,priority?,project?,assignee?,milestone?} from stdin",
   )
   .option("--apply", "with --stdin: write changes (default is a dry-run preview)")
   .option("--json", "emit JSON")

@@ -18,6 +18,7 @@ export interface UpdateOptions {
   label?: string[];
   project?: string;
   priority?: string;
+  milestone?: string;
   stdin?: boolean;
   apply?: boolean;
   json?: boolean;
@@ -46,6 +47,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     labels: opts.label,
     projectId: opts.project,
     priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
+    milestone: opts.milestone,
   });
 
   if (opts.json) {

@@ -88,6 +88,26 @@ export async function milestones(
   return { project: projectName, milestones: progress };
 }
 
+/**
+ * Resolve a milestone ref (UUID passes through, else a name) to its id. Milestones
+ * are project-scoped, so pass `projectId` to disambiguate by-name within a project;
+ * without it, the first workspace-wide name match wins. Throws on no match.
+ */
+export async function resolveMilestoneId(
+  client: LinearClient,
+  ref: string,
+  projectId?: string,
+): Promise<string> {
+  if (UUID_RE.test(ref)) return ref;
+  const lc = ref.trim().toLowerCase();
+  const nodes = projectId
+    ? (await (await withRetry(() => client.project(projectId))).projectMilestones({ first: 100 })).nodes
+    : (await withRetry(() => client.projectMilestones({ first: 250 }))).nodes;
+  const m = nodes.find((n) => n.name.toLowerCase() === lc);
+  if (!m) throw new Error(`no milestone matching ${JSON.stringify(ref)}.`);
+  return m.id;
+}
+
 export interface DeletedMilestone {
   id: string;
   name: string;
