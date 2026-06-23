@@ -18,14 +18,18 @@ type IssuesArgs = Parameters<LinearClient["issues"]>[0];
  * one round-trip each; acceptable for v1, the thing to watch on a full-workspace run.
  */
 async function collectIssues(client: LinearClient, args: IssuesArgs): Promise<Issue[]> {
+  // Dedupe by id: under `orderBy: updatedAt`, a row whose updatedAt changes
+  // mid-scan can reappear across page boundaries (cursor instability), so a naive
+  // concat double-counts. Keep the last-seen node per id, preserving order.
+  const byId = new Map<string, Issue>();
   let page = await withRetry(() => client.issues(args));
-  const all = [...page.nodes];
+  for (const n of page.nodes) byId.set(n.id, n);
   while (page.pageInfo.hasNextPage) {
     const current = page;
     page = await withRetry(() => current.fetchNext());
-    all.push(...page.nodes);
+    for (const n of page.nodes) byId.set(n.id, n);
   }
-  return all;
+  return [...byId.values()];
 }
 
 /** True when team keys actually narrow the query (not empty / not `all`). */
