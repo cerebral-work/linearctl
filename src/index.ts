@@ -9,6 +9,8 @@ import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
+import { show } from "./commands/show.js";
+import { ratelimit } from "./commands/ratelimit.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -128,12 +130,27 @@ program
 
 program
   .command("xref")
-  .description("Reconcile GitHub PRs <-> Linear tickets (read-only; needs `gh`).")
+  .description("Reconcile GitHub PRs <-> Linear tickets (read-only unless --fix --apply; needs `gh`).")
   .option("--repo <owner/repo>", "GitHub repo (default: current directory's repo)")
   .option("--team <key...>", "only count refs with these team-key prefix(es)")
   .option("--limit <n>", "how many merged PRs to scan", "50")
+  .option("--fix", "plan ticket-state remediation from findings (close / start)")
+  .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+program
+  .command("show")
+  .description("Show one issue in full: metadata + description.")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => show(id, opts));
+
+program
+  .command("ratelimit")
+  .description("Probe Linear API quota: remaining budget + reset time (exit 2 when exhausted).")
+  .option("--json", "emit JSON")
+  .action((opts) => ratelimit(opts));
 
 const mcpCmd = program
   .command("mcp")

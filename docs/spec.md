@@ -180,16 +180,38 @@ GitHub CLI (`gh`) installed + authenticated** — the only verb with a non-Linea
 dependency; it errors clearly (never crashes) if `gh` is unavailable. `--repo`
 omitted uses the current directory's repo.
 
+**`--fix [--apply]`** turns findings into ticket-state remediation: a merged PR
+whose body **closes** the ref (`Closes`/`Fixes`/`Resolves`) plans a close; a bare
+ref (branch/title/`Refs`) on a never-started ticket (unstarted/backlog/triage)
+plans a move to the team's started state — a merged slice never completes a
+parent. Already-started and canceled tickets are untouched. Dry-run unless
+`--apply` (the 2026-07-01 live run caught a PR body that said "Closes
+<umbrella> Bucket 1" — the preview is the guard against lying magic words).
+
+### 6.11 `linearctl show` — *implemented + verified*
+`linearctl show <id> [--json]`. Read one issue in full: metadata (state,
+assignee, priority, project, labels, parent, timestamps) + description. The
+read half `update`/`close` lacked — ticket scope no longer requires PR-body
+archaeology.
+
+### 6.12 `linearctl ratelimit` — *implemented + verified*
+`linearctl ratelimit [--json]`. Spec §7 item 7 / T18, shipped: probes the org
+quota with a complexity-1 viewer query and reads `X-RateLimit-*` off the raw
+response (requests + complexity axes, reset as ISO). Exit `2` when either axis
+is exhausted so `&&`-chains abort; an unreadable probe is **not** exhausted
+(never aborts a batch that might have headroom).
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
 
 1. **`linearctl cycle`** — current-cycle review: scope, completed, carry-over, scope-change.
 2. **`linearctl stale [--older 30d]`** — in-progress issues untouched for *N* days (rot detector).
-3. **`linearctl xref [--pr N]`** — PR ↔ issue cross-ref audit (complements `pr-triage`; ties to linear-release linkage).
+3. **`linearctl xref [--pr N]`** — ~~PR ↔ issue cross-ref audit~~ *shipped* (§6.10, incl. `--fix`).
 4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
 5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
+7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
 
 ## 8. Distribution & release
 
@@ -239,6 +261,8 @@ flowchart LR
 
 Claiming `linearctl` "fixes rate limits" would be false. It moves batch work out from under
 a *self-imposed* guard; Linear's real limits remain and are respected.
+
+**Missing capability (filed as T18):** there is currently no way to *probe* the Linear API rate-limit state before issuing calls. Batch agents discover exhaustion only when a call fails with `RATELIMITED`, which is too late (mid-batch, partial state). `linearctl ratelimit` (see §7 item 7) will surface `X-RateLimit-Remaining` / reset headers so a caller can check headroom with a single cheap query and abort or sleep before the batch rather than after.
 
 ## 10. Roadmap: CLI → native Linear agent
 
@@ -314,3 +338,4 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T15 | `chore(release): macOS notarization / codesign` | M2 | Gatekeeper quarantine fix for darwin assets |
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
 | T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
+| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |

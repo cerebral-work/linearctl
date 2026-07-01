@@ -49,22 +49,40 @@ async function ghPRList(
 const ANY_REF = /\b([A-Za-z]{2,})-(\d+)\b/g;
 const MAGIC_REF =
   /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|part of)\b[\s:#*_-]*([A-Za-z]{2,}-\d+)\b/gi;
+// The GitHub-magic-word subset that means "this PR completes the ticket" —
+// `refs`/`part of` deliberately excluded (a merged slice ≠ a done parent).
+const CLOSING_REF =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:#*_-]*([A-Za-z]{2,}-\d+)\b/gi;
 
-function extractRefs(pr: GhPR, prefixes?: Set<string>): string[] {
+export interface ExtractedRefs {
+  refs: string[];
+  /** Subset of `refs` introduced by a closing magic word (closes/fixes/resolves). */
+  closing: string[];
+}
+
+export function extractRefs(
+  pr: Pick<GhPR, "headRefName" | "title" | "body">,
+  prefixes?: Set<string>,
+): ExtractedRefs {
   const refs = new Set<string>();
-  const add = (rawPrefix: string, num: string) => {
+  const closing = new Set<string>();
+  const add = (rawPrefix: string, num: string, into: Set<string>) => {
     const prefix = rawPrefix.toUpperCase();
     if (prefixes && !prefixes.has(prefix)) return;
-    refs.add(`${prefix}-${num}`);
+    into.add(`${prefix}-${num}`);
   };
   // branch name + title: reliable ticket signals
-  for (const m of `${pr.headRefName}\n${pr.title}`.matchAll(ANY_REF)) add(m[1], m[2]);
+  for (const m of `${pr.headRefName}\n${pr.title}`.matchAll(ANY_REF)) add(m[1], m[2], refs);
   // body: only refs introduced by a magic word
   for (const m of (pr.body ?? "").matchAll(MAGIC_REF)) {
     const [prefix, num] = m[1].split("-");
-    add(prefix, num);
+    add(prefix, num, refs);
   }
-  return [...refs];
+  for (const m of (pr.body ?? "").matchAll(CLOSING_REF)) {
+    const [prefix, num] = m[1].split("-");
+    if (refs.has(`${prefix.toUpperCase()}-${num}`)) add(prefix, num, closing);
+  }
+  return { refs: [...refs], closing: [...closing] };
 }
 
 export interface XrefFinding {
@@ -78,6 +96,10 @@ export interface XrefFinding {
   prUrl: string;
   refs: string[];
   detail: string;
+  /** merged-pr-ticket-not-done only: the ref arrived via a closing magic word. */
+  closing?: boolean;
+  /** merged-pr-ticket-not-done only: the ticket's workflow-state type. */
+  stateType?: string | null;
 }
 
 export interface XrefResult {
@@ -91,16 +113,22 @@ interface TicketState {
   exists: boolean;
   done: boolean;
   state: string | null;
+  stateType: string | null;
 }
 
 async function ticketState(client: LinearClient, ref: string): Promise<TicketState> {
   try {
     const issue = await client.issue(ref);
     const state = await issue.state;
-    return { exists: true, done: state?.type === "completed", state: state?.name ?? null };
+    return {
+      exists: true,
+      done: state?.type === "completed",
+      state: state?.name ?? null,
+      stateType: state?.type ?? null,
+    };
   } catch {
     // Non-existent identifier (or a non-ticket like UTF-8) — treat as not a ticket.
-    return { exists: false, done: false, state: null };
+    return { exists: false, done: false, state: null, stateType: null };
   }
 }
 
@@ -126,8 +154,8 @@ export async function xref(
     ghPRList(opts.repo, "merged", opts.mergedLimit ?? 50),
   ]);
 
-  const openRefs = open.map((pr) => ({ pr, refs: extractRefs(pr, prefixes) }));
-  const mergedRefs = merged.map((pr) => ({ pr, refs: extractRefs(pr, prefixes) }));
+  const openRefs = open.map((pr) => ({ pr, ...extractRefs(pr, prefixes) }));
+  const mergedRefs = merged.map((pr) => ({ pr, ...extractRefs(pr, prefixes) }));
 
   const uniqueRefs = [
     ...new Set([...openRefs, ...mergedRefs].flatMap((x) => x.refs)),
@@ -169,7 +197,7 @@ export async function xref(
     }
   }
 
-  for (const { pr, refs } of mergedRefs) {
+  for (const { pr, refs, closing } of mergedRefs) {
     const real = refs.filter((r) => states.get(r)?.exists);
     if (real.length === 0) {
       findings.push({
@@ -192,6 +220,8 @@ export async function xref(
           prUrl: pr.url,
           refs: [r],
           detail: `${r} is "${st.state}", not Done`,
+          closing: closing.includes(r),
+          stateType: st.stateType,
         });
       }
     }
@@ -203,4 +233,45 @@ export async function xref(
     mergedPRs: merged.length,
     findings,
   };
+}
+
+export interface XrefFixAction {
+  ref: string;
+  action: "close" | "start";
+  reason: string;
+}
+
+const RESTARTABLE = new Set(["unstarted", "backlog", "triage"]);
+
+/**
+ * Turn `merged-pr-ticket-not-done` findings into a remediation plan.
+ *
+ * Encodes the sweep judgment (2026-07-01 session): a merged PR that says
+ * `Closes/Fixes/Resolves X` licenses closing X; a bare `Refs`/branch/title
+ * mention only licenses nudging an untouched ticket into its started state —
+ * a merged slice never completes a parent. Already-started tickets are left
+ * alone (someone's judgment is fresher than ours); canceled ones are never
+ * revived. One action per ticket; close outranks start.
+ */
+export function planXrefFixes(findings: XrefFinding[]): XrefFixAction[] {
+  const byRef = new Map<string, XrefFixAction>();
+  for (const f of findings) {
+    if (f.kind !== "merged-pr-ticket-not-done") continue;
+    const ref = f.refs[0];
+    if (!ref || f.stateType === "canceled") continue;
+    if (f.closing) {
+      byRef.set(ref, {
+        ref,
+        action: "close",
+        reason: `PR #${f.pr} closes it`,
+      });
+    } else if (RESTARTABLE.has(f.stateType ?? "") && !byRef.has(ref)) {
+      byRef.set(ref, {
+        ref,
+        action: "start",
+        reason: `PR #${f.pr} merged work for it but it was never started`,
+      });
+    }
+  }
+  return [...byRef.values()];
 }
