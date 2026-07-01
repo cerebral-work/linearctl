@@ -241,3 +241,94 @@ export async function closeIssue(client: LinearClient, id: string): Promise<Upda
   }
   return summarize(updated);
 }
+
+export interface IssueDetail {
+  id: string;
+  identifier: string;
+  title: string;
+  url: string;
+  state: string;
+  stateType: string;
+  assignee: string | null;
+  priority: string;
+  project: string | null;
+  labels: string[];
+  parent: string | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Fetch one issue's full detail — the read half the CLI lacked (PR-body
+ * archaeology was the workaround). Resolves the SDK's lazy relations
+ * (state/assignee/project/parent/labels) into a flat, render-ready record.
+ */
+export async function getIssue(client: LinearClient, id: string): Promise<IssueDetail> {
+  const issue = await client.issue(id);
+  const [state, assignee, project, parent, labels] = await Promise.all([
+    issue.state,
+    issue.assignee,
+    issue.project,
+    issue.parent,
+    issue.labels(),
+  ]);
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    title: issue.title,
+    url: issue.url,
+    state: state?.name ?? "",
+    stateType: state?.type ?? "",
+    assignee: assignee?.displayName ?? null,
+    priority: issue.priorityLabel,
+    project: project?.name ?? null,
+    labels: labels.nodes.map((l) => l.name),
+    parent: parent?.identifier ?? null,
+    description: issue.description ?? null,
+    createdAt: new Date(issue.createdAt).toISOString(),
+    updatedAt: new Date(issue.updatedAt).toISOString(),
+  };
+}
+
+/** Render an {@link IssueDetail} for the terminal: header, metadata, body. */
+export function renderIssueDetail(d: IssueDetail): string {
+  const meta = [
+    `  url: ${d.url}`,
+    `  priority: ${d.priority}${d.assignee ? `   assignee: ${d.assignee}` : ""}`,
+    ...(d.project ? [`  project: ${d.project}`] : []),
+    ...(d.labels.length ? [`  labels: ${d.labels.join(", ")}`] : []),
+    ...(d.parent ? [`  parent: ${d.parent}`] : []),
+    `  created: ${d.createdAt}   updated: ${d.updatedAt}`,
+  ].join("\n");
+  const body = d.description?.trim() ? d.description : "(no description)";
+  return `${d.identifier} [${d.state}]: ${d.title}\n${meta}\n\n${body}\n`;
+}
+
+/**
+ * Start an issue: move it to the team's `started` state (prefers one named
+ * "In Progress"). The write half of `xref --fix`'s non-closing nudge.
+ */
+export async function startIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
+  const issue = await client.issue(id);
+  const team = await issue.team;
+  if (!team) throw new Error("issue has no team; cannot resolve a started state.");
+
+  const states = await client.workflowStates({ filter: { team: { id: { eq: team.id } } } });
+  const started =
+    states.nodes.find((s) => s.type === "started" && /in progress/i.test(s.name)) ??
+    states.nodes.find((s) => s.type === "started");
+  if (!started) {
+    throw new Error("no started workflow state found for this team.");
+  }
+
+  const res = await client.updateIssue(issue.id, { stateId: started.id });
+  if (!res.success) {
+    throw new Error("Linear reported the issue start did not succeed.");
+  }
+  const updated = await res.issue;
+  if (!updated) {
+    throw new Error("issue started but the payload returned no issue.");
+  }
+  return summarize(updated);
+}
