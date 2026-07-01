@@ -180,17 +180,38 @@ GitHub CLI (`gh`) installed + authenticated** — the only verb with a non-Linea
 dependency; it errors clearly (never crashes) if `gh` is unavailable. `--repo`
 omitted uses the current directory's repo.
 
+**`--fix [--apply]`** turns findings into ticket-state remediation: a merged PR
+whose body **closes** the ref (`Closes`/`Fixes`/`Resolves`) plans a close; a bare
+ref (branch/title/`Refs`) on a never-started ticket (unstarted/backlog/triage)
+plans a move to the team's started state — a merged slice never completes a
+parent. Already-started and canceled tickets are untouched. Dry-run unless
+`--apply` (the 2026-07-01 live run caught a PR body that said "Closes
+<umbrella> Bucket 1" — the preview is the guard against lying magic words).
+
+### 6.11 `linearctl show` — *implemented + verified*
+`linearctl show <id> [--json]`. Read one issue in full: metadata (state,
+assignee, priority, project, labels, parent, timestamps) + description. The
+read half `update`/`close` lacked — ticket scope no longer requires PR-body
+archaeology.
+
+### 6.12 `linearctl ratelimit` — *implemented + verified*
+`linearctl ratelimit [--json]`. Spec §7 item 7 / T18, shipped: probes the org
+quota with a complexity-1 viewer query and reads `X-RateLimit-*` off the raw
+response (requests + complexity axes, reset as ISO). Exit `2` when either axis
+is exhausted so `&&`-chains abort; an unreadable probe is **not** exhausted
+(never aborts a batch that might have headroom).
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
 
 1. **`linearctl cycle`** — current-cycle review: scope, completed, carry-over, scope-change.
 2. **`linearctl stale [--older 30d]`** — in-progress issues untouched for *N* days (rot detector).
-3. **`linearctl xref [--pr N]`** — PR ↔ issue cross-ref audit (complements `pr-triage`; ties to linear-release linkage).
+3. **`linearctl xref [--pr N]`** — ~~PR ↔ issue cross-ref audit~~ *shipped* (§6.10, incl. `--fix`).
 4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
 5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
-7. **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
+7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
 
 ## 8. Distribution & release
 
