@@ -1,6 +1,8 @@
 import type { LinearClient, Issue } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
+import { withRetry } from "../lib/retry.js";
+import { resolveMilestoneId } from "./milestones.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -31,20 +33,19 @@ export async function createIssue(
 ): Promise<CreatedIssue> {
   const team = await resolveTeamByKey(client, params.teamKey);
 
-  let labelIds: string[] = [];
-  if (params.labels?.length) {
-    const filter = { or: params.labels.map((n) => ({ name: { eqIgnoreCase: n } })) };
-    const labels = await client.issueLabels({ filter });
-    labelIds = pickLabelIds(labels.nodes, params.labels);
-  }
+  const labelIds = params.labels?.length
+    ? await resolveLabelIds(client, team.id, params.labels)
+    : [];
 
-  const res = await client.createIssue({
-    teamId: team.id,
-    title: params.title,
-    ...(params.description ? { description: params.description } : {}),
-    ...(params.projectId ? { projectId: params.projectId } : {}),
-    ...(labelIds.length ? { labelIds } : {}),
-  });
+  const res = await withRetry(() =>
+    client.createIssue({
+      teamId: team.id,
+      title: params.title,
+      ...(params.description ? { description: params.description } : {}),
+      ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(labelIds.length ? { labelIds } : {}),
+    }),
+  );
   if (!res.success) {
     throw new Error("Linear reported the issue create did not succeed.");
   }
@@ -67,6 +68,7 @@ export interface UpdateIssueParams {
   labels?: string[];
   projectId?: string;
   priority?: number;
+  milestone?: string;
 }
 
 export interface UpdatedIssue {
@@ -101,6 +103,30 @@ async function resolveAssignee(client: LinearClient, who: string): Promise<strin
     );
   }
   return user.id;
+}
+
+/**
+ * Resolve label names to IDs, SCOPED to the target team (plus workspace-global
+ * labels), case-insensitively.
+ *
+ * Linear labels are team-scoped: a workspace-wide name match can return a
+ * *different* team's label, which the API then rejects with "LabelIds for
+ * incorrect team". Filtering by `team.id` (or null = workspace) prevents that.
+ * Throws — listing every miss — on any unmatched name (via `pickLabelIds`).
+ */
+async function resolveLabelIds(
+  client: LinearClient,
+  teamId: string,
+  names: string[],
+): Promise<string[]> {
+  const filter = {
+    and: [
+      { or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] },
+      { or: names.map((n) => ({ name: { eqIgnoreCase: n } })) },
+    ],
+  };
+  const labels = await withRetry(() => client.issueLabels({ filter }));
+  return pickLabelIds(labels.nodes, names);
 }
 
 /** Resolve a workflow-state name to its ID within a team (case-insensitive). */
@@ -144,22 +170,26 @@ export async function updateIssue(
   id: string,
   params: UpdateIssueParams,
 ): Promise<UpdatedIssue> {
-  const issue = await client.issue(id);
+  const issue = await withRetry(() => client.issue(id));
 
-  let stateId: string | undefined;
-  if (params.state) {
+  // State + labels both resolve against the issue's own team.
+  let teamId: string | undefined;
+  if (params.state || params.labels?.length) {
     const team = await issue.team;
-    if (!team) throw new Error("issue has no team; cannot resolve a state.");
-    stateId = await resolveStateId(client, team.id, params.state);
+    if (!team) throw new Error("issue has no team; cannot resolve state/labels.");
+    teamId = team.id;
   }
+  const stateId = params.state ? await resolveStateId(client, teamId!, params.state) : undefined;
   const assigneeId = params.assignee
     ? await resolveAssignee(client, params.assignee)
     : undefined;
-  let labelIds: string[] | undefined;
-  if (params.labels?.length) {
-    const filter = { or: params.labels.map((n) => ({ name: { eqIgnoreCase: n } })) };
-    const labels = await client.issueLabels({ filter });
-    labelIds = pickLabelIds(labels.nodes, params.labels);
+  const labelIds = params.labels?.length
+    ? await resolveLabelIds(client, teamId!, params.labels)
+    : undefined;
+  let projectMilestoneId: string | undefined;
+  if (params.milestone) {
+    const project = await issue.project;
+    projectMilestoneId = await resolveMilestoneId(client, params.milestone, project?.id);
   }
 
   const input = {
@@ -168,6 +198,7 @@ export async function updateIssue(
     ...(labelIds?.length ? { labelIds } : {}),
     ...(params.projectId ? { projectId: params.projectId } : {}),
     ...(params.priority !== undefined ? { priority: params.priority } : {}),
+    ...(projectMilestoneId ? { projectMilestoneId } : {}),
   };
   if (Object.keys(input).length === 0) {
     throw new Error(
@@ -175,7 +206,7 @@ export async function updateIssue(
     );
   }
 
-  const res = await client.updateIssue(issue.id, input);
+  const res = await withRetry(() => client.updateIssue(issue.id, input));
   if (!res.success) {
     throw new Error("Linear reported the issue update did not succeed.");
   }
@@ -188,7 +219,7 @@ export async function updateIssue(
 
 /** Close an issue: move it to the team's completed state (prefers one named "Done"). */
 export async function closeIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
-  const issue = await client.issue(id);
+  const issue = await withRetry(() => client.issue(id));
   const team = await issue.team;
   if (!team) throw new Error("issue has no team; cannot resolve a completed state.");
 
@@ -200,7 +231,7 @@ export async function closeIssue(client: LinearClient, id: string): Promise<Upda
     throw new Error("no completed workflow state found for this team.");
   }
 
-  const res = await client.updateIssue(issue.id, { stateId: done.id });
+  const res = await withRetry(() => client.updateIssue(issue.id, { stateId: done.id }));
   if (!res.success) {
     throw new Error("Linear reported the issue close did not succeed.");
   }
