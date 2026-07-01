@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/cerebral-work/linearctl/compare/v0.2.0...v0.3.0) (2026-07-01)
+
+
+### Features
+
+* linearctl bulk-remediation + robustness (batch, retry, --project, bulk, milestone delete, label-team fix) ([#23](https://github.com/cerebral-work/linearctl/issues/23)) ([abb0743](https://github.com/cerebral-work/linearctl/commit/abb07430db75f7727ceb17d33a52ef0c75a07fdf))
+* show + ratelimit + xref --fix — the reads and remediation the sweep sessions lacked ([#25](https://github.com/cerebral-work/linearctl/issues/25)) ([a840a0e](https://github.com/cerebral-work/linearctl/commit/a840a0e7cd6286322e6e9c9ef88eae31a06af639))
+
 ## [0.2.0](https://github.com/cerebral-work/linearctl/compare/v0.1.0...v0.2.0) (2026-06-05)
 
 
