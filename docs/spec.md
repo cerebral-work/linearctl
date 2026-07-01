@@ -190,6 +190,7 @@ Surfaced from patterns this codebase already exercises:
 4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
 5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
+7. **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
 
 ## 8. Distribution & release
 
@@ -239,6 +240,8 @@ flowchart LR
 
 Claiming `linearctl` "fixes rate limits" would be false. It moves batch work out from under
 a *self-imposed* guard; Linear's real limits remain and are respected.
+
+**Missing capability (filed as T18):** there is currently no way to *probe* the Linear API rate-limit state before issuing calls. Batch agents discover exhaustion only when a call fails with `RATELIMITED`, which is too late (mid-batch, partial state). `linearctl ratelimit` (see §7 item 7) will surface `X-RateLimit-Remaining` / reset headers so a caller can check headroom with a single cheap query and abort or sleep before the batch rather than after.
 
 ## 10. Roadmap: CLI → native Linear agent
 
@@ -314,3 +317,4 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T15 | `chore(release): macOS notarization / codesign` | M2 | Gatekeeper quarantine fix for darwin assets |
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
 | T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
+| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
