@@ -9,6 +9,7 @@ import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
+import { ratelimit } from "./commands/ratelimit.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -134,6 +135,12 @@ program
   .option("--limit <n>", "how many merged PRs to scan", "50")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+program
+  .command("ratelimit")
+  .description("Probe Linear API quota: remaining budget + reset time (exit 2 when exhausted).")
+  .option("--json", "emit JSON")
+  .action((opts) => ratelimit(opts));
 
 const mcpCmd = program
   .command("mcp")
