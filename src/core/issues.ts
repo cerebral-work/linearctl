@@ -304,3 +304,31 @@ export function renderIssueDetail(d: IssueDetail): string {
   const body = d.description?.trim() ? d.description : "(no description)";
   return `${d.identifier} [${d.state}]: ${d.title}\n${meta}\n\n${body}\n`;
 }
+
+/**
+ * Start an issue: move it to the team's `started` state (prefers one named
+ * "In Progress"). The write half of `xref --fix`'s non-closing nudge.
+ */
+export async function startIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
+  const issue = await client.issue(id);
+  const team = await issue.team;
+  if (!team) throw new Error("issue has no team; cannot resolve a started state.");
+
+  const states = await client.workflowStates({ filter: { team: { id: { eq: team.id } } } });
+  const started =
+    states.nodes.find((s) => s.type === "started" && /in progress/i.test(s.name)) ??
+    states.nodes.find((s) => s.type === "started");
+  if (!started) {
+    throw new Error("no started workflow state found for this team.");
+  }
+
+  const res = await client.updateIssue(issue.id, { stateId: started.id });
+  if (!res.success) {
+    throw new Error("Linear reported the issue start did not succeed.");
+  }
+  const updated = await res.issue;
+  if (!updated) {
+    throw new Error("issue started but the payload returned no issue.");
+  }
+  return summarize(updated);
+}

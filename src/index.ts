@@ -130,10 +130,12 @@ program
 
 program
   .command("xref")
-  .description("Reconcile GitHub PRs <-> Linear tickets (read-only; needs `gh`).")
+  .description("Reconcile GitHub PRs <-> Linear tickets (read-only unless --fix --apply; needs `gh`).")
   .option("--repo <owner/repo>", "GitHub repo (default: current directory's repo)")
   .option("--team <key...>", "only count refs with these team-key prefix(es)")
   .option("--limit <n>", "how many merged PRs to scan", "50")
+  .option("--fix", "plan ticket-state remediation from findings (close / start)")
+  .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
 
