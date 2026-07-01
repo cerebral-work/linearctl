@@ -4,6 +4,7 @@ import { printJson, printTable } from "../lib/output.js";
 
 export interface TriageOptions {
   team?: string[];
+  project?: string;
   json?: boolean;
 }
 
@@ -15,7 +16,7 @@ export interface TriageOptions {
  */
 export async function triage(opts: TriageOptions): Promise<void> {
   const client = makeClient();
-  const items = await triageCore(client, opts.team);
+  const items = await triageCore(client, opts.team, opts.project);
 
   if (opts.json) {
     printJson(items);

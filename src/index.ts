@@ -4,7 +4,7 @@ import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
-import { milestone } from "./commands/milestone.js";
+import { milestone, milestoneDelete } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { stale } from "./commands/stale.js";
@@ -32,6 +32,7 @@ program
   .description('"What have we been up to": recent issue activity grouped by status.')
   .option("--since <window>", "look-back window (e.g. 7d, 24h, 2w)", "7d")
   .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--project <ref>", "restrict to a project (id or name)")
   .option("--json", "emit JSON")
   .action((opts) => digest(opts));
 
@@ -50,15 +51,24 @@ program
   .command("triage")
   .description("Surface issues needing triage: Triage state, or unassigned/unestimated/no-priority.")
   .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--project <ref>", "restrict to a project (id or name)")
   .option("--json", "emit JSON")
   .action((opts) => triage(opts));
 
-program
+const milestoneCmd = program
   .command("milestone")
   .description("Project / milestone progress (done vs open).")
   .option("--project <id>", "restrict to a project")
   .option("--json", "emit JSON")
   .action((opts) => milestone(opts));
+
+milestoneCmd
+  .command("delete")
+  .description("Delete a project milestone by id (dry-run unless --yes).")
+  .argument("<id>", "milestone UUID (find via `milestone --json`)")
+  .option("--yes", "perform the delete (default is a dry-run preview)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => milestoneDelete(id, opts));
 
 const projectCmd = program
   .command("project")
@@ -82,13 +92,19 @@ projectCmd
 
 program
   .command("update")
-  .description("Update an issue: state / assignee / labels / project / priority.")
-  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .description("Update an issue (or bulk-update many via --stdin).")
+  .argument("[id]", "issue id or identifier (e.g. CER-123); omit when using --stdin")
   .option("--state <name>", "workflow state name (e.g. 'In Progress')")
   .option("--assignee <who>", "assignee: 'me', an email, a display name, or a user id")
   .option("--label <name...>", "label(s) to set (replaces existing)")
   .option("--project <id>", "move to a project")
   .option("--priority <0-4>", "priority: 0=None 1=Urgent 2=High 3=Medium 4=Low")
+  .option("--milestone <ref>", "project milestone (name or id)")
+  .option(
+    "--stdin",
+    "bulk: read a JSON-array/NDJSON plan of {id,labels?,addLabels?,priority?,project?,assignee?,milestone?} from stdin",
+  )
+  .option("--apply", "with --stdin: write changes (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((id, opts) => update(id, opts));
 
@@ -103,6 +119,7 @@ program
   .command("stale")
   .description("Sweep stale issues by last-update age (report-only; --label + --apply to relabel).")
   .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--project <ref>", "restrict to a project (id or name)")
   .option("--older-than <window>", "warn threshold (e.g. 30d, 2w)", "30d")
   .option("--label <name>", "label to add to stale issues (mutating; dry-run unless --apply)")
   .option("--apply", "actually write --label (default is a dry-run preview)")
