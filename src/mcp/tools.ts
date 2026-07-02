@@ -4,7 +4,12 @@ import { z } from "zod";
 import type { LinearClient } from "@linear/sdk";
 import { getWhoami } from "../core/whoami.js";
 import { createIssue, updateIssue, closeIssue } from "../core/issues.js";
-import { createProject, listProjects } from "../core/projects.js";
+import {
+  createProject,
+  listProjects,
+  getProjectOverview,
+  setProjectOverview,
+} from "../core/projects.js";
 import { triage, digest, stale } from "../core/grooming.js";
 import { milestones } from "../core/milestones.js";
 import { sinceToDate } from "../lib/time.js";
@@ -139,6 +144,36 @@ export function registerTools(server: McpServer, client: LinearClient): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ id }) => run(() => closeIssue(client, id)),
+  );
+
+  server.registerTool(
+    "project_overview_get",
+    {
+      title: "Read a project overview",
+      description:
+        "Read a Linear project's overview document (markdown) — the project's Overview tab.",
+      inputSchema: {
+        project: z.string().describe("project UUID, slug id, or name"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ project }) => run(() => getProjectOverview(client, project)),
+  );
+
+  server.registerTool(
+    "project_overview_set",
+    {
+      title: "Set a project overview",
+      description:
+        "Replace a Linear project's overview document with markdown (whole-document replace; refuses empty content).",
+      inputSchema: {
+        project: z.string().describe("project UUID, slug id, or name"),
+        content: z.string().describe("the full overview document as markdown"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ project, content }) =>
+      run(() => setProjectOverview(client, project, content)),
   );
 
   // --- read / grooming tools (CER-1162) ---

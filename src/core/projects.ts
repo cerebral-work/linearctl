@@ -1,5 +1,22 @@
-import type { LinearClient } from "@linear/sdk";
+import type { LinearClient, Project } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
+
+export const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Resolve a project by UUID, slug id, or name (case-insensitive). */
+export async function resolveProject(
+  client: LinearClient,
+  ref: string,
+): Promise<Project> {
+  if (UUID_RE.test(ref)) return client.project(ref);
+  const projects = await client.projects({
+    filter: { or: [{ name: { eqIgnoreCase: ref } }, { slugId: { eq: ref } }] },
+  });
+  const project = projects.nodes[0];
+  if (!project) throw new Error(`no project matching ${JSON.stringify(ref)}.`);
+  return project;
+}
 
 export interface CreateProjectParams {
   name: string;
@@ -76,4 +93,58 @@ export async function listProjects(
     state: p.state,
     progress: p.progress,
   }));
+}
+
+export interface ProjectOverview {
+  project: { id: string; name: string; url: string; slugId: string };
+  /** The overview document as markdown; null when the project has none. */
+  content: string | null;
+}
+
+/**
+ * Read a project's overview (the `Project.content` markdown document — what the
+ * Linear UI shows on the project's Overview tab). See docs/spec.md §6.13.
+ */
+export async function getProjectOverview(
+  client: LinearClient,
+  projectRef: string,
+): Promise<ProjectOverview> {
+  const p = await resolveProject(client, projectRef);
+  return {
+    project: { id: p.id, name: p.name, url: p.url, slugId: p.slugId },
+    content: p.content ?? null,
+  };
+}
+
+/**
+ * Replace a project's overview document with `content` (markdown, whole-document
+ * semantics — Linear has no partial-update surface for `Project.content`).
+ * Refuses empty content: blanking an overview is a delete, not an update, and
+ * must be an explicit human act in the UI. See docs/spec.md §6.13.
+ */
+export async function setProjectOverview(
+  client: LinearClient,
+  projectRef: string,
+  content: string,
+): Promise<ProjectOverview> {
+  if (content.trim() === "") {
+    throw new Error(
+      "refusing to write an empty overview (that would blank the project's Overview doc).",
+    );
+  }
+  const p = await resolveProject(client, projectRef);
+  const payload = await client.updateProject(p.id, { content });
+  if (!payload.success) {
+    throw new Error("Linear reported the overview update did not succeed.");
+  }
+  const updated = (await payload.project) ?? p;
+  return {
+    project: {
+      id: updated.id,
+      name: updated.name,
+      url: updated.url,
+      slugId: updated.slugId,
+    },
+    content: updated.content ?? content,
+  };
 }

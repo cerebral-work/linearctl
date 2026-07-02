@@ -201,6 +201,16 @@ response (requests + complexity axes, reset as ISO). Exit `2` when either axis
 is exhausted so `&&`-chains abort; an unreadable probe is **not** exhausted
 (never aborts a batch that might have headroom).
 
+### 6.13 `linearctl doc` — *implemented + verified (read path live; write path unit-tested)*
+`linearctl doc get-overview --project <ref> [--json]` / `doc set-overview
+--project <ref> --file <md|-> [--json]`. Read / replace a project's **overview
+document** (`Project.content`, markdown — the UI's Overview tab). `get` prints
+raw markdown (pipe to a file); `set` is a whole-document replace from a file or
+stdin and **refuses empty content** (blanking an overview is a delete, not an
+update). Closes the headless gap behind the unsigned-paas house rule that plan
+docs mirror to the Linear project overview. MCP: `project_overview_get` /
+`project_overview_set`.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
@@ -212,6 +222,7 @@ Surfaced from patterns this codebase already exercises:
 5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
 7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
+8. *(shipped — §6.13)* **`linearctl doc`** — get/set a project's overview document headlessly. (Observed pain-point: the unsigned-paas house rule mirrors plan docs to the Linear project overview, which was unfulfillable without the UI.)
 
 ## 8. Distribution & release
 
@@ -339,3 +350,4 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
 | T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
 | T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
+| T19 | `feat(doc): project overview get/set` — *shipped (§6.13)* | M3 | `doc get-overview` / `doc set-overview --file <md\|->` on `Project.content`; whole-document replace, empty-content guard; MCP `project_overview_get`/`_set` |

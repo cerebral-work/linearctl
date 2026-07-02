@@ -34,16 +34,19 @@ describe("mcp serve handshake", () => {
       for (const t of [
         "whoami", "project_list", "digest", "triage", "milestone", "stale",
         "file_issue", "project_create", "issue_update", "issue_close",
+        "project_overview_get", "project_overview_set",
       ]) {
         expect(names).toContain(t);
       }
-      expect(tools.length).toBeGreaterThanOrEqual(10);
+      expect(tools.length).toBeGreaterThanOrEqual(12);
 
       // read tools carry readOnlyHint; writes do not
       expect(readOnly).toContain("triage");
       expect(readOnly).toContain("digest");
+      expect(readOnly).toContain("project_overview_get");
       expect(readOnly).not.toContain("file_issue");
       expect(readOnly).not.toContain("issue_update");
+      expect(readOnly).not.toContain("project_overview_set");
     } finally {
       await client.close();
     }
