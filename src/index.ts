@@ -11,6 +11,7 @@ import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
 import { ratelimit } from "./commands/ratelimit.js";
+import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -145,6 +146,25 @@ program
   .argument("<id>", "issue id or identifier (e.g. CER-123)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+const docCmd = program
+  .command("doc")
+  .description("Project documents: read / write a project's overview (markdown).");
+
+docCmd
+  .command("get-overview")
+  .description("Print a project's overview document (raw markdown; --json wraps it).")
+  .requiredOption("--project <ref>", "project (UUID, slug id, or name)")
+  .option("--json", "emit JSON")
+  .action((opts) => docGetOverview(opts));
+
+docCmd
+  .command("set-overview")
+  .description("Replace a project's overview document from a markdown file ('-' reads stdin).")
+  .requiredOption("--project <ref>", "project (UUID, slug id, or name)")
+  .requiredOption("--file <path>", "markdown file ('-' reads stdin)")
+  .option("--json", "emit JSON")
+  .action((opts) => docSetOverview(opts));
 
 program
   .command("ratelimit")

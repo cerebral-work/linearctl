@@ -1,20 +1,7 @@
-import type { LinearClient, Project, ProjectMilestone } from "@linear/sdk";
+import type { LinearClient, ProjectMilestone } from "@linear/sdk";
 import { mapPool } from "../lib/pool.js";
 import { withRetry } from "../lib/retry.js";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Resolve a project by UUID, slug id, or name (case-insensitive). */
-async function resolveProject(client: LinearClient, ref: string): Promise<Project> {
-  if (UUID_RE.test(ref)) return client.project(ref);
-  const projects = await client.projects({
-    filter: { or: [{ name: { eqIgnoreCase: ref } }, { slugId: { eq: ref } }] },
-  });
-  const project = projects.nodes[0];
-  if (!project) throw new Error(`no project matching ${JSON.stringify(ref)}.`);
-  return project;
-}
+import { resolveProject, UUID_RE } from "./projects.js";
 
 /** Count every issue matching a filter (paginated; connection has no aggregate). */
 async function countIssues(

@@ -7,9 +7,11 @@ Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 ## Status: command surface complete + plugin/MCP shipped
 
 `whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
-`triage`, `stale`, `xref`, `milestone`, and `mcp serve` (stdio MCP server — 10
-tools: reads `whoami`/`project_list`/`digest`/`triage`/`milestone`/`stale`, writes
-`file_issue`/`project_create`/`issue_update`/`issue_close`) are implemented and
+`triage`, `stale`, `xref`, `milestone`, `show`, `ratelimit`, `doc`
+(get-overview / set-overview), and `mcp serve` (stdio MCP server — 12 tools:
+reads `whoami`/`project_list`/`digest`/`triage`/`milestone`/`stale`/`project_overview_get`,
+writes `file_issue`/`project_create`/`issue_update`/`issue_close`/`project_overview_set`)
+are implemented and
 verified against the live API — **every command in §6 is implemented; no stubs
 remain.** The
 linearctl Project + backlog are dogfood-filed in Linear (team CER). If you add a
