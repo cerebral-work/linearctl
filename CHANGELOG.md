@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/cerebral-work/linearctl/compare/v0.3.0...v0.4.0) (2026-07-02)
+
+
+### Features
+
+* **doc:** project overview get/set — mirror plan docs to Linear headlessly ([#26](https://github.com/cerebral-work/linearctl/issues/26)) ([36e6625](https://github.com/cerebral-work/linearctl/commit/36e66256f322c6458ac26b8965cdb0b1c6fc1208))
+
 ## [0.3.0](https://github.com/cerebral-work/linearctl/compare/v0.2.0...v0.3.0) (2026-07-01)
 
 
