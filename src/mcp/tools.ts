@@ -3,7 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { LinearClient } from "@linear/sdk";
 import { getWhoami } from "../core/whoami.js";
-import { createIssue, updateIssue, closeIssue } from "../core/issues.js";
+import { createIssue, updateIssue, closeIssue, createComment } from "../core/issues.js";
 import {
   createProject,
   listProjects,
@@ -144,6 +144,21 @@ export function registerTools(server: McpServer, client: LinearClient): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async ({ id }) => run(() => closeIssue(client, id)),
+  );
+
+  server.registerTool(
+    "comment_issue",
+    {
+      title: "Comment on an issue",
+      description:
+        "Add a comment to a Linear issue. Non-destructive (additive) — the missing write mutation next to issue_update / issue_close.",
+      inputSchema: {
+        id: z.string().describe("issue id or identifier, e.g. CER-123"),
+        body: z.string().describe("comment body (markdown)"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ id, body }) => run(() => createComment(client, id, body)),
   );
 
   server.registerTool(

@@ -1,9 +1,10 @@
 # `linearctl` — Specification
 
 **Status:** command surface complete. Every command in §6 — `whoami`, `digest`,
-`file`, `triage`, `milestone`, `project`, `update`/`close`, `stale`, `xref`, and
-`mcp serve` (MCP server for Claude Desktop / Code) — is implemented **and verified
-against the live API**. Built + shipped with **bun**.
+`file`, `triage`, `milestone`, `project`, `update`/`close`, `stale`, `xref`,
+`show`, `ratelimit`, `doc`, `comment`, and `mcp serve` (MCP server for Claude
+Desktop / Code) — is implemented **and verified against the live API**. Built +
+shipped with **bun**.
 
 **Tooling rationale** (bun vs npm, what we declined and why) lives in
 [`docs/decisions.md`](./decisions.md). This document is the product + design
@@ -144,9 +145,10 @@ table of name / state / progress / id. `--desc -` reads markdown from stdin.
 Desktop / Claude Code — the shared core behind the plugin track (`docs/plugin-spec.md`).
 Tools call the same `src/core/*` fns as the CLI:
 - **read** (`readOnlyHint`): `whoami`, `project_list`, `digest`, `triage`,
-  `milestone`, `stale`.
+  `milestone`, `stale`, `project_overview_get`.
 - **write** (non-destructive): `file_issue`, `project_create`, `issue_update`,
-  `issue_close`. No delete/archive tool (`docs/plugin-spec.md` D6).
+  `issue_close`, `project_overview_set`, `comment_issue`. No delete/archive tool
+  (`docs/plugin-spec.md` D6).
 
 Speaks JSON-RPC on stdout (logs to stderr only); `LINEAR_API_KEY` validated at
 startup. Tool errors are returned as `isError` results, never crashes.
@@ -210,6 +212,15 @@ stdin and **refuses empty content** (blanking an overview is a delete, not an
 update). Closes the headless gap behind the unsigned-paas house rule that plan
 docs mirror to the Linear project overview. MCP: `project_overview_get` /
 `project_overview_set`.
+
+### 6.14 `linearctl comment` — *implemented + verified*
+`linearctl comment <id> --body <md|-> [--json]`. Add a comment to an issue
+headless — the write mutation between `update`/`close` (mutate fields) and
+`show` (read). `--body` is required; `--body -` reads markdown from stdin (same
+convention as `file --desc -`). No `--apply` gate — a comment is
+non-destructive (additive), so safe-by-default is satisfied without a dry-run
+flag. Single Linear mutation: `createComment({ issueId, body })`. MCP:
+`comment_issue` (non-destructive, not read-only). See `docs/features/comment.md`.
 
 ## 7. Proposed additional workflows (backlog)
 
