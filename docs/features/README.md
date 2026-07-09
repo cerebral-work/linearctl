@@ -19,6 +19,8 @@ Linear via the dogfood loop) · `in-progress` · `shipped`.
 | [Search](./search.md) | `linearctl search` | proposed | Arbitrary-criteria issue search — the `grep` for Linear. |
 | [History](./history.md) | `linearctl history` | proposed | Issue activity timeline — the audit trail `show` doesn't surface. |
 | [Templates](./template.md) | `linearctl template` | proposed | File issues from reusable markdown templates. |
+| [TUI dashboard](./tui.md) | `linearctl tui` | proposed | Full-screen keyboard-driven dashboard — 5 panes over the same `core/*`. |
+| [Interactive mode](./interactive.md) | `linearctl <cmd> --interactive` | proposed | Prompts, spinners, styled output when TTY + no `--json` + missing args. |
 
 ## Reference
 
