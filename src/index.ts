@@ -7,6 +7,7 @@ import { triage } from "./commands/triage.js";
 import { milestone, milestoneDelete } from "./commands/milestone.js";
 import { projectCreate, projectList } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
+import { comment } from "./commands/comment.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
@@ -117,6 +118,14 @@ program
   .argument("<id>", "issue id or identifier (e.g. CER-123)")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
+
+program
+  .command("comment")
+  .description("Add a comment to an issue (headless; non-destructive).")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .requiredOption("--body <markdown>", "comment body (markdown; '-' reads stdin)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => comment(id, opts));
 
 program
   .command("stale")
