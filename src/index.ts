@@ -43,8 +43,8 @@ program
 program
   .command("file")
   .description("Create a Linear issue from the CLI (headless / batch).")
-  .argument("<title>", "issue title")
-  .requiredOption("--team <key>", "team key (e.g. CER)")
+  .argument("[title]", "issue title (prompted for at a TTY when omitted)")
+  .option("--team <key>", "team key (e.g. CER; prompted for at a TTY when omitted)")
   .option("--project <id>", "attach to a project")
   .option("--desc <markdown>", "description (markdown; '-' reads stdin)")
   .option("--label <name...>", "label(s) to attach")
@@ -191,6 +191,10 @@ mcpCmd
   .action(() => serve());
 
 program.parseAsync().catch((err: unknown) => {
+  // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.
+  if (err instanceof Error && err.name === "ExitPromptError") {
+    process.exit(130);
+  }
   console.error(err instanceof Error ? `error: ${err.message}` : err);
   process.exit(1);
 });
