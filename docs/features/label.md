@@ -1,6 +1,6 @@
 # Feature: `linearctl label` — label management
 
-**Status:** proposed
+**Status:** ticketed — [CER-1558](https://linear.app/cerebral-work/issue/CER-1558)
 **Command:** `linearctl label list|create|rename [--team CER] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3
