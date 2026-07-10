@@ -1,6 +1,6 @@
 # Feature: `linearctl history` — issue activity timeline
 
-**Status:** proposed
+**Status:** ticketed — [CER-1561](https://linear.app/cerebral-work/issue/CER-1561)
 **Command:** `linearctl history <id> [--limit 20] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3

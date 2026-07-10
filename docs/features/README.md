@@ -11,16 +11,16 @@ Linear via the dogfood loop) · `in-progress` · `shipped`.
 
 | Feature | Command | Status | One-liner |
 |---------|---------|--------|-----------|
-| [Park user stories](./park.md) | `linearctl park` | proposed | File issues directly into Backlog with a user-story scaffold + label. |
-| [Comment](./comment.md) | `linearctl comment` | proposed | Add comments to issues headless — the missing write mutation. |
-| [Label management](./label.md) | `linearctl label` | proposed | Create / list / rename labels headless. |
-| [Cycle review](./cycle.md) | `linearctl cycle` | proposed | Current-cycle scope, carry-over, and assignment. Expands roadmap T8. |
-| [Duplicate check](./dupcheck.md) | `linearctl dupcheck` | proposed | Fuzzy-match titles before filing to prevent duplicates. |
-| [Search](./search.md) | `linearctl search` | proposed | Arbitrary-criteria issue search — the `grep` for Linear. |
-| [History](./history.md) | `linearctl history` | proposed | Issue activity timeline — the audit trail `show` doesn't surface. |
-| [Templates](./template.md) | `linearctl template` | proposed | File issues from reusable markdown templates. |
-| [TUI dashboard](./tui.md) | `linearctl tui` | proposed | Full-screen keyboard-driven dashboard — 5 panes over the same `core/*`. |
-| [Interactive mode](./interactive.md) | `linearctl <cmd> --interactive` | proposed | Prompts, spinners, styled output when TTY + no `--json` + missing args. |
+| [Park user stories](./park.md) | `linearctl park` | ticketed CER-1557 | File issues directly into Backlog with a user-story scaffold + label. |
+| [Comment](./comment.md) | `linearctl comment` | in-progress CER-1345 | Add comments to issues headless — the missing write mutation. |
+| [Label management](./label.md) | `linearctl label` | ticketed CER-1558 | Create / list / rename labels headless. |
+| [Cycle review](./cycle.md) | `linearctl cycle` | ticketed CER-1143 | Current-cycle scope, carry-over, and assignment. Expands roadmap T8. |
+| [Duplicate check](./dupcheck.md) | `linearctl dupcheck` | ticketed CER-1559 | Fuzzy-match titles before filing to prevent duplicates. |
+| [Search](./search.md) | `linearctl search` | ticketed CER-1560 | Arbitrary-criteria issue search — the `grep` for Linear. |
+| [History](./history.md) | `linearctl history` | ticketed CER-1561 | Issue activity timeline — the audit trail `show` doesn't surface. |
+| [Templates](./template.md) | `linearctl template` | ticketed CER-1562 | File issues from reusable markdown templates. |
+| [TUI dashboard](./tui.md) | `linearctl tui` | ticketed CER-1550 | Full-screen keyboard-driven dashboard — 5 panes over the same `core/*`. |
+| [Interactive mode](./interactive.md) | `linearctl <cmd> --interactive` | ticketed CER-1551 | Prompts, spinners, styled output when TTY + no `--json` + missing args. |
 
 ## Reference
 

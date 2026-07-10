@@ -1,6 +1,6 @@
 # Feature: `linearctl template` — file issues from reusable templates
 
-**Status:** proposed
+**Status:** ticketed — [CER-1562](https://linear.app/cerebral-work/issue/CER-1562)
 **Command:** `linearctl template list|file|validate [--team CER] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3

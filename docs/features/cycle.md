@@ -1,6 +1,6 @@
 # Feature: `linearctl cycle` — current-cycle review
 
-**Status:** proposed (expands roadmap T8)
+**Status:** ticketed — [CER-1143](https://linear.app/cerebral-work/issue/CER-1143) (expands roadmap T8)
 **Command:** `linearctl cycle [--team CER] [--cycle active|<id>] [--json]`
 **Roadmap:** §7 item 1 (T8)
 **Milestone:** M3
