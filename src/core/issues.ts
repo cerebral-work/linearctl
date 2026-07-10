@@ -332,3 +332,38 @@ export async function startIssue(client: LinearClient, id: string): Promise<Upda
   }
   return summarize(updated);
 }
+
+export interface CommentResult {
+  identifier: string;
+  commentId: string;
+  url: string;
+}
+
+/**
+ * Add a comment to an issue. `id` accepts a UUID or identifier (CER-123).
+ * Single Linear mutation: `createComment({ issueId, body })`. Non-destructive
+ * (additive) — the gap between `update`/`close` (mutate fields) and `show`
+ * (read), per `docs/features/comment.md`.
+ */
+export async function createComment(
+  client: LinearClient,
+  id: string,
+  body: string,
+): Promise<CommentResult> {
+  const issue = await withRetry(() => client.issue(id));
+  const res = await withRetry(() =>
+    client.createComment({ issueId: issue.id, body }),
+  );
+  if (!res.success) {
+    throw new Error("Linear reported the comment create did not succeed.");
+  }
+  const comment = await res.comment;
+  if (!comment) {
+    throw new Error("comment created but the payload returned no comment.");
+  }
+  return {
+    identifier: issue.identifier,
+    commentId: comment.id,
+    url: issue.url,
+  };
+}
