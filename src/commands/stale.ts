@@ -2,6 +2,7 @@ import { makeClient } from "../client.js";
 import { stale as staleCore, applyStaleLabel } from "../core/grooming.js";
 import { sinceToDate } from "../lib/time.js";
 import { printJson, printTable } from "../lib/output.js";
+import { pc } from "../lib/style.js";
 
 export interface StaleOptions {
   team?: string[];
@@ -58,6 +59,13 @@ export async function stale(opts: StaleOptions): Promise<void> {
       title: i.title,
     })),
     ["identifier", "bucket", "days", "state", "assignee", "title"],
+    (value, column, row) => {
+      if (column === "identifier") return pc.cyan(value);
+      if (column === "bucket" || column === "days") {
+        return row.bucket === "critical" ? pc.red(value) : pc.yellow(value);
+      }
+      return value;
+    },
   );
   if (labelResult) {
     process.stdout.write(

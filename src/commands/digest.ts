@@ -2,6 +2,7 @@ import { makeClient } from "../client.js";
 import { digest as digestCore } from "../core/grooming.js";
 import { sinceToDate } from "../lib/time.js";
 import { printJson, printTable } from "../lib/output.js";
+import { pc } from "../lib/style.js";
 
 export interface DigestOptions {
   since: string;
@@ -29,7 +30,7 @@ export async function digest(opts: DigestOptions): Promise<void> {
     `${result.total} issue(s) updated since ${result.since}\n`,
   );
   for (const group of result.groups) {
-    process.stdout.write(`\n${group.type} (${group.count})\n`);
+    process.stdout.write(`\n${pc.bold(`${group.type} (${group.count})`)}\n`);
     printTable(
       group.items.map((i) => ({
         identifier: i.identifier,
@@ -38,6 +39,7 @@ export async function digest(opts: DigestOptions): Promise<void> {
         title: i.title,
       })),
       ["identifier", "state", "assignee", "title"],
+      (value, column) => (column === "identifier" ? pc.cyan(value) : value),
     );
   }
 }
