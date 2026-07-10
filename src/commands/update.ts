@@ -3,6 +3,9 @@ import { updateIssue, closeIssue } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
+import { isInteractive } from "../lib/interactive.js";
+import { promptText, promptSelect, promptConfirm } from "../lib/prompts.js";
+import { withSpinner } from "../lib/spinner.js";
 import type { UpdatedIssue } from "../core/issues.js";
 
 function renderIssue(issue: UpdatedIssue): void {
@@ -41,20 +44,83 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     throw new Error("update needs an <id> — or pass --stdin for a bulk update.");
   }
 
-  const issue = await updateIssue(client, id, {
-    state: opts.state,
-    assignee: opts.assignee,
-    labels: opts.label,
-    projectId: opts.project,
-    priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
-    milestone: opts.milestone,
-  });
+  const hasMutation =
+    opts.state !== undefined ||
+    opts.assignee !== undefined ||
+    opts.label !== undefined ||
+    opts.project !== undefined ||
+    opts.priority !== undefined ||
+    opts.milestone !== undefined;
+
+  if (!hasMutation && isInteractive(opts.json)) {
+    const proceed = await updateWizard(client, id, opts);
+    if (!proceed) {
+      process.stdout.write("aborted — nothing written.\n");
+      return;
+    }
+  }
+
+  const issue = await withSpinner(`Updating ${id}…`, () =>
+    updateIssue(client, id, {
+      state: opts.state,
+      assignee: opts.assignee,
+      labels: opts.label,
+      projectId: opts.project,
+      priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
+      milestone: opts.milestone,
+    }),
+  );
 
   if (opts.json) {
     printJson(issue);
     return;
   }
   renderIssue(issue);
+}
+
+/**
+ * Interactive wizard for `update <id>` with no mutation flags: pick a field,
+ * pick a value, confirm — then the normal update path runs with the chosen
+ * flag filled in. Returns false when the operator declines the confirm.
+ * See docs/features/interactive.md (CER-1551).
+ */
+async function updateWizard(
+  client: ReturnType<typeof makeClient>,
+  id: string,
+  opts: UpdateOptions,
+): Promise<boolean> {
+  const field = await promptSelect("Update what?", [
+    { name: "state", value: "state" },
+    { name: "assignee", value: "assignee" },
+    { name: "priority", value: "priority" },
+  ]);
+
+  let summary: string;
+  if (field === "state") {
+    const issue = await client.issue(id);
+    const team = await issue.team;
+    if (!team) throw new Error(`${id}: could not resolve the issue's team.`);
+    const states = await team.states({ first: 50 });
+    opts.state = await promptSelect(
+      "New state",
+      states.nodes.map((s) => ({ name: s.name, value: s.name })),
+    );
+    summary = `set state → ${opts.state}`;
+  } else if (field === "assignee") {
+    opts.assignee = await promptText("Assignee ('me', an email, or a display name)");
+    summary = `set assignee → ${opts.assignee}`;
+  } else {
+    opts.priority = await promptSelect("Priority", [
+      { name: "1 — Urgent", value: "1" },
+      { name: "2 — High", value: "2" },
+      { name: "3 — Medium", value: "3" },
+      { name: "4 — Low", value: "4" },
+      { name: "0 — None", value: "0" },
+    ]);
+    summary = `set priority → ${opts.priority}`;
+  }
+
+  return promptConfirm(`${id}: ${summary}?`);
 }
 
 /**

@@ -27,10 +27,12 @@
   "author": "Christian M. Todie <chris@todie.io>",
   "license": "MIT",
   "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
     "@linear/sdk": "^86.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cli-table3": "^0.6.5",
     "commander": "^15.0.0",
+    "ora": "^9.4.1",
     "picocolors": "^1.1.1",
     "zod": "^4.4.3"
   },
