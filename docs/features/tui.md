@@ -1,6 +1,6 @@
 # Feature: `linearctl tui` — full-screen dashboard
 
-**Status:** proposed
+**Status:** ticketed — [CER-1550](https://linear.app/cerebral-work/issue/CER-1550)
 **Command:** `linearctl tui [--team CER] [--project ID] [--focus digest|triage|milestone|xref]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M4 (after the core command surface is complete)

@@ -1,6 +1,6 @@
 # Feature: `linearctl` interactive mode — prompts, spinners, and styled output
 
-**Status:** proposed
+**Status:** ticketed — [CER-1551](https://linear.app/cerebral-work/issue/CER-1551)
 **Command:** `linearctl <cmd> --interactive` (or auto-detected when stdout is a TTY and no `--json`)
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3 (after the write commands stabilize)
