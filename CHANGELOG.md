@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/cerebral-work/linearctl/compare/v0.4.0...v0.5.0) (2026-07-10)
+
+
+### Features
+
+* **cli:** interactive mode — prompts + spinners (M3) ([#37](https://github.com/cerebral-work/linearctl/issues/37)) ([e21fccb](https://github.com/cerebral-work/linearctl/commit/e21fccbaa9b7980656e6c42ba76f2a13ac649183))
+* **cli:** TTY-gated styled tables — picocolors + cli-table3 behind isStyled() ([#35](https://github.com/cerebral-work/linearctl/issues/35)) ([e892f37](https://github.com/cerebral-work/linearctl/commit/e892f37a74d671be63030bb6470f68e922ed7389))
+* **comment:** add headless comment command + comment_issue MCP tool ([#33](https://github.com/cerebral-work/linearctl/issues/33)) ([596a229](https://github.com/cerebral-work/linearctl/commit/596a229dc3e008dbd91dc8a13fee3f583a41c89d))
+
+
+### Documentation
+
+* add feature proposals + TUI/CLI library landscape reference ([06931b6](https://github.com/cerebral-work/linearctl/commit/06931b69526e3d66f613bf87f6dd7a9e0a48cb4c))
+* add tui + interactive mode feature proposals ([bc61c40](https://github.com/cerebral-work/linearctl/commit/bc61c404d7ce76f8724ae202d764c1fa2ddcb023))
+* **features:** mark proposals ticketed with CER IDs after dogfood filing ([#34](https://github.com/cerebral-work/linearctl/issues/34)) ([a2672c3](https://github.com/cerebral-work/linearctl/commit/a2672c348ccef9708052a52094d024773f6bed10))
+
 ## [0.4.0](https://github.com/cerebral-work/linearctl/compare/v0.3.0...v0.4.0) (2026-07-02)
 
 
