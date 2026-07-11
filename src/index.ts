@@ -12,6 +12,7 @@ import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
 import { searchCmd } from "./commands/search.js";
+import { dupcheckCmd } from "./commands/dupcheck.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -52,6 +53,8 @@ program
   .option("--assignee <who>", "assignee: 'me', an email, a display name, or a user id")
   .option("--priority <0-4|none>", "priority: 1=Urgent 2=High 3=Medium 4=Low, 0/none=unset")
   .option("--milestone <ref>", "project milestone (name or id; pair with --project for name lookup)")
+  .option("--check-dups", "refuse to create when a likely duplicate exists (see dupcheck)")
+  .option("--force", "with --check-dups: file anyway")
   .option("--json", "emit JSON")
   .action((title, opts) => file(title, opts));
 
@@ -153,6 +156,17 @@ program
   .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+program
+  .command("dupcheck")
+  .description("Surface likely duplicate issues for a candidate title (read-only).")
+  .argument("<title>", "candidate issue title")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER)")
+  .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--threshold <0-1>", "minimum similarity score to report", "0.85")
+  .option("--limit <n>", "max matches to report", "5")
+  .option("--json", "emit JSON")
+  .action((title, opts) => dupcheckCmd(title, opts));
 
 program
   .command("search")
