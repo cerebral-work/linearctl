@@ -13,6 +13,10 @@ export interface CreateIssueParams {
   assignee?: string;
   priority?: number;
   milestone?: string;
+  /** Create directly in the team's state of this TYPE (e.g. "backlog"). */
+  stateType?: string;
+  /** Label names to attach, creating any that don't exist on the team. */
+  ensureLabels?: string[];
 }
 
 export interface CreatedIssue {
@@ -39,9 +43,23 @@ export async function createIssue(
   const labelIds = params.labels?.length
     ? await resolveLabelIds(client, team.id, params.labels)
     : [];
+  if (params.ensureLabels?.length) {
+    labelIds.push(...(await ensureLabelIds(client, team.id, params.ensureLabels)));
+  }
   const assigneeId = params.assignee
     ? await resolveAssignee(client, params.assignee)
     : undefined;
+  let stateId: string | undefined;
+  if (params.stateType) {
+    const states = await withRetry(() =>
+      client.workflowStates({ filter: { team: { id: { eq: team.id } } } }),
+    );
+    const state = states.nodes.find((s) => s.type === params.stateType);
+    if (!state) {
+      throw new Error(`no ${params.stateType} workflow state found for team ${params.teamKey}.`);
+    }
+    stateId = state.id;
+  }
   const projectMilestoneId = params.milestone
     ? await resolveMilestoneId(client, params.milestone, params.projectId)
     : undefined;
@@ -56,6 +74,7 @@ export async function createIssue(
       ...(assigneeId ? { assigneeId } : {}),
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
       ...(projectMilestoneId ? { projectMilestoneId } : {}),
+      ...(stateId ? { stateId } : {}),
     }),
   );
   if (!res.success) {
@@ -141,6 +160,41 @@ async function resolveLabelIds(
   };
   const labels = await withRetry(() => client.issueLabels({ filter }));
   return pickLabelIds(labels.nodes, names);
+}
+
+/**
+ * Resolve label names to ids, CREATING any that don't exist on the team —
+ * the opposite contract to `resolveLabelIds`' fail-loud. Used by `park`'s
+ * auto-attached `user-story` label (docs/features/park.md).
+ */
+export async function ensureLabelIds(
+  client: LinearClient,
+  teamId: string,
+  names: string[],
+): Promise<string[]> {
+  const filter = {
+    and: [
+      { or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] },
+      { or: names.map((n) => ({ name: { eqIgnoreCase: n } })) },
+    ],
+  };
+  const existing = await withRetry(() => client.issueLabels({ filter }));
+  const byName = new Map(existing.nodes.map((l) => [l.name.toLowerCase(), l.id]));
+  const ids: string[] = [];
+  for (const name of names) {
+    const found = byName.get(name.trim().toLowerCase());
+    if (found) {
+      ids.push(found);
+      continue;
+    }
+    const res = await withRetry(() => client.createIssueLabel({ teamId, name }));
+    const label = await res.issueLabel;
+    if (!res.success || !label) {
+      throw new Error(`could not create label ${JSON.stringify(name)}.`);
+    }
+    ids.push(label.id);
+  }
+  return ids;
 }
 
 /** Resolve a workflow-state name to its ID within a team (case-insensitive). */

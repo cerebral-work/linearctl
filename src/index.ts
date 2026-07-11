@@ -13,6 +13,7 @@ import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
 import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
+import { park } from "./commands/park.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -158,6 +159,20 @@ program
   .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+program
+  .command("park")
+  .description("Park a user story straight into Backlog (collect, don't commit).")
+  .argument("<title>", "story title")
+  .option("--team <key>", "team key (e.g. CER)")
+  .option("--project <id>", "attach to a project")
+  .option("--persona <name>", "story persona ('As a <persona>…')")
+  .option("--want <text>", "what the persona wants (defaults to the title)")
+  .option("--why <text>", "the payoff ('so that …')")
+  .option("--accept <md>", "acceptance criteria, one per line ('-' reads stdin)")
+  .option("--label <name...>", "extra label(s) to attach (must exist)")
+  .option("--json", "emit JSON")
+  .action((title, opts) => park(title, opts));
 
 program
   .command("dupcheck")
