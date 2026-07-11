@@ -81,6 +81,8 @@ export interface UpdateIssueParams {
   projectId?: string;
   priority?: number;
   milestone?: string;
+  title?: string;
+  description?: string;
 }
 
 export interface UpdatedIssue {
@@ -211,6 +213,8 @@ export async function updateIssue(
     ...(params.projectId ? { projectId: params.projectId } : {}),
     ...(params.priority !== undefined ? { priority: params.priority } : {}),
     ...(projectMilestoneId ? { projectMilestoneId } : {}),
+    ...(params.title !== undefined ? { title: params.title } : {}),
+    ...(params.description !== undefined ? { description: params.description } : {}),
   };
   if (Object.keys(input).length === 0) {
     throw new Error(
