@@ -1,6 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { sinceToDate } from "../lib/time.js";
+import { parsePriority } from "../lib/priority.js";
 import { resolveAssignee } from "./issues.js";
 import {
   collectIssuesFlat,
@@ -83,11 +84,7 @@ export function buildSearchFilter(
   and.push(...projectClause(opts.project));
 
   if (opts.priority !== undefined) {
-    const p = opts.priority === "none" ? 0 : Number(opts.priority);
-    if (!Number.isInteger(p) || p < 0 || p > 4) {
-      throw new Error(`--priority must be 0-4 or "none", got ${JSON.stringify(opts.priority)}.`);
-    }
-    and.push({ priority: { eq: p } });
+    and.push({ priority: { eq: parsePriority(opts.priority) } });
   }
 
   if (opts.text) {

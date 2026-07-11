@@ -10,6 +10,9 @@ export interface CreateIssueParams {
   description?: string;
   projectId?: string;
   labels?: string[];
+  assignee?: string;
+  priority?: number;
+  milestone?: string;
 }
 
 export interface CreatedIssue {
@@ -36,6 +39,12 @@ export async function createIssue(
   const labelIds = params.labels?.length
     ? await resolveLabelIds(client, team.id, params.labels)
     : [];
+  const assigneeId = params.assignee
+    ? await resolveAssignee(client, params.assignee)
+    : undefined;
+  const projectMilestoneId = params.milestone
+    ? await resolveMilestoneId(client, params.milestone, params.projectId)
+    : undefined;
 
   const res = await withRetry(() =>
     client.createIssue({
@@ -44,6 +53,9 @@ export async function createIssue(
       ...(params.description ? { description: params.description } : {}),
       ...(params.projectId ? { projectId: params.projectId } : {}),
       ...(labelIds.length ? { labelIds } : {}),
+      ...(assigneeId ? { assigneeId } : {}),
+      ...(params.priority !== undefined ? { priority: params.priority } : {}),
+      ...(projectMilestoneId ? { projectMilestoneId } : {}),
     }),
   );
   if (!res.success) {
