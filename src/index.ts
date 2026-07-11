@@ -22,7 +22,7 @@ import { linkCmd } from "./commands/link.js";
 import { commentsCmd } from "./commands/comments.js";
 import { releaseNotesCmd } from "./commands/release-notes.js";
 import { ratelimit } from "./commands/ratelimit.js";
-import { docGetOverview, docSetOverview } from "./commands/doc.js";
+import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -335,6 +335,33 @@ program
 const docCmd = program
   .command("doc")
   .description("Project documents: read / write a project's overview (markdown).");
+
+docCmd
+  .command("list")
+  .description("List documents (optionally scoped to a project).")
+  .option("--project <ref>", "project (UUID, slug id, or name)")
+  .option("--json", "emit JSON")
+  .action((opts) => docList(opts));
+
+docCmd
+  .command("create")
+  .description("Create a document under a project, issue, or team (exactly one).")
+  .argument("<title>", "document title")
+  .option("--project <ref>", "parent project (UUID, slug id, or name)")
+  .option("--issue <id>", "parent issue (id or identifier)")
+  .option("--team <key>", "parent team key")
+  .option("--content <md>", "markdown body ('-' reads stdin)")
+  .option("--json", "emit JSON")
+  .action((title, opts) => docCreate(title, opts));
+
+docCmd
+  .command("update")
+  .description("Update a document's content and/or title by id or slug.")
+  .argument("<ref>", "document id or slug")
+  .option("--content <md>", "replacement markdown body ('-' reads stdin)")
+  .option("--title <text>", "replacement title")
+  .option("--json", "emit JSON")
+  .action((ref, opts) => docUpdate(ref, opts));
 
 docCmd
   .command("get-overview")
