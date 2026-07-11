@@ -18,6 +18,7 @@ import { labelList, labelCreate, labelRename } from "./commands/label.js";
 import { historyCmd } from "./commands/history.js";
 import { templateList, templateValidate, templateFile } from "./commands/template.js";
 import { cycleCmd } from "./commands/cycle.js";
+import { linkCmd } from "./commands/link.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -58,6 +59,9 @@ program
   .option("--assignee <who>", "assignee: 'me', an email, a display name, or a user id")
   .option("--priority <0-4|none>", "priority: 1=Urgent 2=High 3=Medium 4=Low, 0/none=unset")
   .option("--milestone <ref>", "project milestone (name or id; pair with --project for name lookup)")
+  .option("--parent <id>", "create as a sub-issue of this issue (id or identifier)")
+  .option("--blocked-by <id...>", "issue(s) that block this one")
+  .option("--related-to <id...>", "issue(s) to link as related")
   .option("--check-dups", "refuse to create when a likely duplicate exists (see dupcheck)")
   .option("--force", "with --check-dups: file anyway")
   .option("--json", "emit JSON")
@@ -116,6 +120,9 @@ program
   .option("--project <id>", "move to a project")
   .option("--priority <0-4>", "priority: 0=None 1=Urgent 2=High 3=Medium 4=Low")
   .option("--milestone <ref>", "project milestone (name or id)")
+  .option("--parent <id>", "re-parent under this issue (id or identifier)")
+  .option("--blocked-by <id...>", "add issue(s) that block this one")
+  .option("--related-to <id...>", "add issue(s) as related")
   .option("--title <text>", "replace the issue title")
   .option("--desc <markdown>", "replace the description (markdown; '-' reads stdin)")
   .option(
@@ -280,6 +287,15 @@ templateCmd
   .option("--var <key=value...>", "template variable(s); value '-' reads stdin")
   .option("--json", "emit JSON")
   .action((name, opts) => templateFile(name, opts));
+
+program
+  .command("link")
+  .description("Attach a URL to an issue (e.g. a PR) — creates a Linear attachment.")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .argument("<url>", "URL to attach")
+  .option("--title <text>", "attachment title (defaults to the URL)")
+  .option("--json", "emit JSON")
+  .action((id, url, opts) => linkCmd(id, url, opts));
 
 program
   .command("history")

@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { updateIssue, closeIssue } from "../core/issues.js";
+import { updateIssue, closeIssue, addRelations } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
@@ -24,6 +24,9 @@ export interface UpdateOptions {
   milestone?: string;
   title?: string;
   desc?: string;
+  parent?: string;
+  blockedBy?: string[];
+  relatedTo?: string[];
   stdin?: boolean;
   apply?: boolean;
   json?: boolean;
@@ -58,7 +61,10 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     opts.priority !== undefined ||
     opts.milestone !== undefined ||
     opts.title !== undefined ||
-    description !== undefined;
+    description !== undefined ||
+    opts.parent !== undefined ||
+    opts.blockedBy !== undefined ||
+    opts.relatedTo !== undefined;
 
   if (!hasMutation && isInteractive(opts.json)) {
     const proceed = await updateWizard(client, id, opts);
@@ -68,24 +74,55 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     }
   }
 
-  const issue = await withSpinner(`Updating ${id}…`, () =>
-    updateIssue(client, id, {
-      state: opts.state,
-      assignee: opts.assignee,
-      labels: opts.label,
-      projectId: opts.project,
-      priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
-      milestone: opts.milestone,
-      title: opts.title,
-      description,
-    }),
-  );
+  // Relations are separate mutations, not issueUpdate fields — an invocation
+  // carrying ONLY --blocked-by/--related-to must skip the field update (which
+  // would throw "nothing to update").
+  const hasFieldMutation =
+    opts.state !== undefined ||
+    opts.assignee !== undefined ||
+    opts.label !== undefined ||
+    opts.project !== undefined ||
+    opts.priority !== undefined ||
+    opts.milestone !== undefined ||
+    opts.title !== undefined ||
+    description !== undefined ||
+    opts.parent !== undefined;
+
+  let issue: UpdatedIssue | undefined;
+  if (hasFieldMutation) {
+    issue = await withSpinner(`Updating ${id}…`, () =>
+      updateIssue(client, id, {
+        state: opts.state,
+        assignee: opts.assignee,
+        labels: opts.label,
+        projectId: opts.project,
+        priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
+        milestone: opts.milestone,
+        title: opts.title,
+        description,
+        parent: opts.parent,
+      }),
+    );
+  }
+  let relations: { blockedBy: string[]; relatedTo: string[] } | undefined;
+  if (opts.blockedBy?.length || opts.relatedTo?.length) {
+    relations = await withSpinner("Wiring relations…", () =>
+      addRelations(client, id, { blockedBy: opts.blockedBy, relatedTo: opts.relatedTo }),
+    );
+  }
 
   if (opts.json) {
-    printJson(issue);
+    printJson({ ...(issue ?? { identifier: id }), ...(relations ? { relations } : {}) });
     return;
   }
-  renderIssue(issue);
+  if (issue) renderIssue(issue);
+  if (relations) {
+    const parts = [
+      ...relations.blockedBy.map((r) => `blocked-by ${r}`),
+      ...relations.relatedTo.map((r) => `related-to ${r}`),
+    ];
+    process.stdout.write(`${id}: ${parts.join(", ")}\n`);
+  }
 }
 
 /**
