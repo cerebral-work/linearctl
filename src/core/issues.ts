@@ -13,6 +13,8 @@ export interface CreateIssueParams {
   assignee?: string;
   priority?: number;
   milestone?: string;
+  /** Parent issue (UUID or identifier) — creates as a sub-issue. */
+  parent?: string;
   /** Create directly in the team's state of this TYPE (e.g. "backlog"). */
   stateType?: string;
   /** Label names to attach, creating any that don't exist on the team. */
@@ -63,6 +65,9 @@ export async function createIssue(
   const projectMilestoneId = params.milestone
     ? await resolveMilestoneId(client, params.milestone, params.projectId)
     : undefined;
+  const parentId = params.parent
+    ? await resolveIssueId(client, params.parent)
+    : undefined;
 
   const res = await withRetry(() =>
     client.createIssue({
@@ -75,6 +80,7 @@ export async function createIssue(
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
       ...(projectMilestoneId ? { projectMilestoneId } : {}),
       ...(stateId ? { stateId } : {}),
+      ...(parentId ? { parentId } : {}),
     }),
   );
   if (!res.success) {
@@ -102,6 +108,8 @@ export interface UpdateIssueParams {
   milestone?: string;
   title?: string;
   description?: string;
+  /** Re-parent under this issue (UUID or identifier). */
+  parent?: string;
 }
 
 export interface UpdatedIssue {
@@ -160,6 +168,73 @@ async function resolveLabelIds(
   };
   const labels = await withRetry(() => client.issueLabels({ filter }));
   return pickLabelIds(labels.nodes, names);
+}
+
+/** Resolve an issue ref (UUID or identifier like CER-123) to its UUID. */
+export async function resolveIssueId(client: LinearClient, ref: string): Promise<string> {
+  if (UUID_RE.test(ref)) return ref;
+  const issue = await withRetry(() => client.issue(ref));
+  return issue.id;
+}
+
+export interface RelationSpec {
+  blockedBy?: string[];
+  relatedTo?: string[];
+}
+
+/**
+ * Wire issue relations: `blockedBy` creates blocks-relations FROM each blocker
+ * TO the target (Linear semantics: issueId blocks relatedIssueId); `relatedTo`
+ * creates related-links. Idempotent server-side (duplicate relations error —
+ * surfaced, not swallowed). Fills CER-1192 item 2 / CER-1342.
+ */
+export async function addRelations(
+  client: LinearClient,
+  targetRef: string,
+  spec: RelationSpec,
+): Promise<{ blockedBy: string[]; relatedTo: string[] }> {
+  const targetId = await resolveIssueId(client, targetRef);
+  const done = { blockedBy: [] as string[], relatedTo: [] as string[] };
+  for (const ref of spec.blockedBy ?? []) {
+    const blockerId = await resolveIssueId(client, ref);
+    const res = await withRetry(() =>
+      client.createIssueRelation({
+        issueId: blockerId,
+        relatedIssueId: targetId,
+        type: "blocks" as Parameters<LinearClient["createIssueRelation"]>[0]["type"],
+      }),
+    );
+    if (!res.success) throw new Error(`could not create blocked-by relation from ${ref}.`);
+    done.blockedBy.push(ref);
+  }
+  for (const ref of spec.relatedTo ?? []) {
+    const otherId = await resolveIssueId(client, ref);
+    const res = await withRetry(() =>
+      client.createIssueRelation({
+        issueId: targetId,
+        relatedIssueId: otherId,
+        type: "related" as Parameters<LinearClient["createIssueRelation"]>[0]["type"],
+      }),
+    );
+    if (!res.success) throw new Error(`could not create related-to relation to ${ref}.`);
+    done.relatedTo.push(ref);
+  }
+  return done;
+}
+
+/** Attach a URL to an issue (PR links etc.) — CER-1192 item 3. */
+export async function attachLink(
+  client: LinearClient,
+  issueRef: string,
+  url: string,
+  title?: string,
+): Promise<{ identifier: string; url: string }> {
+  const issueId = await resolveIssueId(client, issueRef);
+  const res = await withRetry(() =>
+    client.createAttachment({ issueId, url, title: title ?? url }),
+  );
+  if (!res.success) throw new Error("Linear reported the attachment create did not succeed.");
+  return { identifier: issueRef, url };
 }
 
 /**
@@ -259,6 +334,7 @@ export async function updateIssue(
     const project = await issue.project;
     projectMilestoneId = await resolveMilestoneId(client, params.milestone, project?.id);
   }
+  const parentId = params.parent ? await resolveIssueId(client, params.parent) : undefined;
 
   const input = {
     ...(stateId ? { stateId } : {}),
@@ -269,6 +345,7 @@ export async function updateIssue(
     ...(projectMilestoneId ? { projectMilestoneId } : {}),
     ...(params.title !== undefined ? { title: params.title } : {}),
     ...(params.description !== undefined ? { description: params.description } : {}),
+    ...(parentId ? { parentId } : {}),
   };
   if (Object.keys(input).length === 0) {
     throw new Error(

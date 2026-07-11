@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { createIssue } from "../core/issues.js";
+import { createIssue, addRelations } from "../core/issues.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 import { isInteractive } from "../lib/interactive.js";
@@ -16,6 +16,9 @@ export interface FileOptions {
   assignee?: string;
   priority?: string;
   milestone?: string;
+  parent?: string;
+  blockedBy?: string[];
+  relatedTo?: string[];
   checkDups?: boolean;
   force?: boolean;
   json?: boolean;
@@ -70,8 +73,17 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
       assignee: opts.assignee,
       priority: opts.priority !== undefined ? parsePriority(opts.priority) : undefined,
       milestone: opts.milestone,
+      parent: opts.parent,
     }),
   );
+  if (opts.blockedBy?.length || opts.relatedTo?.length) {
+    await withSpinner("Wiring relations…", () =>
+      addRelations(client, issue.identifier, {
+        blockedBy: opts.blockedBy,
+        relatedTo: opts.relatedTo,
+      }),
+    );
+  }
 
   if (opts.json) {
     printJson(issue);
