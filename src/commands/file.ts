@@ -7,6 +7,8 @@ import { promptText, promptTeamKey, promptOptionalText } from "../lib/prompts.js
 import { withSpinner } from "../lib/spinner.js";
 import { parsePriority } from "../lib/priority.js";
 import { dupcheck } from "../core/dupcheck.js";
+import { parseFileBatchSpec, batchFileIssues } from "../core/file-batch.js";
+import { fetchRateLimit, isExhausted } from "../core/ratelimit.js";
 
 export interface FileOptions {
   team?: string;
@@ -21,7 +23,60 @@ export interface FileOptions {
   relatedTo?: string[];
   checkDups?: boolean;
   force?: boolean;
+  stdin?: boolean;
+  apply?: boolean;
   json?: boolean;
+}
+
+/**
+ * Batch path (`--stdin`): read a JSON-array/NDJSON plan of issues, dry-run by
+ * default, `--apply` to create. Pre-flight quota gate aborts before a batch
+ * can exhaust the window (spec §7 T6, CER-1141). Mirrors `update --stdin`.
+ */
+async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOptions): Promise<void> {
+  const items = parseFileBatchSpec(await readStdin());
+  if (items.length === 0) throw new Error("--stdin: no issues in the plan.");
+
+  if (!opts.apply) {
+    if (opts.json) {
+      printJson({ apply: false, count: items.length, items });
+      return;
+    }
+    process.stdout.write(
+      `[dry-run] would create ${items.length} issue(s); re-run with --apply to write.\n`,
+    );
+    for (const i of items) {
+      process.stdout.write(`  [${i.team ?? opts.team ?? "??"}] ${i.title}\n`);
+    }
+    return;
+  }
+
+  const apiKey = process.env.LINEAR_API_KEY as string;
+  const quota = await fetchRateLimit(apiKey).catch(() => null);
+  if (quota && (isExhausted(quota) || (quota.requests.remaining ?? Infinity) < items.length * 3)) {
+    throw new Error(
+      `rate budget too low for a ${items.length}-issue batch ` +
+        `(${quota.requests.remaining ?? "?"} requests remaining) — see \`linearctl ratelimit\`.`,
+    );
+  }
+
+  const outcomes = await batchFileIssues(client, items, opts.team, (done, total) => {
+    if (!opts.json) process.stderr.write(`\r\x1b[2K${done}/${total} created…`);
+  });
+  if (!opts.json) process.stderr.write("\r\x1b[2K");
+
+  const ok = outcomes.filter((o) => o.created);
+  const failed = outcomes.filter((o) => o.error);
+  if (opts.json) {
+    printJson({ apply: true, created: ok.length, failed: failed.length, outcomes });
+    return;
+  }
+  process.stdout.write(`created ${ok.length}/${outcomes.length} issue(s).\n`);
+  for (const o of ok) process.stdout.write(`  ${o.created!.identifier}  ${o.title}\n`);
+  if (failed.length) {
+    process.stdout.write(`failed ${failed.length}:\n`);
+    for (const o of failed) process.stdout.write(`  ${o.title}: ${o.error}\n`);
+  }
 }
 
 /**
@@ -36,6 +91,12 @@ export interface FileOptions {
  */
 export async function file(title: string | undefined, opts: FileOptions): Promise<void> {
   const client = makeClient();
+
+  if (opts.stdin) {
+    await fileBatch(client, opts);
+    return;
+  }
+
   let description = opts.desc === "-" ? await readStdin() : opts.desc;
   let team = opts.team;
 
