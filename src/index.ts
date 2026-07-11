@@ -64,6 +64,11 @@ program
   .option("--related-to <id...>", "issue(s) to link as related")
   .option("--check-dups", "refuse to create when a likely duplicate exists (see dupcheck)")
   .option("--force", "with --check-dups: file anyway")
+  .option(
+    "--stdin",
+    "batch: read a JSON-array/NDJSON plan of {title,team?,desc?,labels?,project?,assignee?,priority?,milestone?,parent?} from stdin",
+  )
+  .option("--apply", "with --stdin: create the issues (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((title, opts) => file(title, opts));
 
