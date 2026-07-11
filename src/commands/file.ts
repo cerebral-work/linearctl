@@ -6,6 +6,7 @@ import { isInteractive } from "../lib/interactive.js";
 import { promptText, promptTeamKey, promptOptionalText } from "../lib/prompts.js";
 import { withSpinner } from "../lib/spinner.js";
 import { parsePriority } from "../lib/priority.js";
+import { dupcheck } from "../core/dupcheck.js";
 
 export interface FileOptions {
   team?: string;
@@ -15,6 +16,8 @@ export interface FileOptions {
   assignee?: string;
   priority?: string;
   milestone?: string;
+  checkDups?: boolean;
+  force?: boolean;
   json?: boolean;
 }
 
@@ -42,6 +45,20 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
   if (!team) throw new Error("file needs --team <key> (e.g. CER).");
   const teamKey = team;
   const issueTitle = title;
+
+  if (opts.checkDups && !opts.force) {
+    const dups = await withSpinner("Checking for duplicates…", () =>
+      dupcheck(client, issueTitle, { teamKeys: [teamKey] }),
+    );
+    if (dups.matches.length) {
+      const lines = dups.matches
+        .map((m) => `  ${m.identifier} (${m.score.toFixed(2)})  ${m.title}`)
+        .join("\n");
+      throw new Error(
+        `${dups.matches.length} likely duplicate(s) found (use --force to file anyway):\n${lines}`,
+      );
+    }
+  }
 
   const issue = await withSpinner("Creating issue…", () =>
     createIssue(client, {
