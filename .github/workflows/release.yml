@@ -8,6 +8,10 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual lever: GitHub occasionally drops a push event (observed 2026-07-11 —
+  # the v0.7.0 release-PR merge produced NO event, so nothing tagged). This lets
+  # `gh workflow run release.yml` re-drive release-please without a new commit.
+  workflow_dispatch:
 
 permissions:
   contents: read
