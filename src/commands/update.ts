@@ -22,6 +22,8 @@ export interface UpdateOptions {
   project?: string;
   priority?: string;
   milestone?: string;
+  title?: string;
+  desc?: string;
   stdin?: boolean;
   apply?: boolean;
   json?: boolean;
@@ -44,13 +46,19 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     throw new Error("update needs an <id> — or pass --stdin for a bulk update.");
   }
 
+  // `--desc -` reads stdin — resolve BEFORE the interactive trigger so a piped
+  // body doesn't race the wizard's TTY check.
+  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+
   const hasMutation =
     opts.state !== undefined ||
     opts.assignee !== undefined ||
     opts.label !== undefined ||
     opts.project !== undefined ||
     opts.priority !== undefined ||
-    opts.milestone !== undefined;
+    opts.milestone !== undefined ||
+    opts.title !== undefined ||
+    description !== undefined;
 
   if (!hasMutation && isInteractive(opts.json)) {
     const proceed = await updateWizard(client, id, opts);
@@ -68,6 +76,8 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
       projectId: opts.project,
       priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
       milestone: opts.milestone,
+      title: opts.title,
+      description,
     }),
   );
 
