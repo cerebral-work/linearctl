@@ -20,6 +20,7 @@ import { templateList, templateValidate, templateFile } from "./commands/templat
 import { cycleCmd } from "./commands/cycle.js";
 import { linkCmd } from "./commands/link.js";
 import { commentsCmd } from "./commands/comments.js";
+import { releaseNotesCmd } from "./commands/release-notes.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -267,6 +268,16 @@ program
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+program
+  .command("release-notes")
+  .description("Markdown notes from issues completed in a range, grouped by label (read-only).")
+  .option("--since <window|date>", "range start: window (7d) or ISO date (2026-07-01)", "7d")
+  .option("--until <window|date>", "range end (default: now)")
+  .option("--team <key...>", "restrict to team key(s)")
+  .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--json", "emit JSON instead of markdown")
+  .action((opts) => releaseNotesCmd(opts));
 
 program
   .command("cycle")
