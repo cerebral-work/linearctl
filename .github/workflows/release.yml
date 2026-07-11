@@ -163,6 +163,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+          gh release upload "${{ needs.release-please.outputs.tag_name || inputs.tag }}" \
             "${{ steps.archive.outputs.name }}" \
             "${{ steps.archive.outputs.name }}.sha256" --clobber
