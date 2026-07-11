@@ -15,6 +15,7 @@ import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
 import { labelList, labelCreate, labelRename } from "./commands/label.js";
+import { historyCmd } from "./commands/history.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -241,6 +242,14 @@ program
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+program
+  .command("history")
+  .description("Issue activity timeline: state/assignee/priority/label/comment events (read-only).")
+  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .option("--limit <n>", "newest N events to show", "20")
+  .option("--json", "emit JSON")
+  .action((id, opts) => historyCmd(id, opts));
 
 const docCmd = program
   .command("doc")
