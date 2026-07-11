@@ -3,6 +3,8 @@ import { xref as xrefCore, planXrefFixes, type XrefFixAction } from "../core/xre
 import { closeIssue, startIssue, type UpdatedIssue } from "../core/issues.js";
 import { mapPool } from "../lib/pool.js";
 import { printJson, printTable } from "../lib/output.js";
+import { isInteractive } from "../lib/interactive.js";
+import { promptSelect } from "../lib/prompts.js";
 
 export interface XrefOptions {
   repo?: string;
@@ -16,6 +18,37 @@ export interface XrefOptions {
 interface FixOutcome extends XrefFixAction {
   result?: UpdatedIssue;
   error?: string;
+}
+
+/**
+ * Walk a fix plan through a per-action prompt. `yes`/`no` act on one action,
+ * `all` fast-tracks the rest, `abort` skips everything remaining. Pure given
+ * the injected prompt — exported for tests.
+ */
+export async function gateFixPlan(
+  plan: XrefFixAction[],
+  ask: (a: XrefFixAction) => Promise<string>,
+): Promise<{ confirmed: XrefFixAction[]; skipped: FixOutcome[] }> {
+  const confirmed: XrefFixAction[] = [];
+  const skipped: FixOutcome[] = [];
+  let applyRest = false;
+  for (let i = 0; i < plan.length; i++) {
+    const a = plan[i];
+    if (!applyRest) {
+      const answer = await ask(a);
+      if (answer === "abort") {
+        skipped.push(...plan.slice(i).map((r) => ({ ...r, error: "skipped (aborted)" })));
+        break;
+      }
+      if (answer === "no") {
+        skipped.push({ ...a, error: "skipped (declined)" });
+        continue;
+      }
+      if (answer === "all") applyRest = true;
+    }
+    confirmed.push(a);
+  }
+  return { confirmed, skipped };
 }
 
 /**
@@ -57,8 +90,26 @@ export async function xref(opts: XrefOptions): Promise<void> {
   const plan = planXrefFixes(result.findings);
   let outcomes: FixOutcome[] = plan;
 
-  if (opts.apply && plan.length) {
-    outcomes = await mapPool(plan, 2, async (a): Promise<FixOutcome> => {
+  // Interactive apply: confirm each remediation before writing. Declined
+  // actions are reported as skipped, never executed. Headless --apply is
+  // unchanged (the batch/CI path deliberately has no gate — spec §6.10).
+  let toApply = plan;
+  let skipped: FixOutcome[] = [];
+  if (opts.apply && plan.length && isInteractive(opts.json)) {
+    const gated = await gateFixPlan(plan, (a) =>
+      promptSelect(`${a.ref}: ${a.action} (${a.reason}) — apply?`, [
+        { name: "yes", value: "yes" },
+        { name: "no (skip)", value: "no" },
+        { name: "yes to all remaining", value: "all" },
+        { name: "abort (skip all remaining)", value: "abort" },
+      ]),
+    );
+    toApply = gated.confirmed;
+    skipped = gated.skipped;
+  }
+
+  if (opts.apply && toApply.length) {
+    outcomes = await mapPool(toApply, 2, async (a): Promise<FixOutcome> => {
       try {
         const result =
           a.action === "close" ? await closeIssue(client, a.ref) : await startIssue(client, a.ref);
@@ -67,7 +118,10 @@ export async function xref(opts: XrefOptions): Promise<void> {
         return { ...a, error: err instanceof Error ? err.message : String(err) };
       }
     });
+  } else if (opts.apply) {
+    outcomes = [];
   }
+  outcomes = [...outcomes, ...skipped];
 
   if (opts.json) {
     printJson({ applied: Boolean(opts.apply), plan: outcomes });
