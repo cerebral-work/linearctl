@@ -9,9 +9,18 @@ on:
   push:
     branches: [main]
   # Manual lever: GitHub occasionally drops a push event (observed 2026-07-11 —
-  # the v0.7.0 release-PR merge produced NO event, so nothing tagged). This lets
-  # `gh workflow run release.yml` re-drive release-please without a new commit.
+  # the v0.7.0 release-PR merge produced NO event, so nothing tagged). Bare
+  # dispatch re-drives release-please. `tag` drives the BUILD MATRIX against an
+  # existing tag/release instead — the recovery for the 2026-07-11 case where
+  # the integration token was refused on releases#create (grants identical to
+  # prior green runs; user-token creates fine): mint the release by hand, then
+  # dispatch with tag=vX.Y.Z to compile/attest/upload the binaries.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build+upload assets for (skips release-please)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -19,6 +28,7 @@ permissions:
 jobs:
   release-please:
     name: Release PR / tag
+    if: github.event_name == 'push' || inputs.tag == ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -100,7 +110,7 @@ jobs:
   build:
     name: Compile · attest · upload (${{ matrix.asset }})
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: ${{ !cancelled() && (needs.release-please.outputs.release_created == 'true' || inputs.tag != '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # gh release upload
@@ -120,6 +130,9 @@ jobs:
             asset: darwin_amd64
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Manual drive builds the TAGGED code, not whatever main moved to.
+          ref: ${{ inputs.tag || github.sha }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -135,7 +148,7 @@ jobs:
       - name: Archive (GoReleaser-style name for mise asset scoring)
         id: archive
         run: |
-          VER="${{ needs.release-please.outputs.tag_name }}"
+          VER="${{ needs.release-please.outputs.tag_name || inputs.tag }}"
           NAME="linearctl_${VER#v}_${{ matrix.asset }}.tar.gz"
           tar -czf "$NAME" linearctl
           sha256sum "$NAME" > "$NAME.sha256"
