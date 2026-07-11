@@ -64,7 +64,9 @@ export function issueChoices(
     IDENTIFIER_RE.test(t) &&
     !matches.some((m) => m.value.toLowerCase() === t)
   ) {
-    matches.unshift({ name: `${t.toUpperCase()} (use directly)`, value: t.toUpperCase() });
+    // Last, not first: while typing "cer-2" en route to "cer-22", a phantom
+    // "CER-2 (use directly)" as the top choice is an accidental-Enter hazard.
+    matches.push({ name: `${t.toUpperCase()} (use directly)`, value: t.toUpperCase() });
   }
   return matches;
 }

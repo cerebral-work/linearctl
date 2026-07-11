@@ -21,12 +21,18 @@ describe("issueChoices", () => {
       "CER-1",
       "OPS-9",
     ]);
-    expect(issueChoices(items, "cer-2").map((c) => c.value)).toEqual(["CER-22"]);
+    // "cer-2" is also identifier-shaped: direct-use entry appends AFTER the
+    // real match so Enter-on-first still selects CER-22.
+    expect(issueChoices(items, "cer-2").map((c) => c.value)).toEqual([
+      "CER-22",
+      "CER-2",
+    ]);
   });
 
-  test("identifier-shaped term outside the window is offered directly", () => {
-    const choices = issueChoices(items, "cer-999");
-    expect(choices[0]).toEqual({ name: "CER-999 (use directly)", value: "CER-999" });
+  test("identifier-shaped term with no matches is offered directly (sole choice)", () => {
+    expect(issueChoices(items, "cer-999")).toEqual([
+      { name: "CER-999 (use directly)", value: "CER-999" },
+    ]);
   });
 
   test("identifier-shaped term already matched is not duplicated", () => {
