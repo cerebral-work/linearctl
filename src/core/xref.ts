@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LinearClient } from "@linear/sdk";
 import { mapPool } from "../lib/pool.js";
+import { classifyError, withRetry } from "../lib/retry.js";
 
 const pexec = promisify(execFile);
 
@@ -116,17 +117,39 @@ interface TicketState {
   stateType: string | null;
 }
 
+const TICKET_STATE_QUERY = /* GraphQL */ `
+  query XrefTicketState($ref: String!) {
+    issue(id: $ref) {
+      state {
+        name
+        type
+      }
+    }
+  }
+`;
+
 async function ticketState(client: LinearClient, ref: string): Promise<TicketState> {
   try {
-    const issue = await client.issue(ref);
-    const state = await issue.state;
+    // One request per ref (state selected inline) instead of two lazy round-trips.
+    const vars = { ref };
+    const res = await withRetry(() =>
+      client.client.rawRequest<
+        { issue: { state: { name: string; type: string } | null } | null },
+        typeof vars
+      >(TICKET_STATE_QUERY, vars),
+    );
+    const state = res.data?.issue?.state ?? null;
     return {
       exists: true,
       done: state?.type === "completed",
       state: state?.name ?? null,
       stateType: state?.type ?? null,
     };
-  } catch {
+  } catch (err) {
+    // A transient failure (rate limit, 5xx) that survived retries must
+    // propagate — classifying it as not-found fabricates "not a real ticket"
+    // findings, and with --fix, wrong remediation plans.
+    if (classifyError(err).transient) throw err;
     // Non-existent identifier (or a non-ticket like UTF-8) — treat as not a ticket.
     return { exists: false, done: false, state: null, stateType: null };
   }
