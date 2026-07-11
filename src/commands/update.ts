@@ -4,7 +4,7 @@ import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 import { isInteractive } from "../lib/interactive.js";
-import { promptText, promptSelect, promptConfirm } from "../lib/prompts.js";
+import { promptText, promptSelect, promptConfirm, promptIssuePick } from "../lib/prompts.js";
 import { withSpinner } from "../lib/spinner.js";
 import type { UpdatedIssue } from "../core/issues.js";
 
@@ -162,16 +162,28 @@ async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions):
 }
 
 export interface CloseOptions {
+  team?: string[];
   json?: boolean;
 }
 
 /**
  * `linearctl close <id>` — move an issue to its team's completed state.
- * Delegates to `core.closeIssue`. See docs/spec.md §6.8.
+ * Delegates to `core.closeIssue`. At a TTY with no id, offers a fuzzy picker
+ * plus a confirm gate (closing is the CLI's most consequential one-keystroke
+ * write). A fully-specified `close CER-123` stays confirm-free — headless and
+ * muscle-memory behavior unchanged. See docs/spec.md §6.8.
  */
-export async function close(id: string, opts: CloseOptions): Promise<void> {
+export async function close(id: string | undefined, opts: CloseOptions): Promise<void> {
   const client = makeClient();
-  const issue = await closeIssue(client, id);
+  if (!id && isInteractive(opts.json)) {
+    id = await promptIssuePick(client, "Close which issue?", opts.team);
+    if (!(await promptConfirm(`Close ${id}?`))) {
+      process.stdout.write("aborted — nothing written.\n");
+      return;
+    }
+  }
+  if (!id) throw new Error("close needs an <id> (e.g. CER-123).");
+  const issue = await withSpinner(`Closing ${id}…`, () => closeIssue(client, id));
 
   if (opts.json) {
     printJson(issue);

@@ -63,6 +63,8 @@ export async function collectIssuesFlat(
   client: LinearClient,
   filter: LinearDocument.IssueFilter,
   orderBy?: LinearDocument.PaginationOrderBy,
+  /** Stop paginating once this many issues are collected (default: exhaustive). */
+  limit?: number,
 ): Promise<FlatIssueNode[]> {
   type FlatIssuesVars = Record<string, unknown> & {
     filter: LinearDocument.IssueFilter;
@@ -83,9 +85,13 @@ export async function collectIssuesFlat(
     const page = res.data?.issues;
     if (!page) throw new Error("issues query returned no data");
     for (const n of page.nodes) byId.set(n.id, n);
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    after =
+      page.pageInfo.hasNextPage && (limit === undefined || byId.size < limit)
+        ? page.pageInfo.endCursor
+        : null;
   } while (after);
-  return [...byId.values()];
+  const all = [...byId.values()];
+  return limit === undefined ? all : all.slice(0, limit);
 }
 
 /** True when team keys actually narrow the query (not empty / not `all`). */

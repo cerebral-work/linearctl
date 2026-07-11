@@ -116,7 +116,8 @@ program
 program
   .command("close")
   .description("Close an issue (move it to the team's completed state).")
-  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
+  .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
 
@@ -171,7 +172,8 @@ program
 program
   .command("show")
   .description("Show one issue in full: metadata + description.")
-  .argument("<id>", "issue id or identifier (e.g. CER-123)")
+  .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
+  .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
 
