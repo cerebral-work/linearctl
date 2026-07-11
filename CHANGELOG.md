@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/cerebral-work/linearctl/compare/v0.5.0...v0.6.0) (2026-07-11)
+
+
+### Features
+
+* **cli:** interactive slices — fuzzy issue picker (show/close) + xref --fix confirm gate (CER-1551) ([#41](https://github.com/cerebral-work/linearctl/issues/41)) ([6bf30b9](https://github.com/cerebral-work/linearctl/commit/6bf30b9150a42df13517a64470fe12c6d54a8f42))
+* **cycle:** current-cycle review — scope, burn-down, at-risk, carry-over (CER-1143) ([#50](https://github.com/cerebral-work/linearctl/issues/50)) ([4619967](https://github.com/cerebral-work/linearctl/commit/4619967c851e98eccb6a836b6e8d1c04562afa4f))
+* **dupcheck:** fuzzy title match before filing + file --check-dups guard (CER-1559) ([#44](https://github.com/cerebral-work/linearctl/issues/44)) ([278e169](https://github.com/cerebral-work/linearctl/commit/278e1692eb65ae885a87329f8419e1293081f6be))
+* **file:** --assignee / --priority / --milestone parity with update ([#43](https://github.com/cerebral-work/linearctl/issues/43)) ([3e8942b](https://github.com/cerebral-work/linearctl/commit/3e8942b12b879bbdf86d39d2b7f77ae91d825951))
+* **history:** issue activity timeline — the audit trail show doesn't surface (CER-1561) ([#48](https://github.com/cerebral-work/linearctl/issues/48)) ([64d2e35](https://github.com/cerebral-work/linearctl/commit/64d2e35a7d92935f4802bc4162ada270c2604c02))
+* **label:** list / create / rename — headless label management (CER-1558) ([#47](https://github.com/cerebral-work/linearctl/issues/47)) ([4f0c23d](https://github.com/cerebral-work/linearctl/commit/4f0c23da128b862b26f045eaceadb9c6964b8381))
+* **park:** file user stories straight into Backlog (CER-1557) ([#46](https://github.com/cerebral-work/linearctl/issues/46)) ([2321f6f](https://github.com/cerebral-work/linearctl/commit/2321f6f36c24b14e375835d31440cc3c700d5553))
+* **search:** arbitrary-criteria issue search — the grep for Linear (CER-1560) ([#40](https://github.com/cerebral-work/linearctl/issues/40)) ([e0908f3](https://github.com/cerebral-work/linearctl/commit/e0908f31903731ab16f5169a51d87b9139f5eca4))
+* **template:** file issues from reusable markdown templates (CER-1562) ([#49](https://github.com/cerebral-work/linearctl/issues/49)) ([0049059](https://github.com/cerebral-work/linearctl/commit/0049059e585c6a604c57365c429182dea1046853))
+* **update:** edit title and description (CER-1341) ([#45](https://github.com/cerebral-work/linearctl/issues/45)) ([e1e0620](https://github.com/cerebral-work/linearctl/commit/e1e0620902ebc319f7f80ce57337726c1b6211fc))
+
+
+### Bug Fixes
+
+* **cli:** picker direct-entry choice appends last, not first ([#42](https://github.com/cerebral-work/linearctl/issues/42)) ([c2142af](https://github.com/cerebral-work/linearctl/commit/c2142af247ea79e10cf5517bf56f120bdbdd2c8e))
+* **core:** eliminate N+1 lazy-relation fetches — grooming reads select state/assignee inline ([#38](https://github.com/cerebral-work/linearctl/issues/38)) ([df941f1](https://github.com/cerebral-work/linearctl/commit/df941f194e525f8f718a708474bc8157467bae31))
+
 ## [0.5.0](https://github.com/cerebral-work/linearctl/compare/v0.4.0...v0.5.0) (2026-07-10)
 
 
