@@ -138,10 +138,12 @@ export function registerTools(server: McpServer, client: LinearClient): void {
         labels: z.array(z.string()).optional().describe("label names (replaces existing)"),
         project: z.string().optional().describe("project id to move the issue to"),
         priority: z.number().int().min(0).max(4).optional().describe("0=None 1=Urgent 2=High 3=Medium 4=Low"),
+        title: z.string().optional().describe("replace the issue title"),
+        description: z.string().optional().describe("replace the description (markdown)"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
-    async ({ id, state, assignee, labels, project, priority }) =>
+    async ({ id, state, assignee, labels, project, priority, title, description }) =>
       run(() =>
         updateIssue(client, id, {
           state,
@@ -149,6 +151,8 @@ export function registerTools(server: McpServer, client: LinearClient): void {
           labels,
           projectId: project,
           priority,
+          title,
+          description,
         }),
       ),
   );

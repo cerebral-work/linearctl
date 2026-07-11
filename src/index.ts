@@ -111,6 +111,8 @@ program
   .option("--project <id>", "move to a project")
   .option("--priority <0-4>", "priority: 0=None 1=Urgent 2=High 3=Medium 4=Low")
   .option("--milestone <ref>", "project milestone (name or id)")
+  .option("--title <text>", "replace the issue title")
+  .option("--desc <markdown>", "replace the description (markdown; '-' reads stdin)")
   .option(
     "--stdin",
     "bulk: read a JSON-array/NDJSON plan of {id,labels?,addLabels?,priority?,project?,assignee?,milestone?} from stdin",
