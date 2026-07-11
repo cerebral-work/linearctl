@@ -11,6 +11,7 @@ import { comment } from "./commands/comment.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
 import { show } from "./commands/show.js";
+import { searchCmd } from "./commands/search.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -148,6 +149,24 @@ program
   .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+program
+  .command("search")
+  .description("General issue query — the grep for Linear (active states by default).")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option(
+    "--state <ref>",
+    "state type (triage|backlog|todo|started|done|canceled|all) or a state name; default: active only",
+  )
+  .option("--label <name...>", "label name(s) — all must match")
+  .option("--assignee <who>", "'me', 'none' (unassigned), an email, a display name, or a user id")
+  .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--priority <0-4|none>", "exact priority (1=Urgent … 4=Low, 0/none=unset)")
+  .option("--text <query>", "full-text match over title + description")
+  .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
+  .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
+  .option("--json", "emit JSON")
+  .action((opts) => searchCmd(opts));
 
 program
   .command("show")

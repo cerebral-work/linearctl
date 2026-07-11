@@ -84,7 +84,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Resolve an assignee: `"me"` → viewer, a UUID passes through, else by email / display name / name. */
-async function resolveAssignee(client: LinearClient, who: string): Promise<string> {
+export async function resolveAssignee(client: LinearClient, who: string): Promise<string> {
   if (who === "me") return (await client.viewer).id;
   if (UUID_RE.test(who)) return who;
   const users = await client.users({
