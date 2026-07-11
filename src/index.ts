@@ -21,6 +21,7 @@ import { cycleCmd } from "./commands/cycle.js";
 import { linkCmd } from "./commands/link.js";
 import { commentsCmd } from "./commands/comments.js";
 import { releaseNotesCmd } from "./commands/release-notes.js";
+import { standup } from "./commands/standup.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -268,6 +269,14 @@ program
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+program
+  .command("standup")
+  .description("Render the digest as a standup (markdown; no auto-posting — pipe to your sender).")
+  .option("--team <key...>", "restrict to team key(s)")
+  .option("--since <window>", "look-back window", "24h")
+  .option("--json", "emit the underlying digest JSON")
+  .action((opts) => standup(opts));
 
 program
   .command("release-notes")
