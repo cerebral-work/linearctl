@@ -17,6 +17,7 @@ import { park } from "./commands/park.js";
 import { labelList, labelCreate, labelRename } from "./commands/label.js";
 import { historyCmd } from "./commands/history.js";
 import { templateList, templateValidate, templateFile } from "./commands/template.js";
+import { cycleCmd } from "./commands/cycle.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -243,6 +244,15 @@ program
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+program
+  .command("cycle")
+  .description("Current-cycle review: scope, burn-down, at-risk, carry-over (read-only).")
+  .option("--team <key>", "team key (must have cycles enabled)")
+  .option("--previous", "review the last ended cycle instead of the active one")
+  .option("--risk-window <days>", "flag unstarted issues when ≤ this many days remain", "2")
+  .option("--json", "emit JSON")
+  .action((opts) => cycleCmd(opts));
 
 const templateCmd = program
   .command("template")
