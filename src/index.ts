@@ -14,6 +14,7 @@ import { show } from "./commands/show.js";
 import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
+import { labelList, labelCreate, labelRename } from "./commands/label.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -159,6 +160,36 @@ program
   .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+const labelCmd = program
+  .command("label")
+  .description("Label management: list / create / rename (no delete — D6).");
+
+labelCmd
+  .command("list")
+  .description("List labels for a team (or all teams). --counts adds per-label issue usage.")
+  .option("--team <key...>", "restrict to team key(s); omit for all teams")
+  .option("--counts", "aggregate per-label issue counts (one request per 100 issues)")
+  .option("--json", "emit JSON")
+  .action((opts) => labelList(opts));
+
+labelCmd
+  .command("create")
+  .description("Create a team label (additive, non-destructive).")
+  .argument("<name>", "label name")
+  .option("--team <key>", "team key (e.g. CER)")
+  .option("--color <hex>", "label color (e.g. #bec2c8)")
+  .option("--json", "emit JSON")
+  .action((name, opts) => labelCreate(name, opts));
+
+labelCmd
+  .command("rename")
+  .description("Rename a team label (issues re-tag automatically; reversible).")
+  .argument("<old>", "current label name")
+  .argument("<new>", "new label name")
+  .option("--team <key>", "team key (e.g. CER)")
+  .option("--json", "emit JSON")
+  .action((from, to, opts) => labelRename(from, to, opts));
 
 program
   .command("park")
