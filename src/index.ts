@@ -19,6 +19,7 @@ import { historyCmd } from "./commands/history.js";
 import { templateList, templateValidate, templateFile } from "./commands/template.js";
 import { cycleCmd } from "./commands/cycle.js";
 import { linkCmd } from "./commands/link.js";
+import { commentsCmd } from "./commands/comments.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -153,6 +154,16 @@ program
   .requiredOption("--body <markdown>", "comment body (markdown; '-' reads stdin)")
   .option("--json", "emit JSON")
   .action((id, opts) => comment(id, opts));
+
+program
+  .command("comments")
+  .description("Recent comments by an author across issues — one query, not a per-issue sweep.")
+  .option("--author <who>", "'me', an email, a display name, or a user id")
+  .option("--since <window>", "look-back window (e.g. 7d, 24h)", "7d")
+  .option("--team <key...>", "restrict to issues in team key(s)")
+  .option("--limit <n>", "max comments", "200")
+  .option("--json", "emit JSON")
+  .action((opts) => commentsCmd(opts));
 
 program
   .command("stale")
