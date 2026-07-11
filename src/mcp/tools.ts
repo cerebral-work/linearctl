@@ -76,10 +76,25 @@ export function registerTools(server: McpServer, client: LinearClient): void {
         description: z.string().optional().describe("markdown body"),
         project: z.string().optional().describe("project id to attach to"),
         labels: z.array(z.string()).optional().describe("label names"),
+        assignee: z
+          .string()
+          .optional()
+          .describe("assignee: 'me', an email, a display name, or a user id"),
+        priority: z
+          .number()
+          .int()
+          .min(0)
+          .max(4)
+          .optional()
+          .describe("priority: 1=Urgent 2=High 3=Medium 4=Low, 0=unset"),
+        milestone: z
+          .string()
+          .optional()
+          .describe("project milestone (name or id; pair with project for name lookup)"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ team, title, description, project, labels }) =>
+    async ({ team, title, description, project, labels, assignee, priority, milestone }) =>
       run(() =>
         createIssue(client, {
           teamKey: team,
@@ -87,6 +102,9 @@ export function registerTools(server: McpServer, client: LinearClient): void {
           description,
           projectId: project,
           labels,
+          assignee,
+          priority,
+          milestone,
         }),
       ),
   );
