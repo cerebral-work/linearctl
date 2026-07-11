@@ -30,6 +30,10 @@ jobs:
         run: bun run typecheck
 
       - name: Test
+        env:
+          # Enables the read-only live-API contract tests (test/live-contract.test.ts);
+          # they self-skip when the secret is absent (e.g. forks).
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: bun test
 
       # Compile + run the real binary so a compile or module-load/bundling failure
