@@ -49,6 +49,9 @@ program
   .option("--project <id>", "attach to a project")
   .option("--desc <markdown>", "description (markdown; '-' reads stdin)")
   .option("--label <name...>", "label(s) to attach")
+  .option("--assignee <who>", "assignee: 'me', an email, a display name, or a user id")
+  .option("--priority <0-4|none>", "priority: 1=Urgent 2=High 3=Medium 4=Low, 0/none=unset")
+  .option("--milestone <ref>", "project milestone (name or id; pair with --project for name lookup)")
   .option("--json", "emit JSON")
   .action((title, opts) => file(title, opts));
 

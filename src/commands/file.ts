@@ -5,12 +5,16 @@ import { printJson } from "../lib/output.js";
 import { isInteractive } from "../lib/interactive.js";
 import { promptText, promptTeamKey, promptOptionalText } from "../lib/prompts.js";
 import { withSpinner } from "../lib/spinner.js";
+import { parsePriority } from "../lib/priority.js";
 
 export interface FileOptions {
   team?: string;
   project?: string;
   desc?: string;
   label?: string[];
+  assignee?: string;
+  priority?: string;
+  milestone?: string;
   json?: boolean;
 }
 
@@ -46,6 +50,9 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
       description,
       projectId: opts.project,
       labels: opts.label,
+      assignee: opts.assignee,
+      priority: opts.priority !== undefined ? parsePriority(opts.priority) : undefined,
+      milestone: opts.milestone,
     }),
   );
 
