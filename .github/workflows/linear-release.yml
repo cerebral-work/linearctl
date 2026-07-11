@@ -50,7 +50,7 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         if: steps.gate.outputs.enabled == 'true'
         with:
           fetch-depth: 0 # full history — the CLI scans commits to the prior release
@@ -66,7 +66,7 @@ jobs:
       # failure (e.g. a duplicate-version collision in the pipeline) must not red
       # the caller's release run. continue-on-error lives here because a reusable-
       # workflow caller job can't carry it.
-      - uses: linear/linear-release-action@v0
+      - uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
         with:
@@ -77,7 +77,7 @@ jobs:
 
       # Tag-driven (release-please) → sync THEN complete, per the linear-release
       # README's tag-driven guidance (sync alone leaves the release in-progress).
-      - uses: linear/linear-release-action@v0
+      - uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
         if: steps.gate.outputs.enabled == 'true'
         continue-on-error: true
         with:
