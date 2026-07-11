@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { makeClient } from "../client.js";
 import { getProjectOverview, setProjectOverview } from "../core/projects.js";
 import { readStdin } from "../lib/io.js";
-import { printJson } from "../lib/output.js";
+import { printJson, printTable } from "../lib/output.js";
+import { listDocuments, createDocument, updateDocument } from "../core/documents.js";
 
 export interface DocGetOverviewOptions {
   project: string;
@@ -61,4 +62,68 @@ export async function docSetOverview(opts: DocSetOverviewOptions): Promise<void>
       `  id:    ${overview.project.id}\n` +
       `  bytes: ${Buffer.byteLength(overview.content ?? "", "utf8")}\n`,
   );
+}
+
+export interface DocListOptions {
+  project?: string;
+  json?: boolean;
+}
+
+/** `linearctl doc list [--project REF]` — see CER-1344. */
+export async function docList(opts: DocListOptions): Promise<void> {
+  const client = makeClient();
+  const docs = await listDocuments(client, { project: opts.project });
+  if (opts.json) {
+    printJson(docs);
+    return;
+  }
+  printTable(
+    docs.map((d) => ({ slug: d.slugId, project: d.project ?? "—", title: d.title })),
+    ["slug", "project", "title"],
+  );
+}
+
+export interface DocCreateOptions {
+  project?: string;
+  issue?: string;
+  team?: string;
+  content?: string;
+  json?: boolean;
+}
+
+/** `linearctl doc create <title> --project|--issue|--team --content <md|->`. */
+export async function docCreate(title: string, opts: DocCreateOptions): Promise<void> {
+  if (!opts.content) throw new Error("doc create needs --content <md> ('-' reads stdin).");
+  const client = makeClient();
+  const content = opts.content === "-" ? await readStdin() : opts.content;
+  const doc = await createDocument(client, {
+    title,
+    content,
+    project: opts.project,
+    issue: opts.issue,
+    teamKey: opts.team,
+  });
+  if (opts.json) {
+    printJson(doc);
+    return;
+  }
+  process.stdout.write(`created doc "${doc.title}" (${doc.slugId})\n  url: ${doc.url}\n`);
+}
+
+export interface DocUpdateOptions {
+  content?: string;
+  title?: string;
+  json?: boolean;
+}
+
+/** `linearctl doc update <id|slug> [--content <md|->] [--title]`. */
+export async function docUpdate(ref: string, opts: DocUpdateOptions): Promise<void> {
+  const client = makeClient();
+  const content = opts.content === "-" ? await readStdin() : opts.content;
+  const doc = await updateDocument(client, ref, { content, title: opts.title });
+  if (opts.json) {
+    printJson(doc);
+    return;
+  }
+  process.stdout.write(`updated doc "${doc.title}" (${doc.slugId})\n  url: ${doc.url}\n`);
 }
