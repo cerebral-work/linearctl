@@ -1,34 +1,92 @@
-import type { LinearClient, Issue } from "@linear/sdk";
+import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
-import { mapPool } from "../lib/pool.js";
 import { withRetry } from "../lib/retry.js";
 import { batchUpdateIssues } from "./batch.js";
 
-type IssuesArgs = Parameters<LinearClient["issues"]>[0];
+/** The flat issue shape every grooming read needs — relations selected inline. */
+interface FlatIssueNode {
+  id: string;
+  identifier: string;
+  title: string;
+  url: string;
+  priority: number;
+  estimate: number | null;
+  updatedAt: string;
+  state: { name: string; type: string } | null;
+  assignee: { displayName: string } | null;
+}
+
+interface FlatIssuesData {
+  issues: {
+    nodes: FlatIssueNode[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+}
+
+const FLAT_ISSUES_QUERY = /* GraphQL */ `
+  query GroomingIssues($filter: IssueFilter, $orderBy: PaginationOrderBy, $first: Int!, $after: String) {
+    issues(filter: $filter, orderBy: $orderBy, first: $first, after: $after) {
+      nodes {
+        id
+        identifier
+        title
+        url
+        priority
+        estimate
+        updatedAt
+        state {
+          name
+          type
+        }
+        assignee {
+          displayName
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
 
 /**
- * Collect every issue matching a query, following `fetchNext()` to the end.
+ * Collect every issue matching a filter, paginating to the end, with state +
+ * assignee selected INLINE — one request per 100-issue page instead of two
+ * lazy round-trips per issue. The lazy-relation N+1 burned the full 2500/hr
+ * org budget on full-workspace runs (spec §10); this is the fix.
  *
  * Grooming audits (RFC §3.4 health invariants) must be exhaustive — a `first:
  * 100` cap would silently truncate and make "no issue >30d…" unsound — so this
  * paginates fully rather than taking the first page.
- *
- * N+1 note (spec §10): callers that `await issue.state`/`.assignee` per node pay
- * one round-trip each; acceptable for v1, the thing to watch on a full-workspace run.
  */
-async function collectIssues(client: LinearClient, args: IssuesArgs): Promise<Issue[]> {
+async function collectIssuesFlat(
+  client: LinearClient,
+  filter: LinearDocument.IssueFilter,
+  orderBy?: LinearDocument.PaginationOrderBy,
+): Promise<FlatIssueNode[]> {
   // Dedupe by id: under `orderBy: updatedAt`, a row whose updatedAt changes
   // mid-scan can reappear across page boundaries (cursor instability), so a naive
   // concat double-counts. Keep the last-seen node per id, preserving order.
-  const byId = new Map<string, Issue>();
-  let page = await withRetry(() => client.issues(args));
-  for (const n of page.nodes) byId.set(n.id, n);
-  while (page.pageInfo.hasNextPage) {
-    const current = page;
-    page = await withRetry(() => current.fetchNext());
+  type FlatIssuesVars = Record<string, unknown> & {
+    filter: LinearDocument.IssueFilter;
+    orderBy?: LinearDocument.PaginationOrderBy;
+    first: number;
+    after: string | null;
+  };
+  const byId = new Map<string, FlatIssueNode>();
+  let after: string | null = null;
+  do {
+    const vars: FlatIssuesVars = { filter, orderBy, first: 100, after };
+    const res = await withRetry(() =>
+      client.client.rawRequest<FlatIssuesData, FlatIssuesVars>(FLAT_ISSUES_QUERY, vars),
+    );
+    const page = res.data?.issues;
+    if (!page) throw new Error("issues query returned no data");
     for (const n of page.nodes) byId.set(n.id, n);
-  }
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after);
   return [...byId.values()];
 }
 
@@ -83,38 +141,34 @@ export async function triage(
   project?: string,
 ): Promise<TriageItem[]> {
   const teams = scopedTeams(teamKeys);
-  const issues = await collectIssues(client, {
-    first: 100,
-    filter: {
-      ...(teams ? { team: { key: { in: teams } } } : {}),
-      and: [
-        { state: { type: { nin: ["completed", "canceled"] } } },
-        ...projectClause(project),
-        {
-          or: [
-            { state: { type: { eq: "triage" } } },
-            { assignee: { null: true } },
-            { estimate: { null: true } },
-            { priority: { eq: 0 } },
-          ],
-        },
-      ],
-    },
+  const issues = await collectIssuesFlat(client, {
+    ...(teams ? { team: { key: { in: teams } } } : {}),
+    and: [
+      { state: { type: { nin: ["completed", "canceled"] } } },
+      ...projectClause(project),
+      {
+        or: [
+          { state: { type: { eq: "triage" } } },
+          { assignee: { null: true } },
+          { estimate: { null: true } },
+          { priority: { eq: 0 } },
+        ],
+      },
+    ],
   });
 
-  return mapPool(issues, 10, async (issue) => {
-    const [state, assignee] = await Promise.all([issue.state, issue.assignee]);
+  return issues.map((issue) => {
     const reasons: string[] = [];
-    if (state?.type === "triage") reasons.push("triage-state");
-    if (!assignee) reasons.push("unassigned");
+    if (issue.state?.type === "triage") reasons.push("triage-state");
+    if (!issue.assignee) reasons.push("unassigned");
     if (issue.estimate == null) reasons.push("unestimated");
     if (!issue.priority) reasons.push("no-priority");
     return {
       identifier: issue.identifier,
       title: issue.title,
-      state: state?.name ?? "",
-      stateType: state?.type ?? "",
-      assignee: assignee?.displayName ?? null,
+      state: issue.state?.name ?? "",
+      stateType: issue.state?.type ?? "",
+      assignee: issue.assignee?.displayName ?? null,
       priority: issue.priority ?? 0,
       estimate: issue.estimate ?? null,
       reasons,
@@ -157,29 +211,26 @@ export async function digest(
   project?: string,
 ): Promise<DigestResult> {
   const teams = scopedTeams(teamKeys);
-  const issues = await collectIssues(client, {
-    first: 100,
-    orderBy: LinearDocument.PaginationOrderBy.UpdatedAt,
-    filter: {
+  const issues = await collectIssuesFlat(
+    client,
+    {
       ...(teams ? { team: { key: { in: teams } } } : {}),
       updatedAt: { gte: since },
       ...(project ? { and: projectClause(project) } : {}),
     },
-  });
+    LinearDocument.PaginationOrderBy.UpdatedAt,
+  );
 
-  const resolved = await mapPool(issues, 10, async (issue) => {
-    const [state, assignee] = await Promise.all([issue.state, issue.assignee]);
-    return {
-      type: state?.type ?? "unknown",
-      item: {
-        identifier: issue.identifier,
-        title: issue.title,
-        state: state?.name ?? "",
-        assignee: assignee?.displayName ?? null,
-        url: issue.url,
-      } satisfies DigestItem,
-    };
-  });
+  const resolved = issues.map((issue) => ({
+    type: issue.state?.type ?? "unknown",
+    item: {
+      identifier: issue.identifier,
+      title: issue.title,
+      state: issue.state?.name ?? "",
+      assignee: issue.assignee?.displayName ?? null,
+      url: issue.url,
+    } satisfies DigestItem,
+  }));
 
   const byType = new Map<string, DigestItem[]>();
   for (const { type, item } of resolved) {
@@ -232,10 +283,9 @@ export async function stale(
   opts: { teamKeys?: string[]; project?: string; warnCutoff: Date; criticalCutoff: Date; now: Date },
 ): Promise<StaleResult> {
   const teams = scopedTeams(opts.teamKeys);
-  const issues = await collectIssues(client, {
-    first: 100,
-    orderBy: LinearDocument.PaginationOrderBy.UpdatedAt,
-    filter: {
+  const issues = await collectIssuesFlat(
+    client,
+    {
       ...(teams ? { team: { key: { in: teams } } } : {}),
       and: [
         { state: { type: { nin: ["completed", "canceled"] } } },
@@ -243,10 +293,10 @@ export async function stale(
         ...projectClause(opts.project),
       ],
     },
-  });
+    LinearDocument.PaginationOrderBy.UpdatedAt,
+  );
 
-  const items = await mapPool(issues, 10, async (issue) => {
-    const [state, assignee] = await Promise.all([issue.state, issue.assignee]);
+  const items = issues.map((issue) => {
     const updated = new Date(issue.updatedAt);
     const daysStale = Math.floor((opts.now.getTime() - updated.getTime()) / DAY_MS);
     const bucket: "warn" | "critical" =
@@ -255,8 +305,8 @@ export async function stale(
       id: issue.id,
       identifier: issue.identifier,
       title: issue.title,
-      state: state?.name ?? "",
-      assignee: assignee?.displayName ?? null,
+      state: issue.state?.name ?? "",
+      assignee: issue.assignee?.displayName ?? null,
       updatedAt: updated.toISOString(),
       daysStale,
       bucket,
