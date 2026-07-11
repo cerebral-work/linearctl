@@ -1,6 +1,6 @@
 # Feature: `linearctl park` — file user stories into Backlog
 
-**Status:** ticketed — [CER-1557](https://linear.app/cerebral-work/issue/CER-1557)
+**Status:** shipped — [CER-1557](https://linear.app/cerebral-work/issue/CER-1557)
 **Command:** `linearctl park <title> --team CER [--project ID] [--persona <name>] [--accept <md|->] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3

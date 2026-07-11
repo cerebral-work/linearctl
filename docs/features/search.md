@@ -1,6 +1,6 @@
 # Feature: `linearctl search` — arbitrary-criteria issue search
 
-**Status:** ticketed — [CER-1560](https://linear.app/cerebral-work/issue/CER-1560)
+**Status:** shipped — [CER-1560](https://linear.app/cerebral-work/issue/CER-1560)
 **Command:** `linearctl search [--team CER] [--state <type|name>] [--label <name>] [--assignee <email|me|none>] [--project <ref>] [--priority <0-4>] [--text <query>] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3

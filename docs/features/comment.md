@@ -1,6 +1,6 @@
 # Feature: `linearctl comment` — add comments headless
 
-**Status:** in-progress — [CER-1345](https://linear.app/cerebral-work/issue/CER-1345), PR #33
+**Status:** shipped — [CER-1345](https://linear.app/cerebral-work/issue/CER-1345), v0.5.0
 **Command:** `linearctl comment <id> [--body <md|->] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3
