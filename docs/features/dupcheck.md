@@ -1,6 +1,6 @@
 # Feature: `linearctl dupcheck` — duplicate detection before filing
 
-**Status:** ticketed — [CER-1559](https://linear.app/cerebral-work/issue/CER-1559)
+**Status:** shipped — [CER-1559](https://linear.app/cerebral-work/issue/CER-1559)
 **Command:** `linearctl dupcheck <title> --team CER [--threshold 0.8] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3
