@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/cerebral-work/linearctl/compare/v0.6.0...v0.7.0) (2026-07-11)
+
+
+### Features
+
+* **comments:** comments-by-author — the 'what did X say' scan in one query (CER-1187) ([#55](https://github.com/cerebral-work/linearctl/issues/55)) ([1273fbc](https://github.com/cerebral-work/linearctl/commit/1273fbcc188a9ec385662c6a47ed18098b82bffe))
+* **doc:** list / create / update Linear documents (CER-1344) ([#57](https://github.com/cerebral-work/linearctl/issues/57)) ([2f6dc94](https://github.com/cerebral-work/linearctl/commit/2f6dc947c6325ebe75ff4198f18e0f9523894ae2))
+* **file:** --stdin batch mode with pre-flight quota gate (CER-1141) ([#53](https://github.com/cerebral-work/linearctl/issues/53)) ([08ab4ef](https://github.com/cerebral-work/linearctl/commit/08ab4ef7c6303335e3f0c0a43e1f8f5709404060))
+* **graph:** --parent / --blocked-by / --related-to on file+update, link command (CER-1342, CER-1192) ([#51](https://github.com/cerebral-work/linearctl/issues/51)) ([5af6d80](https://github.com/cerebral-work/linearctl/commit/5af6d80fe0a57352e9c7b4f0121570154a8daff4))
+* **release-notes:** markdown notes from completed issues in a range (CER-1146) ([#56](https://github.com/cerebral-work/linearctl/issues/56)) ([81b8689](https://github.com/cerebral-work/linearctl/commit/81b8689d6813f8a01ba173932b3341b9faf5a423))
+* **standup:** render digest as a standup — no auto-posting by design (CER-1147) ([#58](https://github.com/cerebral-work/linearctl/issues/58)) ([f44046c](https://github.com/cerebral-work/linearctl/commit/f44046ccf5e7e9906c72d4e32db1d3656547a9e7))
+
 ## [0.6.0](https://github.com/cerebral-work/linearctl/compare/v0.5.0...v0.6.0) (2026-07-11)
 
 
