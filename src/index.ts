@@ -16,6 +16,7 @@ import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
 import { labelList, labelCreate, labelRename } from "./commands/label.js";
 import { historyCmd } from "./commands/history.js";
+import { templateList, templateValidate, templateFile } from "./commands/template.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview } from "./commands/doc.js";
 import { serve } from "./mcp/serve.js";
@@ -242,6 +243,33 @@ program
   .option("--team <key...>", "scope the interactive picker to team key(s)")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
+
+const templateCmd = program
+  .command("template")
+  .description("Reusable issue templates: .linearctl/templates + ~/.config/linearctl/templates.");
+
+templateCmd
+  .command("list")
+  .description("List available templates (repo-local overrides user-global).")
+  .option("--json", "emit JSON")
+  .action((opts) => templateList(opts));
+
+templateCmd
+  .command("validate")
+  .description("Parse a template and report its required/optional variables.")
+  .argument("<name>", "template name")
+  .option("--json", "emit JSON")
+  .action((name, opts) => templateValidate(name, opts));
+
+templateCmd
+  .command("file")
+  .description("File an issue from a template, substituting {{ variables }}.")
+  .argument("<name>", "template name")
+  .option("--team <key>", "team key (e.g. CER)")
+  .option("--project <id>", "attach to a project")
+  .option("--var <key=value...>", "template variable(s); value '-' reads stdin")
+  .option("--json", "emit JSON")
+  .action((name, opts) => templateFile(name, opts));
 
 program
   .command("history")
