@@ -2,6 +2,79 @@ import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { collectIssuesFlat, type FlatIssueNode } from "./issues-query.js";
+import { UUID_RE } from "./projects.js";
+
+const CYCLE_RESOLVE_QUERY = /* GraphQL */ `
+  query ResolveCycle($team: String!) {
+    teams(filter: { key: { eq: $team } }) {
+      nodes {
+        key
+        activeCycle { id number }
+        cycles(first: 100) { nodes { id number startsAt } }
+      }
+    }
+  }
+`;
+
+/**
+ * Resolve a `--cycle` ref (scoped to a team) to a cycle id, or `null` to remove.
+ * Accepts: a cycle UUID, a cycle number, `current`/`active`, `next`, `none`.
+ * `next` = the earliest cycle starting in the future — resolvable even between
+ * cycles (when `activeCycle` is null). Fixes OPS-593 (previously raw GraphQL).
+ */
+export async function resolveCycleId(
+  client: LinearClient,
+  teamKey: string,
+  ref: string,
+): Promise<string | null> {
+  const lc = ref.trim().toLowerCase();
+  if (lc === "none" || lc === "") return null;
+  if (UUID_RE.test(ref.trim())) return ref.trim();
+
+  type Node = {
+    key: string;
+    activeCycle: { id: string; number: number } | null;
+    cycles: { nodes: Array<{ id: string; number: number; startsAt: string }> };
+  };
+  const res = await withRetry(() =>
+    client.client.rawRequest<{ teams: { nodes: Node[] } }, { team: string }>(
+      CYCLE_RESOLVE_QUERY,
+      { team: teamKey },
+    ),
+  );
+  const team = res.data?.teams.nodes[0];
+  if (!team) throw new Error(`no team matching ${JSON.stringify(teamKey)} for --cycle.`);
+  const all = team.cycles.nodes;
+  if (!all.length && !team.activeCycle) {
+    throw new Error(`team ${teamKey} has no cycles (cycles may be disabled).`);
+  }
+
+  if (lc === "current" || lc === "active") {
+    if (!team.activeCycle) {
+      throw new Error(`team ${teamKey} has no active cycle right now — use 'next' or a cycle number.`);
+    }
+    return team.activeCycle.id;
+  }
+  if (lc === "next") {
+    const now = Date.now();
+    const future = all
+      .filter((c) => new Date(c.startsAt).getTime() > now)
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+    if (!future.length) throw new Error(`team ${teamKey} has no upcoming cycle.`);
+    return future[0].id;
+  }
+  const num = Number(lc);
+  if (!Number.isInteger(num)) {
+    throw new Error(
+      `--cycle ${JSON.stringify(ref)} is not a number, 'current', 'next', 'none', or a cycle id.`,
+    );
+  }
+  const match =
+    all.find((c) => c.number === num) ??
+    (team.activeCycle?.number === num ? team.activeCycle : undefined);
+  if (!match) throw new Error(`team ${teamKey} has no cycle number ${num}.`);
+  return match.id;
+}
 
 export interface CycleRef {
   id: string;

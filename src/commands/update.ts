@@ -22,6 +22,7 @@ export interface UpdateOptions {
   project?: string;
   priority?: string;
   milestone?: string;
+  cycle?: string;
   title?: string;
   desc?: string;
   parent?: string;
@@ -60,6 +61,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     opts.project !== undefined ||
     opts.priority !== undefined ||
     opts.milestone !== undefined ||
+    opts.cycle !== undefined ||
     opts.title !== undefined ||
     description !== undefined ||
     opts.parent !== undefined ||
@@ -84,6 +86,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     opts.project !== undefined ||
     opts.priority !== undefined ||
     opts.milestone !== undefined ||
+    opts.cycle !== undefined ||
     opts.title !== undefined ||
     description !== undefined ||
     opts.parent !== undefined;
@@ -98,6 +101,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
         projectId: opts.project,
         priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
         milestone: opts.milestone,
+        cycle: opts.cycle,
         title: opts.title,
         description,
         parent: opts.parent,
