@@ -18,6 +18,7 @@ export interface FileOptions {
   assignee?: string;
   priority?: string;
   milestone?: string;
+  cycle?: string;
   parent?: string;
   blockedBy?: string[];
   relatedTo?: string[];
@@ -134,6 +135,7 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
       assignee: opts.assignee,
       priority: opts.priority !== undefined ? parsePriority(opts.priority) : undefined,
       milestone: opts.milestone,
+      cycle: opts.cycle,
       parent: opts.parent,
     }),
   );

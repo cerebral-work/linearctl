@@ -3,6 +3,7 @@ import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
 import { resolveMilestoneId } from "./milestones.js";
+import { resolveCycleId } from "./cycles.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -13,6 +14,8 @@ export interface CreateIssueParams {
   assignee?: string;
   priority?: number;
   milestone?: string;
+  /** Cycle ref: a number, 'current'/'next', a cycle id, or 'none'. */
+  cycle?: string;
   /** Parent issue (UUID or identifier) — creates as a sub-issue. */
   parent?: string;
   /** Create directly in the team's state of this TYPE (e.g. "backlog"). */
@@ -65,6 +68,9 @@ export async function createIssue(
   const projectMilestoneId = params.milestone
     ? await resolveMilestoneId(client, params.milestone, params.projectId)
     : undefined;
+  const cycleId = params.cycle
+    ? await resolveCycleId(client, params.teamKey, params.cycle)
+    : undefined;
   const parentId = params.parent
     ? await resolveIssueId(client, params.parent)
     : undefined;
@@ -79,6 +85,7 @@ export async function createIssue(
       ...(assigneeId ? { assigneeId } : {}),
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
       ...(projectMilestoneId ? { projectMilestoneId } : {}),
+      ...(cycleId ? { cycleId } : {}),
       ...(stateId ? { stateId } : {}),
       ...(parentId ? { parentId } : {}),
     }),
@@ -106,6 +113,8 @@ export interface UpdateIssueParams {
   projectId?: string;
   priority?: number;
   milestone?: string;
+  /** Cycle ref: a number, 'current'/'next', a cycle id, or 'none' to remove. */
+  cycle?: string;
   title?: string;
   description?: string;
   /** Re-parent under this issue (UUID or identifier). */
@@ -334,6 +343,14 @@ export async function updateIssue(
     const project = await issue.project;
     projectMilestoneId = await resolveMilestoneId(client, params.milestone, project?.id);
   }
+  // cycle is per-team; resolve against the issue's own team. `none` → null,
+  // which removes the issue from its cycle (hence the !== undefined guard below).
+  let cycleId: string | null | undefined;
+  if (params.cycle !== undefined) {
+    const team = await issue.team;
+    if (!team) throw new Error("issue has no team; cannot resolve --cycle.");
+    cycleId = await resolveCycleId(client, team.key, params.cycle);
+  }
   const parentId = params.parent ? await resolveIssueId(client, params.parent) : undefined;
 
   const input = {
@@ -343,6 +360,7 @@ export async function updateIssue(
     ...(params.projectId ? { projectId: params.projectId } : {}),
     ...(params.priority !== undefined ? { priority: params.priority } : {}),
     ...(projectMilestoneId ? { projectMilestoneId } : {}),
+    ...(cycleId !== undefined ? { cycleId } : {}),
     ...(params.title !== undefined ? { title: params.title } : {}),
     ...(params.description !== undefined ? { description: params.description } : {}),
     ...(parentId ? { parentId } : {}),
