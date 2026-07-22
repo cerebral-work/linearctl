@@ -148,3 +148,67 @@ export async function setProjectOverview(
     content: updated.content ?? content,
   };
 }
+
+export interface UpdateProjectParams {
+  name?: string;
+  description?: string;
+  state?: string;
+}
+
+export interface UpdatedProject {
+  id: string;
+  name: string;
+  slugId: string;
+  state: string | null;
+  url: string;
+}
+
+/**
+ * Update a project's name, description, or state. `state` is matched against
+ * the workspace's project-status set by type (backlog, planned, started,
+ * paused, completed, canceled). See CER-1687.
+ */
+export async function updateProject(
+  client: LinearClient,
+  projectRef: string,
+  params: UpdateProjectParams,
+): Promise<UpdatedProject> {
+  const p = await resolveProject(client, projectRef);
+
+  if (!params.name && params.description === undefined && !params.state) {
+    throw new Error("project update needs at least one of --state, --name, --description.");
+  }
+
+  let statusId: string | undefined;
+  if (params.state) {
+    const statuses = await client.projectStatuses({ first: 100 });
+    const match = statuses.nodes.find(
+      (s) => s.type.toLowerCase() === params.state!.toLowerCase(),
+    );
+    if (!match) {
+      const valid = [...new Set(statuses.nodes.map((s) => s.type))].join(", ");
+      throw new Error(
+        `no project state matching ${JSON.stringify(params.state)}. Valid: ${valid}.`,
+      );
+    }
+    statusId = match.id;
+  }
+
+  const payload = await client.updateProject(p.id, {
+    ...(params.name ? { name: params.name } : {}),
+    ...(params.description !== undefined ? { description: params.description } : {}),
+    ...(statusId ? { statusId } : {}),
+  });
+  if (!payload.success) {
+    throw new Error("Linear reported the project update did not succeed.");
+  }
+  const updated = (await payload.project) ?? p;
+
+  return {
+    id: updated.id,
+    name: updated.name,
+    slugId: updated.slugId,
+    state: (await updated.status)?.type ?? null,
+    url: updated.url,
+  };
+}

@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { createProject, listProjects } from "../core/projects.js";
+import { createProject, listProjects, updateProject } from "../core/projects.js";
 import { readStdin } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 
@@ -69,5 +69,42 @@ export async function projectList(opts: ProjectListOptions): Promise<void> {
       id: p.id,
     })),
     ["name", "state", "progress", "id"],
+  );
+}
+
+export interface ProjectUpdateOptions {
+  state?: string;
+  name?: string;
+  desc?: string;
+  json?: boolean;
+}
+
+/**
+ * `linearctl project update <ref> [--state] [--name] [--description]` — update
+ * a project's state, name, or description. `<ref>` accepts project name or UUID.
+ * See CER-1687.
+ */
+export async function projectUpdate(
+  ref: string,
+  opts: ProjectUpdateOptions,
+): Promise<void> {
+  const client = makeClient();
+  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+
+  const project = await updateProject(client, ref, {
+    state: opts.state,
+    name: opts.name,
+    description,
+  });
+
+  if (opts.json) {
+    printJson(project);
+    return;
+  }
+
+  process.stdout.write(
+    `updated project "${project.name}" (${project.id})\n` +
+      `  url:   ${project.url}\n` +
+      (project.state ? `  state: ${project.state}\n` : ""),
   );
 }
