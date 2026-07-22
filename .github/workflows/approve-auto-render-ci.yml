@@ -24,13 +24,14 @@ jobs:
     name: Approve CI on auto-render PRs
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Find and approve pending CI runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          # Find CI workflow runs in action_required status on auto-render branches
-          for run_id in $(gh run list --workflow ci.yml --status action_required --limit 10 --json databaseId,headBranch --jq '.[] | select(.headBranch | startswith("auto-render/")) | .databaseId'); do
+          # Use the API directly — no repo context needed for run listing.
+          for run_id in $(gh api "repos/${REPO}/actions/runs?status=action_required&per_page=20" --jq '.workflow_runs[] | select(.head_branch | startswith("auto-render/")) | .id'); do
             echo "Approving CI run $run_id..."
             gh api -X POST "repos/${REPO}/actions/runs/${run_id}/approve" 2>&1 \
               && echo "  approved" \
