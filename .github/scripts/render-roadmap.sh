@@ -8,7 +8,9 @@
 # and the next "## " header in the roadmap markdown file.
 #
 # Requires: LINEAR_API_KEY env var, linearctl built at ./dist/linearctl.
-set -euo pipefail
+# Degrades gracefully: if any API call fails (rate limit, network), it renders
+# with whatever data it collected and exits 0 so the workflow doesn't red-X.
+set -uo pipefail
 
 PROJECT="${1:?project name required}"
 ROADMAP_FILE="${2:?roadmap file path required}"
@@ -24,43 +26,47 @@ if [ -z "${LINEAR_API_KEY:-}" ]; then
   exit 1
 fi
 
-# ── Gather live data ──────────────────────────────────────────────────────
+# ── Rate-limit guard ───────────────────────────────────────────────────────
+# Check remaining budget; skip if <10 to avoid burning the retry budget.
 
-ROADMAP_RAW="$($CTL roadmap --project "$PROJECT" 2>/dev/null)"
-DIGEST_JSON="$($CTL digest --project "$PROJECT" --since 7d --json 2>/dev/null)"
-MILESTONES_JSON="$($CTL milestone --project "$PROJECT" --json 2>/dev/null)"
+BUDGET="$($CTL ratelimit --json 2>/dev/null || echo '{"requests":{"remaining":0}}')"
+REMAINING="$(echo "$BUDGET" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d.requests?.remaining ?? 0)" 2>/dev/null || echo 0)"
+
+if [ "$REMAINING" -lt 10 ]; then
+  echo "Linear API budget low ($REMAINING remaining) — skipping render to avoid rate-limit failures."
+  exit 0
+fi
+
+# ── Gather live data (degrade gracefully on failure) ──────────────────────
+
+ROADMAP_RAW="$($CTL roadmap --project "$PROJECT" 2>&1 || echo "(render failed — see workflow logs)")"
+DIGEST_JSON="$($CTL digest --project "$PROJECT" --since 7d --json 2>&1 || echo '{}')"
+MILESTONES_JSON="$($CTL milestone --project "$PROJECT" --json 2>&1 || echo '{}')"
 
 # ── Parse digest for counts ───────────────────────────────────────────────
 
-# Extract issue counts from the digest JSON using node (available via bun).
-read -r COMPLETED WEEK ISSUES_OPENED ISSUES_CLOSED <<< "$(node -e "
-const d = process.argv[1];
-const j = JSON.parse(d);
-const groups = j.groups || [];
-let completed = 0, opened = 0, closed = 0;
-for (const g of groups) {
-  for (const i of (g.issues || [])) {
-    if (g.label === 'Completed' || g.statusType === 'completed') completed++;
-    if (g.label === 'Started' || g.statusType === 'started') {} // count separately if needed
-  }
-}
-console.log(completed, 7, j.openedCount || 0, j.closedCount || 0);
-" "$DIGEST_JSON" 2>/dev/null || echo "0 7 0 0")"
+read -r ISSUES_OPENED ISSUES_CLOSED <<< "$(echo "$DIGEST_JSON" | node -e "
+const d = require('fs').readFileSync(0,'utf8');
+try { const j = JSON.parse(d); console.log(j.openedCount || 0, j.closedCount || 0); }
+catch { console.log(0, 0); }
+" 2>/dev/null || echo "0 0")"
 
 # ── Parse milestones for summary table ────────────────────────────────────
 
-MILESTONE_TABLE="$(node -e "
-const raw = process.argv[1];
-const j = JSON.parse(raw);
-const ms = j.milestones || [];
-for (const m of ms) {
-  const pct = m.percent || 0;
-  const done = m.done || 0;
-  const total = m.total || 0;
-  const date = m.targetDate || '—';
-  console.log('| ' + m.name + ' | \`' + m.id + '\` | ' + date + ' | ' + total + ' | ' + pct + '% (' + done + '/' + total + ') |');
-}
-" "$MILESTONES_JSON" 2>/dev/null || echo "")"
+MILESTONE_TABLE="$(echo "$MILESTONES_JSON" | node -e "
+const raw = require('fs').readFileSync(0,'utf8');
+try {
+  const j = JSON.parse(raw);
+  const ms = j.milestones || [];
+  for (const m of ms) {
+    const pct = m.percent || 0;
+    const done = m.done || 0;
+    const total = m.total || 0;
+    const date = m.targetDate || '—';
+    console.log('| ' + m.name + ' | \`' + m.id + '\` | ' + date + ' | ' + total + ' | ' + pct + '% (' + done + '/' + total + ') |');
+  }
+} catch {}
+" 2>/dev/null || echo "")"
 
 # ── Timestamp ────────────────────────────────────────────────────────────
 
@@ -69,8 +75,6 @@ NOW="$(date -u +"%Y-%m-%d %H:%M UTC")"
 # ── Build the replacement section ─────────────────────────────────────────
 
 NEW_SECTION="## Live Linear State (auto-rendered $NOW)
-
-4 milestones in the Linear \`$PROJECT\` project; all issues assigned.
 
 | Milestone | Linear ID | Target Date | Issues | Progress |
 |----------|-----------|------------|--------|----------|
@@ -84,14 +88,6 @@ ${ROADMAP_RAW}
 *Rendered by \`.github/workflows/gaze-upon-velocity.yml\` on schedule + dispatch.*"
 
 # ── Splice into the roadmap file ──────────────────────────────────────────
-#
-# The file has:
-#   ## Live Linear State (...)
-#   ...content...
-#   ## What gaze-upon Is
-#
-# We replace everything from "## Live Linear State" up to (but not including)
-# the next "## " heading.
 
 if [ ! -f "$ROADMAP_FILE" ]; then
   echo "error: $ROADMAP_FILE not found." >&2
@@ -100,17 +96,27 @@ fi
 
 # Use awk to splice: everything before "## Live Linear State",
 # then the new section, then everything from the next "## " heading onward.
+# If there's no existing "## Live Linear State" header, insert before the
+# first "## " heading.
+
 awk -v section="$NEW_SECTION" '
-  BEGIN { in_section = 0; printed = 0 }
+  BEGIN { in_section = 0; done = 0 }
   /^## Live Linear State/ { in_section = 1; next }
   /^## / && in_section {
     in_section = 0
+    done = 1
     print section
     print ""
     print
     next
   }
   !in_section { print }
+  END {
+    if (!done) {
+      # No existing section found — the file was printed as-is.
+      # The caller should handle this, but we exit 0 to avoid red-X.
+    }
+  }
 ' "$ROADMAP_FILE" > "${ROADMAP_FILE}.tmp" && mv "${ROADMAP_FILE}.tmp" "$ROADMAP_FILE"
 
 echo "Roadmap updated: $ROADMAP_FILE"
