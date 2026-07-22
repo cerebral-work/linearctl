@@ -5,20 +5,18 @@
 > Source: `linearctl search --project gaze-upon --state all --json`.
 > Milestones created and issues assigned via `linearctl milestone create` + `update --stdin --apply`.
 
-## Live Linear State (executed 2026-07-22)
+## Live Linear State (auto-rendered 2026-07-22 09:57 UTC)
 
-4 milestones created in the Linear `gaze-upon` project; all 8 issues assigned:
+4 milestones in the Linear `gaze-upon` project; all issues assigned.
 
 | Milestone | Linear ID | Target Date | Issues | Progress |
 |----------|-----------|------------|--------|----------|
-| Context & Planning Surface | `5dee250f-608b-49a1-94b5-c085f8ff08f9` | 2026-08-12 | 2 | 0% | 
-| Observability & Trace Export | `baf06cda-7024-44c0-a7e9-8b0b507617e4` | 2026-08-26 | 2 | 0% |
-| Harness Safety & State Integrity | `9aa072c1-a18f-4c1c-987e-af3dcd9683a6` | 2026-08-12 | 3 | 0% |
-| Dogfood & Validation | `3f74fd73-0b1d-4573-b410-d47f3b61e05e` | 2026-09-09 | 1 | 0% |
+| Dogfood & Validation | `3f74fd73-0b1d-4573-b410-d47f3b61e05e` | 2026-09-09 | 1 | 0% (0/1) |
+| Harness Safety & State Integrity | `9aa072c1-a18f-4c1c-987e-af3dcd9683a6` | 2026-08-12 | 3 | 0% (0/3) |
+| Observability & Trace Export | `baf06cda-7024-44c0-a7e9-8b0b507617e4` | 2026-08-26 | 2 | 0% (0/2) |
+| Context & Planning Surface | `5dee250f-608b-49a1-94b5-c085f8ff08f9` | 2026-08-12 | 2 | 0% (0/2) |
 
 ```
-$ linearctl roadmap --project gaze-upon
-
 gaze-upon — 4 milestone(s)
 
   Harness Safety & State Integrity  (due 2026-08-12)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
@@ -37,6 +35,9 @@ gaze-upon — 4 milestone(s)
   Dogfood & Validation  (due 2026-09-09)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
     OPS-882  [Triage]  Feature Doc: Dogfood Harness (OMP + glm-5.2-fast max thinking)
 ```
+
+*Last 7 days: 0 opened, 0 closed.*
+*Rendered by `.github/workflows/gaze-upon-velocity.yml` on schedule + dispatch.*
 
 ## What gaze-upon Is
 
