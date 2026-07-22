@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+
+### Features
+
+* **milestone:** `milestone create` subcommand — create project milestones headless (CER-1686)
+* **project:** `project update` subcommand — update project state, name, description (CER-1687)
+* **roadmap:** milestone timeline view with progress and issue lists per milestone (CER-1688)
+
+
+### Bug Fixes
+
+* **file:** `--stdin` dry-run now validates project name resolution so the preview matches `--apply` (CER-1604)
+
+
 ## [0.7.0](https://github.com/cerebral-work/linearctl/compare/v0.6.0...v0.7.0) (2026-07-11)
 
 
