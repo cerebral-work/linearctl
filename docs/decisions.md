@@ -118,3 +118,44 @@ Conventional Commits required.
 bot and **GitHub web-flow-signed** (marked *Verified*), not GPG-signed by the
 maintainer's key. Branch protection that requires signatures must accept GitHub's
 web-flow signature — confirm before enabling "require signed commits".
+
+## ADR-0007 — macOS notarization via macos-latest runner + notarytool
+
+**Status:** Accepted (2026-07-22). Implementation gated on Apple Developer
+Program enrollment (CER-1150 / T15).
+
+**Context.** `linearctl` ships as a bun-compiled single binary for 4 targets
+(linux/macos × x64/arm64). macOS Mach-O binaries are Gatekeeper-quarantined
+when unsigned — every new macOS user hits the quarantine once. The workaround
+(`xattr -d com.apple.quarantine`) works but is a friction point.
+
+**Decision.** Split the release build matrix: linux targets stay on
+`ubuntu-latest`; darwin targets move to `macos-latest` where codesign +
+notarytool + stapler run natively. The darwin build is **dormant-until-keyed**:
+it compiles + uploads unsigned binaries when Apple secrets are absent (current
+behavior), and signs + notarizes + staples when they're present.
+
+**Why macOS runner (not cross-sign from Linux).** `codesign` and
+`xcrun notarytool` require macOS. There is no reliable Linux-based path to
+codesign a Mach-O binary. A `macos-latest` runner (free tier: 2000 min/month
+for public repos) adds ~2 min per darwin target per release — acceptable.
+
+**Secrets required (GitHub repo secrets):**
+1. `APPLE_DEVELOPER_ID_APPLICATION` — base64-encoded P12 certificate (Developer ID Application, exported from Keychain Access)
+2. `APPLE_CERTIFICATE_PASSWORD` — password for the P12 (if set during export; else the keychain password is used)
+3. `APPLE_ID` — the Apple ID email associated with the Developer Program membership
+4. `APPLE_APP_PASSWORD` — app-specific password for notarytool (generated at appleid.apple.com → Sign-In & Security → App-Specific Passwords)
+5. `APPLE_TEAM_ID` — the Developer Team ID (found in Membership → Team ID)
+
+**Certificate lifecycle.** The Developer ID Application certificate is a
+standard Apple code-signing cert (valid ~5 years). The P12 is stored as a
+GitHub secret; the CI imports it into a temporary keychain on the runner,
+then deletes the keychain at end of job. Renewal is a manual cert-export +
+secret-update.
+
+**Consequences.**
+- ✅ macOS users get a binary that passes Gatekeeper without manual `xattr` intervention.
+- ✅ SLSA attestation still works (attest-build-provenance runs on macOS the same as Linux).
+- ⚠️ macOS runner minutes are charged against the GitHub Actions free tier (public repos get unlimited, but we have private repos in the org).
+- ⚠️ The build matrix now has two runners instead of one; release time increases slightly (parallel, but macOS runners are slower to spin up).
+- ⚠️ Certificate renewal is a manual rotation every ~5 years (or sooner if compromised).
