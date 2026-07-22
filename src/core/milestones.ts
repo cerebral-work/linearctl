@@ -120,3 +120,52 @@ export async function deleteMilestone(
   }
   return { id, name: milestone.name, deleted: apply };
 }
+
+export interface CreateMilestoneParams {
+  name: string;
+  projectRef: string;
+  targetDate?: string;
+  description?: string;
+}
+
+export interface CreatedMilestone {
+  id: string;
+  name: string;
+  project: string;
+  targetDate: string | null;
+}
+
+/**
+ * Create a project milestone. Resolves the project ref (name or UUID) via
+ * `resolveProject`, then `client.createProjectMilestone`. The `targetDate`
+ * must be `YYYY-MM-DD` (Linear's `TimelessDate` scalar). See CER-1686.
+ */
+export async function createMilestone(
+  client: LinearClient,
+  params: CreateMilestoneParams,
+): Promise<CreatedMilestone> {
+  const project = await resolveProject(client, params.projectRef);
+
+  const res = await withRetry(() =>
+    client.createProjectMilestone({
+      name: params.name,
+      projectId: project.id,
+      ...(params.description ? { description: params.description } : {}),
+      ...(params.targetDate ? { targetDate: params.targetDate } : {}),
+    }),
+  );
+  if (!res.success) {
+    throw new Error("Linear reported the milestone create did not succeed.");
+  }
+  const ms = await res.projectMilestone;
+  if (!ms) {
+    throw new Error("milestone created but the payload returned no milestone.");
+  }
+
+  return {
+    id: ms.id,
+    name: ms.name,
+    project: project.name,
+    targetDate: ms.targetDate ? new Date(ms.targetDate).toISOString().slice(0, 10) : null,
+  };
+}

@@ -4,6 +4,7 @@ import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
 import { resolveMilestoneId } from "./milestones.js";
 import { resolveCycleId } from "./cycles.js";
+import { resolveProject } from "./projects.js";
 
 export interface CreateIssueParams {
   teamKey: string;
@@ -44,6 +45,15 @@ export async function createIssue(
   params: CreateIssueParams,
 ): Promise<CreatedIssue> {
   const team = await resolveTeamByKey(client, params.teamKey);
+  // Resolve project name → UUID before passing to the SDK. The Linear API
+  // rejects non-UUID projectId with "Argument Validation Error" — resolving
+  // here fixes both the single-issue `file` path and the `--stdin` batch
+  // path (CER-1604). A UUID passes through unchanged.
+  const projectId = params.projectId
+    ? UUID_RE.test(params.projectId)
+      ? params.projectId
+      : (await resolveProject(client, params.projectId)).id
+    : undefined;
 
   const labelIds = params.labels?.length
     ? await resolveLabelIds(client, team.id, params.labels)
@@ -66,7 +76,7 @@ export async function createIssue(
     stateId = state.id;
   }
   const projectMilestoneId = params.milestone
-    ? await resolveMilestoneId(client, params.milestone, params.projectId)
+    ? await resolveMilestoneId(client, params.milestone, projectId)
     : undefined;
   const cycleId = params.cycle
     ? await resolveCycleId(client, params.teamKey, params.cycle)
@@ -80,7 +90,7 @@ export async function createIssue(
       teamId: team.id,
       title: params.title,
       ...(params.description ? { description: params.description } : {}),
-      ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(projectId ? { projectId } : {}),
       ...(labelIds.length ? { labelIds } : {}),
       ...(assigneeId ? { assigneeId } : {}),
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
