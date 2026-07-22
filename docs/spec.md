@@ -378,7 +378,7 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T12 | `feat(standup): render digest (+ operator-gated Slack)` | M3 | never auto-post |
 | T13 | `feat(agent): OAuth actor=app scaffolding` | M4 | app registration, scopes, token storage |
 | T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities |
-| T15 | `chore(release): macOS notarization / codesign` | M2 | Gatekeeper quarantine fix for darwin assets |
+| T15 | `chore(release): macOS notarization / codesign` — *pipeline built (ADR-0007); gated on Apple Developer Program enrollment (CER-1150)* | M2 | Gatekeeper quarantine fix for darwin assets; build-darwin job on `macos-latest`, dormant-until-keyed |
 | T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
 | T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
 | T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
