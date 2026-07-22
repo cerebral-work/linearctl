@@ -1,30 +1,38 @@
 name: approve-auto-render-ci
 
 # CI runs on GITHUB_TOKEN-created auto-render PRs trigger the action_required
-# gate (first-time contributor approval). The GITHUB_TOKEN can't self-approve.
-# This workflow runs on the CI workflow_run event and approves pending runs
-# from auto-render/* branches, so auto-merge isn't blocked.
+# gate (first-time contributor approval). The GITHUB_TOKEN can't self-approve
+# from within the same workflow. This workflow fires when the velocity workflow
+# completes, then finds and approves any pending CI runs on auto-render/*
+# branches, unblocking auto-merge.
+#
+# Evolution: eventually move to a PAT (bot account) that creates the PR — PAT
+# PRs don't trigger the action_required gate. This is the GITHUB_TOKEN-only
+# workaround (no secrets to provision).
 
 on:
   workflow_run:
-    workflows: ["CI"]
-    types: [requested]
+    workflows: ["gaze-upon velocity"]
+    types: [completed]
 
 permissions:
   actions: write
+  pull-requests: write
 
 jobs:
   approve:
     name: Approve CI on auto-render PRs
     runs-on: ubuntu-latest
-    if: startsWith(github.event.workflow_run.head_branch, 'auto-render/')
     steps:
-      - name: Approve workflow run
+      - name: Find and approve pending CI runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          RUN_ID="${{ github.event.workflow_run.id }}"
-          REPO="${{ github.repository }}"
-          gh api -X POST "repos/${REPO}/actions/runs/${RUN_ID}/approve" \
-            && echo "Approved CI run $RUN_ID" \
-            || echo "Failed to approve (may already be approved or not required)"
+          # Find CI workflow runs in action_required status on auto-render branches
+          for run_id in $(gh run list --workflow ci.yml --status action_required --limit 10 --json databaseId,headBranch --jq '.[] | select(.headBranch | startswith("auto-render/")) | .databaseId'); do
+            echo "Approving CI run $run_id..."
+            gh api -X POST "repos/${REPO}/actions/runs/${run_id}/approve" 2>&1 \
+              && echo "  approved" \
+              || echo "  failed (may already be approved)"
+          done
