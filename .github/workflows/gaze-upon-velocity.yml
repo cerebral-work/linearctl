@@ -60,7 +60,7 @@ jobs:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: .github/scripts/render-roadmap.sh gaze-upon roadmap-gaze-upon.md
 
-      - name: Commit if changed
+      - name: Commit and push if changed
         if: steps.gate.outputs.enabled == 'true'
         run: |
           if git diff --quiet roadmap-gaze-upon.md; then
@@ -68,25 +68,27 @@ jobs:
             exit 0
           fi
 
-          # main is branch-protected (requires CI checks). Push to an auto-branch,
-          # open a PR, and admin-merge it — keeps the trunk green without bypassing
-          # the protection rules.
+          # main is branch-protected (requires CI status checks). Push to an
+          # auto-branch, open a PR, enable auto-merge — GitHub merges it once
+          # CI passes. No --admin bypass.
           BRANCH="auto-render/gaze-upon-${GITHUB_RUN_NUMBER}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add roadmap-gaze-upon.md
-          git commit -m "docs(gaze-upon): auto-render velocity roadmap [skip ci]"
+          git commit -m "docs(gaze-upon): auto-render velocity roadmap"
           git push origin "$BRANCH"
 
-          # Create PR and admin-merge (docs-only, no code changes).
-          PR_URL=$(gh pr create \
+          # Create PR, then enable auto-merge (merges when CI checks pass).
+          gh pr create \
             --title "docs(gaze-upon): auto-render velocity roadmap" \
             --body "Re-rendered from live Linear data by gaze-upon-velocity.yml run #${GITHUB_RUN_NUMBER}. Milestone progress, 7-day activity, issue counts. Auto-generated; docs-only." \
             --base main \
-            --head "$BRANCH")
-          PR_NUM=$(basename "$PR_URL")
-          gh pr merge "$PR_NUM" --merge --admin --subject "docs(gaze-upon): auto-render velocity roadmap (#$PR_NUM)"
-          echo "Merged $PR_URL"
+            --head "$BRANCH"
+
+          # --auto enables GitHub auto-merge; --merge sets merge commit.
+          # The PR merges automatically once the required CI check passes.
+          gh pr merge "$BRANCH" --merge --auto
+          echo "PR created with auto-merge enabled on $BRANCH."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
