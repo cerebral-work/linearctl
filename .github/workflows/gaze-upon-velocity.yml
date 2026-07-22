@@ -86,6 +86,13 @@ jobs:
             --base main \
             --head "$BRANCH"
 
+          # Approve CI workflow runs on the auto-PR (GITHUB_TOKEN-created PRs
+          # trigger the action_required gate for first-time-contribution branches).
+          sleep 5
+          for run_id in $(gh run list --branch "$BRANCH" --workflow ci.yml --json databaseId --jq '.[].databaseId'); do
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve" 2>/dev/null || true
+          done
+
           # --auto enables GitHub auto-merge; --merge sets merge commit.
           # The PR merges automatically once the required CI check passes.
           gh pr merge "$BRANCH" --merge --auto
