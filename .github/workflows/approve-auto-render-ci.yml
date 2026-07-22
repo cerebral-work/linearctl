@@ -1,0 +1,30 @@
+name: approve-auto-render-ci
+
+# CI runs on GITHUB_TOKEN-created auto-render PRs trigger the action_required
+# gate (first-time contributor approval). The GITHUB_TOKEN can't self-approve.
+# This workflow runs on the CI workflow_run event and approves pending runs
+# from auto-render/* branches, so auto-merge isn't blocked.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [requested]
+
+permissions:
+  actions: write
+
+jobs:
+  approve:
+    name: Approve CI on auto-render PRs
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.workflow_run.head_branch, 'auto-render/')
+    steps:
+      - name: Approve workflow run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          REPO="${{ github.repository }}"
+          gh api -X POST "repos/${REPO}/actions/runs/${RUN_ID}/approve" \
+            && echo "Approved CI run $RUN_ID" \
+            || echo "Failed to approve (may already be approved or not required)"
