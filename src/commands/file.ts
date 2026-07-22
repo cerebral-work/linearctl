@@ -1,3 +1,4 @@
+import { resolveProject, UUID_RE } from "../core/projects.js";
 import { makeClient } from "../client.js";
 import { createIssue, addRelations } from "../core/issues.js";
 import { readStdin } from "../lib/io.js";
@@ -38,6 +39,15 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
   const items = parseFileBatchSpec(await readStdin());
   if (items.length === 0) throw new Error("--stdin: no issues in the plan.");
 
+  // Validate project refs in dry-run so the preview is a reliable predictor
+  // of what --apply will do (CER-1604). A non-UUID project ref that can't be
+  // resolved surfaces here, not mid-batch at apply time.
+  const projectRefs = [...new Set(items.map((i) => i.project).filter(Boolean))] as string[];
+  for (const ref of projectRefs) {
+    if (!UUID_RE.test(ref)) {
+      await resolveProject(client, ref); // throws if unresolvable
+    }
+  }
   if (!opts.apply) {
     if (opts.json) {
       printJson({ apply: false, count: items.length, items });
