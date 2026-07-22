@@ -1,9 +1,9 @@
 # `linearctl` — Specification
 
 **Status:** command surface complete. Every command in §6 — `whoami`, `digest`,
-`file`, `triage`, `milestone`, `project`, `update`/`close`, `stale`, `xref`,
-`show`, `ratelimit`, `doc`, `comment`, and `mcp serve` (MCP server for Claude
-Desktop / Code) — is implemented **and verified against the live API**. Built +
+`file`, `triage`, `milestone` (incl. `create`), `project` (incl. `update`), `roadmap`,
+`update`/`close`, `stale`, `xref`, `show`, `ratelimit`, `doc`, `comment`, and `mcp serve`
+(MCP server for Claude Desktop / Code) — is implemented **and verified against the live API**. Built +
 shipped with **bun**.
 
 **Tooling rationale** (bun vs npm, what we declined and why) lives in
@@ -222,6 +222,27 @@ non-destructive (additive), so safe-by-default is satisfied without a dry-run
 flag. Single Linear mutation: `createComment({ issueId, body })`. MCP:
 `comment_issue` (non-destructive, not read-only). See `docs/features/comment.md`.
 
+
+### 6.15 `linearctl milestone create` — *implemented + verified*
+`linearctl milestone create <name> --project <ref> [--target-date <YYYY-MM-DD>] [--desc <md|->] [--json]`.
+Create a project milestone — the grouping unit behind Linear's roadmap view.
+`--project` accepts name or UUID (same as `file --project`); `--target-date` is
+optional (YYYY-MM-DD, Linear's `TimelessDate` scalar); `--desc` optional markdown
+(same `-` stdin convention). Emits the milestone UUID + name. See CER-1686.
+
+### 6.16 `linearctl project update` — *implemented + verified*
+`linearctl project update <ref> [--state <state>] [--name <name>] [--desc <md|->] [--json]`.
+Update a project's state, name, or description. `<ref>` accepts project name or
+UUID. `--state` sets the project status type (backlog, planned, started, paused,
+completed, canceled) — resolved against the workspace's project-status set. At
+least one mutation flag is required. See CER-1687.
+
+### 6.17 `linearctl roadmap` — *implemented + verified*
+`linearctl roadmap --project <ref> [--json]`. Render a project roadmap: a
+milestone timeline with target dates, progress bars (done/open), and issue
+lists per milestone. Sorted by target date (undated first). `--json` emits
+structured milestone + issue data for piping. If a project has no milestones,
+suggests `milestone create`. See CER-1688.
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
@@ -362,3 +383,6 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
 | T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
 | T19 | `feat(doc): project overview get/set` — *shipped (§6.13)* | M3 | `doc get-overview` / `doc set-overview --file <md\|->` on `Project.content`; whole-document replace, empty-content guard; MCP `project_overview_get`/`_set` |
+| T20 | `feat(milestone): create project milestones` — *shipped (§6.15)* | M3 | `milestone create <name> --project <ref> [--target-date] [--desc]`; resolves project name→UUID; emits milestone UUID (CER-1686) |
+| T21 | `feat(project): update project state/name/description` — *shipped (§6.16)* | M3 | `project update <ref> [--state] [--name] [--desc]`; resolves state by type against workspace project-status set (CER-1687) |
+| T22 | `feat(roadmap): milestone timeline view` — *shipped (§6.17)* | M3 | `roadmap --project <ref> [--json]`; milestone timeline with progress + issue lists, sorted by target date (CER-1688) |

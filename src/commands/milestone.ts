@@ -1,5 +1,6 @@
 import { makeClient } from "../client.js";
-import { milestones, deleteMilestone } from "../core/milestones.js";
+import { milestones, deleteMilestone, createMilestone } from "../core/milestones.js";
+import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 
 export interface MilestoneOptions {
@@ -7,9 +8,48 @@ export interface MilestoneOptions {
   json?: boolean;
 }
 
+export interface MilestoneCreateOptions {
+  project: string;
+  targetDate?: string;
+  desc?: string;
+  json?: boolean;
+}
+
 export interface MilestoneDeleteOptions {
   yes?: boolean;
   json?: boolean;
+}
+
+/**
+ * `linearctl milestone create <name> --project <ref>` — create a project milestone.
+ *
+ * Delegates to `core.createMilestone`; this layer handles the `--desc -` stdin
+ * convention and output formatting. See CER-1686.
+ */
+export async function milestoneCreate(
+  name: string,
+  opts: MilestoneCreateOptions,
+): Promise<void> {
+  const client = makeClient();
+  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+
+  const ms = await createMilestone(client, {
+    name,
+    projectRef: opts.project,
+    targetDate: opts.targetDate,
+    description,
+  });
+
+  if (opts.json) {
+    printJson(ms);
+    return;
+  }
+
+  process.stdout.write(
+    `created milestone "${ms.name}" (${ms.id})\n` +
+      `  project: ${ms.project}\n` +
+      (ms.targetDate ? `  due:    ${ms.targetDate}\n` : ""),
+  );
 }
 
 /**

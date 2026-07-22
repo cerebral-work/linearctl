@@ -4,8 +4,8 @@ import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
-import { milestone, milestoneDelete } from "./commands/milestone.js";
-import { projectCreate, projectList } from "./commands/project.js";
+import { milestone, milestoneDelete, milestoneCreate } from "./commands/milestone.js";
+import { projectCreate, projectList, projectUpdate } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { comment } from "./commands/comment.js";
 import { stale } from "./commands/stale.js";
@@ -24,6 +24,7 @@ import { releaseNotesCmd } from "./commands/release-notes.js";
 import { standup } from "./commands/standup.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
+import { roadmap } from "./commands/roadmap.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -91,6 +92,20 @@ const milestoneCmd = program
   .option("--json", "emit JSON")
   .action((opts) => milestone(opts));
 
+
+milestoneCmd
+  .command("create")
+  .description("Create a project milestone.")
+  .argument("<name>", "milestone name")
+  .option("--target-date <YYYY-MM-DD>", "planned delivery date")
+  .option("--desc <markdown|->", "milestone description (use '-' for stdin)")
+  .action((name: string, opts: { targetDate?: string; desc?: string }, cmd: Command) => {
+    const parentOpts = cmd.parent?.opts() ?? {};
+    const project = parentOpts.project as string | undefined;
+    const json = parentOpts.json as boolean | undefined;
+    if (!project) throw new Error("milestone create needs --project <ref>.");
+    return milestoneCreate(name, { project, json, ...opts });
+  });
 milestoneCmd
   .command("delete")
   .description("Delete a project milestone by id (dry-run unless --yes).")
@@ -118,6 +133,23 @@ projectCmd
   .option("--team <key>", "restrict to a team key (e.g. CER)")
   .option("--json", "emit JSON")
   .action((opts) => projectList(opts));
+
+projectCmd
+  .command("update")
+  .description("Update a project's state, name, or description.")
+  .argument("<ref>", "project name or UUID")
+  .option("--state <state>", "project state (backlog, planned, started, paused, completed, canceled)")
+  .option("--name <name>", "rename the project")
+  .option("--desc <markdown|->", "project description (use '-' for stdin)")
+  .option("--json", "emit JSON")
+  .action((ref: string, opts: { state?: string; name?: string; desc?: string; json?: boolean }) => projectUpdate(ref, opts));
+
+program
+  .command("roadmap")
+  .description("View or export a project roadmap (milestone timeline).")
+  .requiredOption("--project <ref>", "project name or UUID")
+  .option("--json", "emit JSON")
+  .action((opts: { project: string; json?: boolean }) => roadmap(opts));
 
 program
   .command("update")
