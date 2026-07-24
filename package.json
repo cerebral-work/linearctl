@@ -2,7 +2,7 @@
   "name": "linearctl",
   "version": "0.7.0",
   "private": true,
-  "description": "linearctl — a headless CLI for frequently ad-hocced Linear workflows (digest, file, triage, milestone), built on @linear/sdk.",
+  "description": "linearctl \u2014 a headless CLI for frequently ad-hocced Linear workflows (digest, file, triage, milestone), built on @linear/sdk.",
   "type": "module",
   "bin": {
     "linearctl": "dist/linearctl"
@@ -15,7 +15,14 @@
     "whoami": "bun run src/index.ts whoami",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build ./src/index.ts --compile --minify --outfile dist/linearctl"
+    "build": "bun build ./src/index.ts --compile --minify --outfile dist/linearctl",
+    "dev:watch": "bun --watch run src/index.ts",
+    "test:watch": "bun test --watch",
+    "test:fast": "bun test --filter",
+    "lint": "bun run typecheck",
+    "ci": "bun run typecheck && bun test",
+    "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --outfile dist/linearctl",
+    "quick": "bun run src/index.ts"
   },
   "keywords": [
     "linear",
