@@ -46,7 +46,7 @@ linearctl pull \
 | `--text <query>` | substring over title + description | none | server-side containsIgnoreCase |
 | `--updated-since <window>` | lookback (`7d`, `24h`, `2w`) | none | server-side `updatedAt: { gte }` |
 | `--created-since <window>` | lookback | none | server-side `createdAt: { gte }` |
-| `--limit <n>` | integer | exhaustive | stop after collecting this many issues (bounded smoke loops) |
+| `--limit <n>` | integer | exhaustive | stop after collecting this many issues (bounded smoke loops). Results are ordered `updatedAt` desc — a **sliding window**: two consecutive bounded polls can disagree without any issue entering/leaving the funnel, because a touch shifts ordering. For stable-window semantics, pipe full results and slice client-side by `createdAt` ascending. |
 | `--json` | flag | n/a | always JSON; accepted for consistency |
 
 Output is **JSON to stdout only** (no human-table path — use `search` for
@@ -98,6 +98,16 @@ fields). `labels` and `description` are always present and non-null.
 > removed or renamed without a major-version bump. If `updatedAt` semantics
 > change in the Linear API, that is a breaking contract change and consumers
 > MUST be notified before upgrade.
+>
+> **Ordering interaction with `--limit`:** results are ordered `updatedAt`
+> desc (pinned in the query variables, not inherited from a server default).
+> This makes `--limit <n>` a sliding window — a ticket whose `updatedAt`
+> changes between two bounded polls shifts it in the ordering, so the
+> bounded set can change membership without any issue entering or leaving
+> the funnel. This is deliberate (most-recently-touched-first is the useful
+> default for smoke loops), but consumers keying idempotency on `updatedAt`
+> MUST NOT use `--limit` for dedup-critical comparisons. Use the full
+> (unbounded) result for conformance tests.
 
 ### Equivalent Linear GraphQL (for the direct-implementation path)
 
