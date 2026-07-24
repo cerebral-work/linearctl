@@ -22,6 +22,7 @@ import { linkCmd } from "./commands/link.js";
 import { commentsCmd } from "./commands/comments.js";
 import { releaseNotesCmd } from "./commands/release-notes.js";
 import { standup } from "./commands/standup.js";
+import { pull } from "./commands/pull.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { roadmap } from "./commands/roadmap.js";
@@ -295,6 +296,26 @@ program
   .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
   .option("--json", "emit JSON")
   .action((opts) => searchCmd(opts));
+
+program
+  .command("pull")
+  .description(
+    "Machine-consumable issue stream for ingestion funnels (JSON only; soma WorkSource contract).",
+  )
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option(
+    "--state <ref>",
+    "state type (triage|backlog|todo|started|done|canceled|all) or a state name; default: active only",
+  )
+  .option("--label <name...>", "label name(s) — all must match")
+  .option("--assignee <who>", "'me', 'none' (unassigned), an email, a display name, or a user id")
+  .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--priority <0-4|none>", "exact priority (1=Urgent … 4=Low, 0/none=unset)")
+  .option("--text <query>", "full-text match over title + description")
+  .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
+  .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
+  .option("--json", "emit JSON (always JSON; flag accepted for consistency)")
+  .action((opts) => pull(opts));
 
 program
   .command("show")
