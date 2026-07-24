@@ -16,6 +16,8 @@ export interface PullOptions {
   updatedSince?: string;
   createdSince?: string;
   json?: boolean;
+  /** Stop after collecting this many issues (bounded smoke loops). */
+  limit?: number;
 }
 
 /**
@@ -32,7 +34,9 @@ export async function pull(opts: PullOptions): Promise<void> {
   const client = makeClient();
   let items;
   try {
-    items = await pullIssues(client, {
+    items = await pullIssues(
+      client,
+      {
       teamKeys: opts.team,
       state: opts.state,
       stateSet: opts.stateSet,
@@ -42,7 +46,9 @@ export async function pull(opts: PullOptions): Promise<void> {
       text: opts.text,
       updatedSince: opts.updatedSince,
       createdSince: opts.createdSince,
-    });
+      },
+      opts.limit,
+    );
   } catch (err) {
     // The funnel contract (docs/funnel-contract.md §1) documents exit 2 when
     // the Linear API rate limit is exhausted so an unattended operator can
