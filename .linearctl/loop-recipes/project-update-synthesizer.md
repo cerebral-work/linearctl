@@ -1,6 +1,7 @@
 ---
 name: project-update-synthesizer
 version: 1
+last_verified: "2026-07-24"  # against Linear Loops UI; bump when re-verified
 trigger:
   type: schedule
   cron: "0 16 * * 5"

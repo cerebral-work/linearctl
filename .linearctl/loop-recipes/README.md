@@ -14,6 +14,7 @@ Each recipe is a markdown file with YAML frontmatter:
 ---
 name: bug-triage-dispatcher       # stable identifier
 version: 1                         # bump on prompt/trigger/permission change
+last_verified: "2026-07-24"           # date last checked against Linear's UI; staleness signal
 trigger:
   type: issue_created_or_updated   # or "schedule" with cron
   conditions:                       # team, state, label, cycle_ends_within
@@ -56,6 +57,13 @@ the mechanism. State what the loop should NOT do (negative constraints).
   Web access and coding sessions are high-autonomy — enable deliberately.
 - **One recipe per file.** `name` + `version` are the identity. Bump version
   when the trigger, instructions, or permissions change.
+- **`last_verified` is a staleness signal, not a guarantee.** Loops have no API, so
+  no conformance test can detect drift between a recipe and Linear's actual UI
+  behavior. The `last_verified` date makes that drift visible instead of silent.
+  Re-verify against the UI periodically and bump the date. Unlike the funnel
+  contract (which has two implementations and a conformance test), a recipe
+  catalog has no counterpart to diverge from — its failure mode is staleness
+  against Linear's UI, not implementation drift.
 - **Scope to teams, not "all".** A workspace-wide loop is powerful and
   expensive — scope it to the teams that need it.
 

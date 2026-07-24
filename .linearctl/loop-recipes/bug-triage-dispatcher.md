@@ -1,6 +1,7 @@
 ---
 name: bug-triage-dispatcher
 version: 1
+last_verified: "2026-07-24"  # against Linear Loops UI; bump when re-verified
 trigger:
   type: issue_created_or_updated
   conditions:
