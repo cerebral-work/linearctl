@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildSearchFilter } from "../src/core/search.js";
+import { pullIssues } from "../src/core/pull.js";
 import { updateIssue } from "../src/core/issues.js";
 import type { LinearClient } from "@linear/sdk";
 
@@ -146,5 +147,50 @@ describe("updateIssue — description-clobber guard", () => {
 
     // The only key in the mutation input should be stateId.
     expect(Object.keys(capturedInputs[0])).toEqual(["stateId"]);
+  });
+});
+
+
+describe("pullIssues - limit parameter", () => {
+  test("limit stops pagination once the threshold is reached", async () => {
+    const calls: { after: string | null }[] = [];
+    const page1 = {
+      nodes: Array.from({ length: 100 }, (_, i) => ({
+        id: `i${i}`, identifier: `EST-${i}`, title: `t${i}`, url: `u${i}`,
+        priority: 0, description: "", updatedAt: "2026-07-24T10:00:00Z",
+        state: { name: "Todo", type: "unstarted" }, labels: { nodes: [] },
+      })),
+      pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
+    };
+    const client = {
+      client: {
+        rawRequest: async (_q: string, vars: { after: string | null }) => {
+          calls.push({ after: vars.after });
+          return { data: { issues: page1 } };
+        },
+      },
+    } as unknown as LinearClient;
+    const result = await pullIssues(client, { teamKeys: ["EST"], limit: 5 });
+    expect(result).toHaveLength(5);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("limit undefined exhaustive pagination", async () => {
+    const pages = [
+      { nodes: [{ id: "i1", identifier: "EST-1", title: "a", url: "u1", priority: 0, description: "", updatedAt: "2026-07-24T10:00:00Z", state: { name: "Todo", type: "unstarted" }, labels: { nodes: [] } }], pageInfo: { hasNextPage: true, endCursor: "c1" } },
+      { nodes: [{ id: "i2", identifier: "EST-2", title: "b", url: "u2", priority: 0, description: "", updatedAt: "2026-07-24T11:00:00Z", state: { name: "Todo", type: "unstarted" }, labels: { nodes: [] } }], pageInfo: { hasNextPage: false, endCursor: null } },
+    ];
+    const calls: { after: string | null }[] = [];
+    const client = {
+      client: {
+        rawRequest: async (_q: string, vars: { after: string | null }) => {
+          calls.push({ after: vars.after });
+          return { data: { issues: pages.shift()! } };
+        },
+      },
+    } as unknown as LinearClient;
+    const result = await pullIssues(client, { teamKeys: ["EST"] });
+    expect(result).toHaveLength(2);
+    expect(calls).toHaveLength(2);
   });
 });

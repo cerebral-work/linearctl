@@ -44,6 +44,7 @@ export async function pull(opts: PullOptions): Promise<void> {
       text: opts.text,
       updatedSince: opts.updatedSince,
       createdSince: opts.createdSince,
+      limit: opts.limit,
     });
   } catch (err) {
     // The funnel contract (docs/funnel-contract.md §1) documents exit 2 when
