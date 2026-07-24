@@ -26,17 +26,19 @@ bun run dev -- whoami                          # smoke test
 
 ## Adding a new command
 
-1. Create `src/commands/<name>.ts` — export a `register(program)` function
-2. Register in `src/index.ts`
-3. Add `test/<name>.test.ts` — at least one happy-path test
-4. `bun run typecheck` — clean
-5. `bun test` — green
-6. `bun run dev -- <name> --help` — verify help text
+1. Create `src/core/<name>.ts` — pure functions that talk to Linear (via `src/client.ts`); no I/O or formatting
+2. Create `src/commands/<name>.ts` — a thin layer that parses opts, calls the core function, and formats output (`--json` via `lib/output.ts`)
+3. Wire it in `src/index.ts` — import the command, add a `program.command(...).option(...).action(...)` entry
+4. Add `test/<name>.test.ts` — at least one happy-path test
+5. `bun run typecheck` — clean
+6. `bun test` — green
+7. `bun run dev -- <name> --help` — verify help text
 
 ## Conventions
 
 - TypeScript strict mode (tsc is the only check — bun strips types)
-- Commands export a `register(program: Command)` function
+- Commands export named async functions and accept a typed `<Name>Options` interface; they never call the Linear API directly — that goes in `src/core/*`
 - All API calls go through `src/client.ts` (the Linear SDK wrapper)
-- JSON output via `--json` flag on every command
+- Rendering is split: `src/lib/output.ts` (`printJson`, `printTable`), `src/lib/io.ts` (`readStdin`), `src/lib/prompts.ts` (interactive)
+- `--json` flag on every command
 - Conventional Commits (GPG-signed, no AI attribution)
