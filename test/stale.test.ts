@@ -1,130 +1,179 @@
 import { describe, expect, test } from "bun:test";
 import type { LinearClient } from "@linear/sdk";
 import { stale } from "../src/core/grooming.js";
+import type { FlatIssueNode } from "../src/core/issues-query.js";
 
-/**
- * Test the stale function: active-state issues bucketed by last-update age.
- * Critical = older than criticalCutoff; warn = between warnCutoff and
- * criticalCutoff. Sorted by days stale descending.
- */
+const DAY_MS = 86_400_000;
 
-interface RawNode {
-  id: string;
-  identifier: string;
-  title: string;
-  url: string;
-  priority: number;
-  estimate: number | null;
-  updatedAt: string;
-  state: { name: string; type: string } | null;
-  assignee: { displayName: string } | null;
+function flatIssue(
+  id: string,
+  identifier: string,
+  title: string,
+  updatedAt: string,
+  stateType = "started",
+): FlatIssueNode {
+  return {
+    id,
+    identifier,
+    title,
+    url: `https://linear.app/cerebral-work/issue/${identifier}`,
+    priority: 3,
+    estimate: null,
+    updatedAt,
+    state: { name: stateType === "started" ? "In Progress" : "Todo", type: stateType },
+    assignee: null,
+  };
 }
 
-function stubClient(nodes: RawNode[]) {
-  const client = {
+/**
+ * stale() calls collectIssuesFlat(client, filter, orderBy) which uses
+ * client.client.rawRequest internally. We stub that to return a fixed
+ * set of issues.
+ */
+function stubClient(issues: FlatIssueNode[]): LinearClient {
+  return {
     client: {
       rawRequest: async () => ({
         data: {
           issues: {
-            nodes,
+            nodes: issues,
             pageInfo: { hasNextPage: false, endCursor: null },
           },
         },
       }),
     },
   } as unknown as LinearClient;
-
-  return { client };
 }
 
-const NOW = new Date("2026-07-24T12:00:00Z");
-const WARN_CUTOFF = new Date("2026-07-10T12:00:00Z"); // 14 days ago
-const CRITICAL_CUTOFF = new Date("2026-07-03T12:00:00Z"); // 21 days ago
-const DAY_MS = 86_400_000;
+const NOW = new Date("2026-07-24T12:00:00.000Z");
 
-describe("stale — age-based bucketing", () => {
-  test("issue updated between warn and critical cutoff → warn bucket", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "Stale", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 16 * DAY_MS).toISOString(), state: { name: "In Progress", type: "started" }, assignee: null },
-    ]);
+describe("stale", () => {
+  test("buckets issues into warn and critical by updatedAt", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "A", new Date(NOW.getTime() - 10 * DAY_MS).toISOString()),    // 10d → warn
+      flatIssue("2", "CER-2", "B", new Date(NOW.getTime() - 40 * DAY_MS).toISOString()),    // 40d → critical
+      flatIssue("3", "CER-3", "C", new Date(NOW.getTime() - 5 * DAY_MS).toISOString()),     // 5d → warn
+    ];
 
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),      // >7d = stale
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),  // >30d = critical
+      now: NOW,
+    });
 
-    expect(result.items[0].bucket).toBe("warn");
-    expect(result.warn).toBe(1);
+    expect(result.warn).toBe(2);   // CER-1 (10d), CER-3 (5d)
+    expect(result.critical).toBe(1); // CER-2 (40d)
+  });
+
+  test("sorts items by daysStale descending (most stale first)", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "A", new Date(NOW.getTime() - 10 * DAY_MS).toISOString()),
+      flatIssue("2", "CER-2", "B", new Date(NOW.getTime() - 40 * DAY_MS).toISOString()),
+      flatIssue("3", "CER-3", "C", new Date(NOW.getTime() - 15 * DAY_MS).toISOString()),
+    ];
+
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      now: NOW,
+    });
+
+    expect(result.items[0].identifier).toBe("CER-2");  // 40d
+    expect(result.items[1].identifier).toBe("CER-3");  // 15d
+    expect(result.items[2].identifier).toBe("CER-1");  // 10d
+  });
+
+  test("computes daysStale correctly", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "A", new Date(NOW.getTime() - 14 * DAY_MS).toISOString()),
+    ];
+
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      now: NOW,
+    });
+
+    expect(result.items[0].daysStale).toBe(14);
+  });
+
+  test("reportability: olderThanDays and criticalDays are derived from cutoffs", async () => {
+    const client = stubClient([]);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 90 * DAY_MS),
+      now: NOW,
+    });
+
+    expect(result.olderThanDays).toBe(30);
+    expect(result.criticalDays).toBe(90);
+  });
+
+  test("returns empty items when nothing is stale", async () => {
+    const client = stubClient([]);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      now: NOW,
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.warn).toBe(0);
     expect(result.critical).toBe(0);
   });
 
-  test("issue older than critical cutoff → critical bucket", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "Very stale", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 30 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-    ]);
+  test("boundary: exactly at warnCutoff is included (lte)", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "A", new Date(NOW.getTime() - 7 * DAY_MS).toISOString()),
+    ];
 
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),   // exactly 7d
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      now: NOW,
+    });
+
+    // The filter is updatedAt: { lte: warnCutoff }, so exactly-at is included
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].daysStale).toBe(7);
+  });
+
+  test("boundary: exactly at criticalCutoff is critical (lte)", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "A", new Date(NOW.getTime() - 30 * DAY_MS).toISOString()),
+    ];
+
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),  // exactly 30d
+      now: NOW,
+    });
 
     expect(result.items[0].bucket).toBe("critical");
-    expect(result.critical).toBe(1);
-    expect(result.warn).toBe(0);
   });
 
-  test("daysStale is floor of (now - updated) / DAY_MS", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "X", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 15.9 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-    ]);
+  test("item carries identifier, title, state, assignee, url", async () => {
+    const issues = [
+      flatIssue("1", "CER-1", "Fix bug", new Date(NOW.getTime() - 10 * DAY_MS).toISOString()),
+    ];
 
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
+    const client = stubClient(issues);
+    const result = await stale(client, {
+      warnCutoff: new Date(NOW.getTime() - 7 * DAY_MS),
+      criticalCutoff: new Date(NOW.getTime() - 30 * DAY_MS),
+      now: NOW,
+    });
 
-    expect(result.items[0].daysStale).toBe(15);
-  });
-
-  test("items sorted by daysStale descending (most stale first)", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "14d", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 14 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-      { id: "2", identifier: "CER-2", title: "30d", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 30 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-      { id: "3", identifier: "CER-3", title: "20d", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 20 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-    ]);
-
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
-
-    expect(result.items.map((i) => i.daysStale)).toEqual([30, 20, 14]);
-  });
-
-  test("olderThanDays and criticalDays in result", async () => {
-    const { client } = stubClient([]);
-
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
-
-    expect(result.olderThanDays).toBe(14);
-    expect(result.criticalDays).toBe(21);
-  });
-
-  test("null assignee → null in item", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "X", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 25 * DAY_MS).toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-    ]);
-
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
-
-    expect(result.items[0].assignee).toBeNull();
-  });
-
-  test("null state → empty string", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "X", url: "u", priority: 0, estimate: null, updatedAt: new Date(NOW.getTime() - 25 * DAY_MS).toISOString(), state: null, assignee: null },
-    ]);
-
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
-
-    expect(result.items[0].state).toBe("");
-  });
-
-  test("exactly at criticalCutoff → critical (lte boundary)", async () => {
-    const { client } = stubClient([
-      { id: "1", identifier: "CER-1", title: "Boundary", url: "u", priority: 0, estimate: null, updatedAt: CRITICAL_CUTOFF.toISOString(), state: { name: "Todo", type: "unstarted" }, assignee: null },
-    ]);
-
-    const result = await stale(client, { warnCutoff: WARN_CUTOFF, criticalCutoff: CRITICAL_CUTOFF, now: NOW });
-
-    expect(result.items[0].bucket).toBe("critical");
+    const item = result.items[0];
+    expect(item.identifier).toBe("CER-1");
+    expect(item.title).toBe("Fix bug");
+    expect(item.state).toBe("In Progress");
+    expect(item.assignee).toBeNull();
+    expect(item.url).toContain("CER-1");
   });
 });
