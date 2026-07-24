@@ -318,8 +318,8 @@ program
   .option("--text <query>", "full-text match over title + description")
   .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
   .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
-  .option("--limit <n>", "stop after collecting this many issues (bounded smoke loops)")
   .option("--json", "emit JSON (always JSON; flag accepted for consistency)")
+  .option("--limit <n>", "cap results (soma dev/testing safety)", parseInt)
   .action((opts) => pull(opts));
 
 program

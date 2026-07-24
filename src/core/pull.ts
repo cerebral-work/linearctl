@@ -85,8 +85,6 @@ const PULL_ISSUES_QUERY = /* GraphQL */ `
 export async function pullIssues(
   client: LinearClient,
   opts: SearchOptions,
-  /** Stop paginating once this many issues are collected (default: exhaustive). */
-  limit?: number,
 ): Promise<PullIssue[]> {
   const needsResolution = opts.assignee !== undefined && opts.assignee !== "none";
   const resolvedAssigneeId = needsResolution
@@ -126,12 +124,10 @@ export async function pullIssues(
         updatedAt: n.updatedAt,
       });
     }
-    after =
-      page.pageInfo.hasNextPage && (limit === undefined || byId.size < limit)
-        ? page.pageInfo.endCursor
-        : null;
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    if (opts.limit && byId.size >= opts.limit) break;
   } while (after);
 
   const all = [...byId.values()];
-  return limit === undefined ? all : all.slice(0, limit);
+  return opts.limit ? all.slice(0, opts.limit) : all;
 }

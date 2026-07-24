@@ -170,7 +170,7 @@ describe("pullIssues - limit parameter", () => {
         },
       },
     } as unknown as LinearClient;
-    const result = await pullIssues(client, { teamKeys: ["EST"] }, 5);
+    const result = await pullIssues(client, { teamKeys: ["EST"], limit: 5 });
     expect(result).toHaveLength(5);
     expect(calls).toHaveLength(1);
   });

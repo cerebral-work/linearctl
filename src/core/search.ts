@@ -22,6 +22,8 @@ export interface SearchOptions {
   text?: string;
   updatedSince?: string;
   createdSince?: string;
+  /** Cap results for safe soma dev/testing or rate-budget pulls. */
+  limit?: number;
 }
 
 export interface SearchItem {
