@@ -73,7 +73,7 @@ that). Logs/errors go to stderr. Exit `0` on success (including zero-result),
 | `identifier` | string | human ref (`TEAM-N`); stable; use as the `<id>` for CONTROL commands |
 | `title` | string | |
 | `state` | string | workflow-state **name** (e.g. `In Progress`); pass back to `update --state` |
-| `stateType` | string | enum: `triage\|backlog\|unstarted\|started\|completed\|canceled`; the category of `state` |
+| `stateType` | string | enum: `triage\|backlog\|unstarted\|started\|completed\|canceled\|duplicate`; the category of `state` |
 | `priority` | number | 0=unset 1=Urgent 2=High 3=Medium 4=Low |
 | `labels` | string[] | sorted label names; empty array `[]` (never `null`) |
 | `description` | string | full markdown body; empty string `""` if absent (never `null`) |
@@ -133,9 +133,10 @@ issue's **own team** (case-insensitive name match). The state name comes from
 
 ```json
 {
+  "id": "7b638a93-cc26-48e0-b6cf-98e890165809",
   "identifier": "CER-123",
   "title": "Fix the flux capacitor",
-  "url": "https://linear.app/cerebral-work/issue/CER-123",
+  "url": "https://linear.app/cerebral.work/issue/CER-123",
   "state": "In Progress",
   "assignee": "ctodie"
 }
@@ -184,7 +185,7 @@ non-destructive (additive), so there is no `--apply` dry-run gate.
 {
   "identifier": "CER-123",
   "commentId": "comment_abc123",
-  "url": "https://linear.app/cerebral-work/issue/CER-123/comment/abc123"
+  "url": "https://linear.app/cerebral-work/issue/CER-123"
 }
 ```
 
@@ -202,6 +203,11 @@ mutation CreateComment($input: CommentCreateInput!) {
 `CommentCreateInput.issueId` takes the **issue UUID** (resolve the identifier
 `CER-123` → UUID via a `issue(id: …)` lookup or by including `id` in the
 `pull` query above). `body` is the markdown string.
+
+> **Note:** the `url` field in the CLI output is the **issue URL** (where the
+> comment lives), not a comment-specific URL. A comment-specific deep link is
+> not exposed by the `createComment` mutation; the issue URL anchors the
+> comment in context.
 
 ---
 
