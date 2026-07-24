@@ -10,6 +10,8 @@ import { buildSearchFilter, type SearchOptions } from "./search.js";
  * implements against Linear GraphQL directly.
  */
 export interface PullIssue {
+  /** Linear issue UUID — the `id` the soma-operator passes to `issueUpdate`/`commentCreate` mutations. */
+  id: string;
   identifier: string;
   title: string;
   state: string;
@@ -110,6 +112,7 @@ export async function pullIssues(
     if (!page) throw new Error("pull query returned no data");
     for (const n of page.nodes) {
       byId.set(n.id, {
+        id: n.id,
         identifier: n.identifier,
         title: n.title,
         state: n.state?.name ?? "",
