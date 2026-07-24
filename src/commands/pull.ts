@@ -6,6 +6,8 @@ import { classifyError } from "../lib/retry.js";
 export interface PullOptions {
   team?: string[];
   state?: string;
+  /** Repeatable: OR across multiple state names/types (e.g. --state-set Todo --state-set Backlog). */
+  stateSet?: string[];
   label?: string[];
   assignee?: string;
   project?: string;
@@ -33,7 +35,7 @@ export async function pull(opts: PullOptions): Promise<void> {
     items = await pullIssues(client, {
       teamKeys: opts.team,
       state: opts.state,
-      labels: opts.label,
+      stateSet: opts.stateSet,
       assignee: opts.assignee,
       project: opts.project,
       priority: opts.priority,

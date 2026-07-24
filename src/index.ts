@@ -307,6 +307,10 @@ program
     "--state <ref>",
     "state type (triage|backlog|todo|started|done|canceled|all) or a state name; default: active only",
   )
+  .option(
+    "--state-set <ref...>",
+    "state name or type to include (repeatable; OR logic e.g. --state-set Todo --state-set Backlog)",
+  )
   .option("--label <name...>", "label name(s) — all must match")
   .option("--assignee <who>", "'me', 'none' (unassigned), an email, a display name, or a user id")
   .option("--project <ref>", "restrict to a project (id or name)")
