@@ -319,6 +319,7 @@ program
   .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
   .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
   .option("--json", "emit JSON (always JSON; flag accepted for consistency)")
+  .option("--limit <n>", "cap results (soma dev/testing safety)", parseInt)
   .action((opts) => pull(opts));
 
 program

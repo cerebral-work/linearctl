@@ -125,7 +125,9 @@ export async function pullIssues(
       });
     }
     after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    if (opts.limit && byId.size >= opts.limit) break;
   } while (after);
 
-  return [...byId.values()];
+  const all = [...byId.values()];
+  return opts.limit ? all.slice(0, opts.limit) : all;
 }
