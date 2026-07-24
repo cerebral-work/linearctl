@@ -1,21 +1,19 @@
 # linearctl — Backlog Punch-List
 
-> Snapshot of the **9 open Backlog tickets** in the linearctl Linear project
-> (`ef50ef09-e1b3-4cd1-9bcf-b86edd00f644`, team CER), collated from
-> `linearctl search --project linearctl --state backlog` on 2026-07-22.
->
-> Three new tickets filed since the 2026-07-18 snapshot (CER-1686, CER-1687,
-> CER-1688) — all headless CLI features discovered while building the Blackwall
-> project roadmap. Sorted by priority then age.
+> Snapshot of the **open Backlog tickets** in the linearctl Linear project
+> (`ef50ef09-e1b3-4cd1-9bcf-b86edd00f644`, team CER). Updated 2026-07-24:
+> CER-1604, CER-1686, CER-1687, CER-1688 all **shipped** in PR #89 (merged
+> 1955a99) and PR #88 — the four actionable-now items are done. The
+> remaining items are deferred (operator-gated / large scope).
 
-## Actionable now (headless CLI — unassigned, clear spec)
+## Shipped (2026-07-24 — PR #89 / commit 1955a99)
 
-| ID | Pri | Title | Age |
-|---|---|---|---|
-| [CER-1604](https://linear.app/cerebral-work/issue/CER-1604) | P3 | `file --stdin` dry-run / `--apply` project-name mismatch (Bug) | 6d |
-| [CER-1686](https://linear.app/cerebral-work/issue/CER-1686) | P3 | `milestone create` — no command to create project milestones | 0d |
-| [CER-1687](https://linear.app/cerebral-work/issue/CER-1687) | P3 | `project update` — update project state, name, description | 0d |
-| [CER-1688](https://linear.app/cerebral-work/issue/CER-1688) | P4 | `roadmap` — view or export a project roadmap (milestone timeline) | 0d |
+| ID | Pri | Title |
+|---|---|---|
+| ✅ [CER-1604](https://linear.app/cerebral-work/issue/CER-1604) | P3 | `file --stdin` dry-run / `--apply` project-name mismatch (Bug) — fixed: dry-run now validates project refs |
+| ✅ [CER-1686](https://linear.app/cerebral-work/issue/CER-1686) | P3 | `milestone create` — create project milestones |
+| ✅ [CER-1687](https://linear.app/cerebral-work/issue/CER-1687) | P3 | `project update` — update project state, name, description |
+| ✅ [CER-1688](https://linear.app/cerebral-work/issue/CER-1688) | P4 | `roadmap` — view or export a project roadmap (milestone timeline) |
 
 ## Deferred (operator-gated / large scope)
 
