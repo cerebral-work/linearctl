@@ -16,6 +16,8 @@ export interface PullOptions {
   updatedSince?: string;
   createdSince?: string;
   json?: boolean;
+  /** Cap results for safe soma dev/testing. */
+  limit?: number;
 }
 
 /**
