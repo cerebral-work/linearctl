@@ -26,17 +26,19 @@ names. Filtered by `--team`, `--state`, `--label` (plus the secondary
 ### Invocation
 
 ```bash
+# The soma-operator's exact funnel query, reproducible from the CLI:
 linearctl pull \
-  --team CER \
-  --state started \
-  --label bug \
-  --updated-since 7d
+  --team EST \
+  --state-set Todo \
+  --state-set Backlog \
+  --label soma-ingest
 ```
 
 | Filter | Format | Default | Notes |
 |---|---|---|---|
 | `--team <key...>` | team key (repeatable); `all` = every team | every accessible team | server-side |
 | `--state <ref>` | type alias (`triage\|backlog\|todo\|started\|done\|canceled\|all`) or a state **name** (e.g. `In Progress`) | **active only** (`completed` + `canceled` excluded) | `all` lifts the default |
+| `--state-set <ref>` | state name or type (repeatable; OR logic) | inherits `--state` default | e.g. `--state-set Todo --state-set Backlog`; takes precedence over `--state` |
 | `--label <name...>` | label name (repeatable) | none | all must match (AND) |
 | `--assignee <who>` | `me` / `none` / email / display name / user id | none | `none` = unassigned |
 | `--project <ref>` | project UUID or name | none | server-side |
@@ -55,14 +57,15 @@ that). Logs/errors go to stderr. Exit `0` on success (including zero-result),
 ```json
 [
   {
-    "identifier": "CER-123",
-    "title": "Fix the flux capacitor",
-    "state": "In Progress",
-    "stateType": "started",
+    "id": "7b638a93-cc26-48e0-b6cf-98e890165809",
+    "identifier": "EST-83",
+    "title": "soma smoke-test payload",
+    "state": "Todo",
+    "stateType": "unstarted",
     "priority": 3,
-    "labels": ["Bug", "flux"],
+    "labels": ["soma-ingest"],
     "description": "Full markdown body of the issue…",
-    "url": "https://linear.app/cerebral-work/issue/CER-123/fix-the-flux-capacitor",
+    "url": "https://linear.app/cerebral-work/issue/EST-83/soma-smoke-test-payload",
     "updatedAt": "2026-07-24T16:52:01.638Z"
   }
 ]
@@ -70,6 +73,7 @@ that). Logs/errors go to stderr. Exit `0` on success (including zero-result),
 
 | Field | Type | Notes |
 |---|---|---|
+| `id` | string | Linear issue UUID — pass to `issueUpdate`/`commentCreate` mutations |
 | `identifier` | string | human ref (`TEAM-N`); stable; use as the `<id>` for CONTROL commands |
 | `title` | string | |
 | `state` | string | workflow-state **name** (e.g. `In Progress`); pass back to `update --state` |
@@ -168,6 +172,25 @@ mutation UpdateIssue($input: IssueUpdateInput!) {
 Resolve the **state name → `stateId`** first via the team's workflow states:
 `workflowStates(filter: { team: { id: { eq: "<team-uuid>" } } })` → match by
 name (case-insensitive). Pass `stateId` in `IssueUpdateInput`.
+
+> **INVARIANT — description never round-trips on a state-only transition.**
+>
+> A known Linear bug (documented in `~/todo.md` against SEC tickets; reproduced
+> 2026-07-24 with EST-83) wipes ticket descriptions to `# bulk-file-spec: skip`
+> when certain automations append on a state change. The funnel contract
+> **REQUIRES** that `linearctl update <id> --state <name>` sends **only**
+> `{ stateId }` in the `issueUpdate` input — never `description`, `title`, or
+> any other field. The implementation builds the mutation input from only the
+> fields explicitly passed (`params.description` is `undefined` when `--state`
+> is given alone, so `description` is absent from the input object). This is
+> tested in `test/funnel-parity.test.ts` — "state-only update sends ONLY
+> stateId, no other field leaks" — and verified live against EST-83 (22-char
+> description preserved before and after a no-op `--state Done`).
+>
+> The Rust operator's direct-GraphQL path MUST replicate this: send
+> `issueUpdate(input: { stateId: "..." })` with no other keys. Do NOT
+> read-then-write the description back — that is exactly the pattern that
+> triggers the clobber.
 
 ### 2.2 Comment — `linearctl comment <id> --body <markdown>`
 

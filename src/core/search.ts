@@ -13,6 +13,8 @@ import {
 export interface SearchOptions {
   teamKeys?: string[];
   state?: string;
+  /** Filter to issues matching ANY of these state names/types (OR logic). e.g. ["Todo","Backlog"]. */
+  stateSet?: string[];
   labels?: string[];
   assignee?: string;
   project?: string;
@@ -59,16 +61,29 @@ export function buildSearchFilter(
 ): LinearDocument.IssueFilter {
   const and: Record<string, unknown>[] = [];
 
-  const state = opts.state?.toLowerCase();
-  if (!state) {
-    and.push({ state: { type: { nin: ["completed", "canceled"] } } });
-  } else if (state !== "all") {
-    const type = STATE_TYPE_ALIASES[state];
-    and.push(
-      type
-        ? { state: { type: { eq: type } } }
-        : { state: { name: { eqIgnoreCase: opts.state } } },
-    );
+  // stateSet: OR across multiple state names/types (e.g. ["Todo","Backlog"]).
+  // Takes precedence over --state; when present, the default active-only filter
+  // is NOT applied (the caller explicitly scoped the states).
+  if (opts.stateSet?.length) {
+    const clauses = opts.stateSet.map((s) => {
+      const alias = STATE_TYPE_ALIASES[s.toLowerCase()];
+      return alias
+        ? { state: { type: { eq: alias } } }
+        : { state: { name: { eqIgnoreCase: s } } };
+    });
+    and.push(clauses.length === 1 ? clauses[0] : { or: clauses });
+  } else {
+    const state = opts.state?.toLowerCase();
+    if (!state) {
+      and.push({ state: { type: { nin: ["completed", "canceled"] } } });
+    } else if (state !== "all") {
+      const type = STATE_TYPE_ALIASES[state];
+      and.push(
+        type
+          ? { state: { type: { eq: type } } }
+          : { state: { name: { eqIgnoreCase: opts.state } } },
+      );
+    }
   }
 
   for (const label of opts.labels ?? []) {
