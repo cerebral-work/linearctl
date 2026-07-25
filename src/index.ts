@@ -333,10 +333,12 @@ program
 
 program
   .command("standup")
-  .description("Render the digest as a standup (markdown; no auto-posting — pipe to your sender).")
+  .description("Render the digest as a standup (markdown; --slack --apply to post to Slack).")
   .option("--team <key...>", "restrict to team key(s)")
   .option("--since <window>", "look-back window", "24h")
   .option("--json", "emit the underlying digest JSON")
+  .option("--slack <url>", "post to a Slack incoming webhook (dry-run unless --apply)")
+  .option("--apply", "with --slack: actually post (default is a dry-run preview)")
   .action((opts) => standup(opts));
 
 program
