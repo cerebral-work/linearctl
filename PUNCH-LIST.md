@@ -1,10 +1,9 @@
 # linearctl — Backlog Punch-List
 
-> Snapshot of the **open Backlog tickets** in the linearctl Linear project
-> (`ef50ef09-e1b3-4cd1-9bcf-b86edd00f644`, team CER). Updated 2026-07-24:
-> CER-1604, CER-1686, CER-1687, CER-1688 all **shipped** in PR #89 (merged
-> 1955a99) and PR #88 — the four actionable-now items are done. The
-> remaining items are deferred (operator-gated / large scope).
+> Updated 2026-07-25. All actionable items shipped. The remaining backlog is
+> M4 (agent facility) + TUI — operator-gated / large scope. See
+> `roadmap-linearctl.md` for the full milestone view and `docs/spec.md` §12
+> for the complete ticket table (T1-T26). 238 tests pass, 0 fail.
 
 ## Shipped (2026-07-24 — PR #89 / commit 1955a99)
 
