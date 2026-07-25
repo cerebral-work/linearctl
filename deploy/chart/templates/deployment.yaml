@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-orchestra
+  labels:
+    app.kubernetes.io/name: linearctl
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.deployment.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: linearctl
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: linearctl
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # Force rollout on recipe ConfigMap changes.
+        checksum/loop-recipes: {{ include (print $.Template.BasePath "/loop-recipes-cm.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: linearctl
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.linearApiKey.secretName }}
+                  key: {{ .Values.secrets.linearApiKey.key }}
+            - name: LINEARCTL_DRY_RUN
+              value: {{ .Values.deployment.publish.dryRun | quote }}
+            - name: LINEARCTL_FUNNEL_TEAM
+              value: {{ .Values.funnel.team | quote }}
+            - name: LINEARCTL_FUNNEL_STATES
+              value: {{ join "," .Values.funnel.states | quote }}
+            - name: LINEARCTL_FUNNEL_LABEL
+              value: {{ .Values.funnel.label | quote }}
+            {{- if .Values.deployment.leaderElection }}
+            - name: LINEARCTL_LEADER_ELECTION
+              value: "true"
+            - name: LINEARCTL_LEASE_NAME
+              value: {{ .Release.Name }}-{{ .Values.deployment.leaseName }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.deployment.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.health.liveness }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.readiness }}
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - name: loop-recipes
+              mountPath: /app/.linearctl/loop-recipes
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: loop-recipes
+          configMap:
+            name: {{ .Values.loopRecipes.configMapName }}
+        - name: tmp
+          emptyDir: {}
