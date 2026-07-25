@@ -364,25 +364,29 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 
 | # | Title | Milestone | Scope |
 |---|---|---|---|
-| T1 | `feat(digest): recent-activity digest` | M1 | filter updatedAt+team, group by state.type, `--json` |
-| T2 | `feat(triage): triage listing` | M1 | triage-state / unassigned / unestimated; flag *why* |
-| T3 | `feat(milestone): milestone burn-down` | M1 | per-milestone done vs open + bar |
-| T4 | `test: live-API contract tests behind a key gate` | M1 | verify each read cmd vs live data |
-| T5 | `feat(file): headless issue creation` | M2 | resolve team by key, `createIssue`, stdin desc, print id+url |
-| T6 | `feat(file): batch mode + RATELIMITED backoff` | M2 | read N from stdin/file, exponential backoff |
-| T7 | `feat(cli): output contract polish (table/--json)` | M1 | consistent rendering across commands |
-| T8 | `feat(cycle): current-cycle review` | M3 | scope / completed / carry-over / scope-change |
-| T9 | `feat(stale): stale in-progress sweep` | M3 | untouched > N days |
-| T10 | `feat(xref): PR↔issue cross-ref audit` | M3 | open PRs w/o issue; done issues w/o merged PR |
-| T11 | `feat(release-notes): notes from completed issues` | M3 | range → grouped by label |
-| T12 | `feat(standup): render digest (+ operator-gated Slack)` | M3 | never auto-post |
-| T13 | `feat(agent): OAuth actor=app scaffolding` | M4 | app registration, scopes, token storage |
-| T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities |
+| T1 | `feat(digest): recent-activity digest` — *shipped (§6.2)* | M1 | filter updatedAt+team, group by state.type, `--json` |
+| T2 | `feat(triage): triage listing` — *shipped (§6.4)* | M1 | triage-state / unassigned / unestimated; flag *why* |
+| T3 | `feat(milestone): milestone burn-down` — *shipped (§6.5)* | M1 | per-milestone done vs open + bar |
+| T4 | `test: live-API contract tests behind a key gate` — *shipped* | M1 | verify each read cmd vs live data (`test/live-contract.test.ts`) |
+| T5 | `feat(file): headless issue creation` — *shipped (§6.3)* | M2 | resolve team by key, `createIssue`, stdin desc, print id+url |
+| T6 | `feat(file): batch mode + RATELIMITED backoff` — *shipped (§6.3)* | M2 | read N from stdin/file, exponential backoff (`src/core/file-batch.ts`) |
+| T7 | `feat(cli): output contract polish (table/--json)` — *shipped* | M1 | consistent rendering across commands (`src/lib/output.ts`) |
+| T8 | `feat(cycle): current-cycle review` — *shipped* | M3 | scope / completed / carry-over / scope-change (`src/commands/cycle.ts`) |
+| T9 | `feat(stale): stale in-progress sweep` — *shipped (§6.9)* | M3 | untouched > N days |
+| T10 | `feat(xref): PR↔issue cross-ref audit` — *shipped (§6.10)* | M3 | open PRs w/o issue; done issues w/o merged PR |
+| T11 | `feat(release-notes): notes from completed issues` — *shipped* | M3 | range → grouped by label (`src/commands/release-notes.ts`) |
+| T12 | `feat(standup): render digest (+ operator-gated Slack)` — *shipped (read path; Slack send deferred)* | M3 | never auto-post (`src/commands/standup.ts`) |
+| T13 | `feat(agent): OAuth actor=app scaffolding` | M4 | app registration, scopes, token storage — **CER-1148** |
+| T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities — **CER-1149** |
 | T15 | `chore(release): macOS notarization / codesign` — *pipeline built (ADR-0007); gated on Apple Developer Program enrollment (CER-1150)* | M2 | Gatekeeper quarantine fix for darwin assets; build-darwin job on `macos-latest`, dormant-until-keyed |
-| T16 | `ci: SHA-pin all GitHub Actions` | M1 | supply-chain hardening |
-| T17 | `feat(project): create + list Linear projects` | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
-| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
+| T16 | `ci: SHA-pin all GitHub Actions` — *shipped* | M1 | supply-chain hardening (all workflows pin to commit SHA) |
+| T17 | `feat(project): create + list Linear projects` — *shipped (§6.6)* | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
+| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` — *shipped (§6.12)* | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
 | T19 | `feat(doc): project overview get/set` — *shipped (§6.13)* | M3 | `doc get-overview` / `doc set-overview --file <md\|->` on `Project.content`; whole-document replace, empty-content guard; MCP `project_overview_get`/`_set` |
 | T20 | `feat(milestone): create project milestones` — *shipped (§6.15)* | M3 | `milestone create <name> --project <ref> [--target-date] [--desc]`; resolves project name→UUID; emits milestone UUID (CER-1686) |
 | T21 | `feat(project): update project state/name/description` — *shipped (§6.16)* | M3 | `project update <ref> [--state] [--name] [--desc]`; resolves state by type against workspace project-status set (CER-1687) |
 | T22 | `feat(roadmap): milestone timeline view` — *shipped (§6.17)* | M3 | `roadmap --project <ref> [--json]`; milestone timeline with progress + issue lists, sorted by target date (CER-1688) |
+| T23 | `chore(dev): dev loop scripts + CONTRIBUTING.md` — *shipped (PR #90)* | M3 | `dev:watch`, `test:watch`, `test:fast`, `ci`, `dev:all`, `quick`, `lint` npm scripts + dev onboarding guide |
+| T24 | `feat(pull): --limit for bounded smoke loops + updatedAt invariant` — *shipped (PR #96)* | M3 | `pull --limit N` caps result count; pagination guard + slice; `updatedAt` load-bearing dedup invariant documented in funnel contract |
+| T25 | `feat(loops): Linear Loop recipe catalog` — *shipped (PR #97)* | M3 | `.linearctl/loop-recipes/` catalog + linter; recipes for recurring Linear workflows (digest, triage, stale, xref) expressed as composable loop definitions |
+| T26 | `test: core module coverage (milestone, project, roadmap, pull, digest, stale, triage, cycles, documents, issues, whoami, bulk, comments)` — *shipped (PRs #94/#95 + direct)* | M3 | 130 new tests (108→238 pass, 229→470 expects); stubbed LinearClient pattern for every core module; lefthook pre-commit typecheck |
