@@ -83,8 +83,31 @@ negative constraints. Exit 0 if valid, 1 on errors, 2 if no recipes found.
 
 ## Future commands (API-blocked)
 
-- **`loops diff`** — compare recipes against what's published in Linear's UI. Blocked: Loops have no API.
-- **`loops apply`** — CRUD wrapper for creating/updating loops from recipes. Blocked: Loops have no API.
+Linear's GraphQL schema contains the `WorkflowDefinition` type (the internal
+name for what's branded as "Loops") with fields: `name`, `trigger`,
+`triggerType` (enum: `issue`, `project`, `document`, `initiative`, `team`,
+`release`, `schedule`), `conditions`, `schedule`, `enabled`, `runOnce`,
+`applyToSubTeams`, `team`, `owner`, `lastExecutedAt`. The enums
+`WorkflowTrigger` (`entityCreated`, `entityUpdated`, `entityCreatedOrUpdated`,
+`entityRemoved`, `entityUnarchived`) and `WorkflowType` (`sla`, `automation`,
+`viewSubscription`, `triage`, `triageAutomation`, `release`) also exist.
+
+**However**: there is no top-level `workflowDefinitions` query (can't list
+loops), no `workflowDefinition` field on `Team` (can't traverse), and zero
+mutations containing "workflow" beyond `workflowState*` (which are
+Todo/In Progress/Done states, not workflow definitions). Verified via
+`__schema` introspection against `api.linear.app/graphql` on 2026-07-25
+(1,123 types, 158 queries, 359 mutations — 0 matches for loop/cron CRUD).
+
+- **`loops diff`** — compare recipes against what's published in Linear's UI.
+  Blocked: no `workflowDefinitions` query exists.
+- **`loops apply`** — CRUD wrapper for creating/updating loops from recipes.
+  Blocked: no `workflowDefinitionCreate`/`Update`/`Archive` mutation exists.
+
+When Linear ships these (the schema types are already there, waiting for a
+query + mutation surface), the recipe catalog migrates to programmatic CRUD
+with zero design churn — the YAML frontmatter maps 1:1 to the
+`WorkflowDefinition` fields.
 
 ## Relationship to `linearctl` and the orchestra
 
