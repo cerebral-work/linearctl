@@ -26,6 +26,7 @@ import { pull } from "./commands/pull.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { roadmap } from "./commands/roadmap.js";
+import { loopsLint } from "./commands/loops.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -452,6 +453,16 @@ program
   .description("Probe Linear API quota: remaining budget + reset time (exit 2 when exhausted).")
   .option("--json", "emit JSON")
   .action((opts) => ratelimit(opts));
+
+const loopsCmd = program
+  .command("loops")
+  .description("Manage Linear Loop recipes (.linearctl/loop-recipes/).");
+
+loopsCmd
+  .command("lint")
+  .description("Validate loop recipe files (required fields, trigger, permissions, staleness).")
+  .option("--json", "emit JSON")
+  .action((opts) => loopsLint(opts));
 
 const mcpCmd = program
   .command("mcp")
