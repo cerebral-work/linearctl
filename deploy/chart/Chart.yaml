@@ -1,0 +1,20 @@
+apiVersion: v2
+name: linearctl
+description: Headless Linear API orchestration — CLI, funnel contract, and Loop recipe authority for in-cluster reconciliation loops.
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/cerebral-work/linearctl
+sources:
+  - https://github.com/cerebral-work/linearctl
+maintainers:
+  - name: Christian Todie
+    email: chris@todie.io
+keywords:
+  - linear
+  - linearctl
+  - funnel
+  - loops
+  - soma
+  - reconciliation
+  - gitops
