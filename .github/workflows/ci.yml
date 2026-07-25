@@ -38,6 +38,26 @@ jobs:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: bun test
 
+      - name: Verify live-contract tests ran (not skipped)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          if [ -z "${LINEAR_API_KEY:-}" ]; then
+            echo "::warning::LINEAR_API_KEY secret is not set — live-contract tests are silently skipping on every CI run."
+            echo "::warning::The read-only contract tests verify the GraphQL schema hasn't drifted. Without them, schema changes surface as runtime surprises."
+            echo "::warning::To fix: add the LINEAR_API_KEY secret to the repo (Settings → Secrets → Actions)."
+            exit 1
+          fi
+          # Re-run just the live-contract tests with verbose output to confirm they execute (not skip)
+          OUTPUT=$(bun test test/live-contract.test.ts 2>&1)
+          echo "$OUTPUT"
+          # If the tests skipped, bun reports 0 pass — that's a CI gate failure
+          if echo "$OUTPUT" | grep -q "0 pass"; then
+            echo "::error::Live-contract tests skipped despite LINEAR_API_KEY being set — check test.skipIf logic."
+            exit 1
+          fi
+
       # Compile + run the real binary so a compile or module-load/bundling failure
       # is caught at PR time (the @linear/sdk import executes at startup). The SDK
       # client can't trip bun#11785 (no schema realm checks), so that is not what
