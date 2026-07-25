@@ -7,6 +7,8 @@ export interface StandupOptions {
   team?: string[];
   since?: string;
   json?: boolean;
+  slack?: string;
+  apply?: boolean;
 }
 
 const SECTION: Record<string, string> = {
@@ -31,19 +33,47 @@ export function renderStandup(d: DigestResult, since: string): string {
 }
 
 /**
- * `linearctl standup [--team KEY...] [--since 24h]` — the digest, rendered as
- * a standup (Done / In progress / Up next / Needs triage). Markdown to
- * stdout; posting anywhere (Slack etc.) is deliberately NOT implemented —
- * spec §7.5 gates any send on the operator, so this composes with whatever
- * operator-approved sender exists (pipe it). See CER-1147.
+ * `linearctl standup [--team KEY...] [--since 24h] [--slack <url> --apply]` —
+ * the digest, rendered as a standup (Done / In progress / Up next / Needs
+ * triage). Markdown to stdout by default. With `--slack`, renders and previews
+ * the Slack payload; `--slack --apply` actually posts to the webhook.
+ *
+ * The Slack webhook URL comes from `--slack <url>` or the `LINEARCTL_SLACK_WEBHOOK`
+ * env var. Never auto-posts — always requires `--apply`. See CER-1730.
  */
 export async function standup(opts: StandupOptions): Promise<void> {
   const client = makeClient();
   const since = opts.since ?? "24h";
   const result = await digestCore(client, sinceToDate(since), opts.team);
+
+  // Slack send — gated on --slack (or env) and --apply (never auto-posts).
+  // Checked before the --json early-return so `--json --slack --apply` still posts.
+  const webhookUrl = opts.slack ?? process.env.LINEARCTL_SLACK_WEBHOOK;
+  const markdown = renderStandup(result, since);
+
   if (opts.json) {
     printJson(result);
+  } else {
+    process.stdout.write(markdown);
+  }
+
+  if (!webhookUrl) return;
+  if (!opts.apply) {
+    process.stderr.write(
+      `[dry-run] would post standup to Slack (${webhookUrl.slice(0, 20)}…). Re-run with --apply to send.\n`,
+    );
     return;
   }
-  process.stdout.write(renderStandup(result, since));
+
+  // Slack incoming webhooks: POST a JSON body with a `text` field.
+  const res = await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: markdown }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "(no body)");
+    throw new Error(`Slack webhook returned ${res.status}: ${body}`);
+  }
+  process.stderr.write(`standup posted to Slack.\n`);
 }
