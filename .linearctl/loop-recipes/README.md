@@ -46,6 +46,10 @@ the mechanism. State what the loop should NOT do (negative constraints).
 | `project-update-synthesizer` | Fri 16:00 ET | workspace | draft weekly Project Updates for started projects (draft, not publish) |
 | `carry-over-warning` | issue updated, cycle ends <2d, unstarted | CER, OPS, EST, RINA | warn assignee the issue is at risk of carrying over |
 | `plan-doc-drift-detector` | Mon 10:00 ET | OPS | diff roadmap-*.md ↔ Linear project overview, comment on drift |
+| `cross-platform-handoff-design` | issue created, label=design-system | RD, USE | create platform-specific sub-issues when a design-system change spans web/iOS/Android |
+| `release-notes-attach` | milestone → completed | all teams | assemble release notes from completed milestone issues, group by label, comment + attach to GitHub release |
+| `pulse-curator` | weekdays 09:00 ET | workspace | score Project Updates on clarity/signal/staleness, comment only on low-quality (score 1-2) |
+| `triage-rationale-checker` | issue leaves Triage | all teams | check the issue has assignee+estimate+priority+labels, comment a checklist if any missing |
 
 ## Authoring guidelines
 
@@ -66,6 +70,21 @@ the mechanism. State what the loop should NOT do (negative constraints).
   against Linear's UI, not implementation drift.
 - **Scope to teams, not "all".** A workspace-wide loop is powerful and
   expensive — scope it to the teams that need it.
+
+## Validation
+
+```bash
+linearctl loops lint   # validates all recipes: required fields, trigger, permissions, staleness
+```
+
+The linter checks: required fields present, trigger type valid, schedule has cron,
+last_verified not older than 90 days, web_access/coding_sessions warnings, body has
+negative constraints. Exit 0 if valid, 1 on errors, 2 if no recipes found.
+
+## Future commands (API-blocked)
+
+- **`loops diff`** — compare recipes against what's published in Linear's UI. Blocked: Loops have no API.
+- **`loops apply`** — CRUD wrapper for creating/updating loops from recipes. Blocked: Loops have no API.
 
 ## Relationship to `linearctl` and the orchestra
 
