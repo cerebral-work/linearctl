@@ -46,16 +46,17 @@ export async function standup(opts: StandupOptions): Promise<void> {
   const since = opts.since ?? "24h";
   const result = await digestCore(client, sinceToDate(since), opts.team);
 
+  // Slack send — gated on --slack (or env) and --apply (never auto-posts).
+  // Checked before the --json early-return so `--json --slack --apply` still posts.
+  const webhookUrl = opts.slack ?? process.env.LINEARCTL_SLACK_WEBHOOK;
+  const markdown = renderStandup(result, since);
+
   if (opts.json) {
     printJson(result);
-    return;
+  } else {
+    process.stdout.write(markdown);
   }
 
-  const markdown = renderStandup(result, since);
-  process.stdout.write(markdown);
-
-  // Slack send — gated on --slack (or env) and --apply (never auto-posts)
-  const webhookUrl = opts.slack ?? process.env.LINEARCTL_SLACK_WEBHOOK;
   if (!webhookUrl) return;
   if (!opts.apply) {
     process.stderr.write(
