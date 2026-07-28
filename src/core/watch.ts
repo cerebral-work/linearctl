@@ -24,8 +24,9 @@
  *     moved to the first `started` workflow state (lowest `position`).
  */
 
-import type { LinearClient } from "@linear/sdk";
+import type { AgentActivity, LinearClient } from "@linear/sdk";
 import { makeOAuthClient } from "../client.js";
+import { complete as llmComplete, LLMError, type ChatMessage, type CompleteOptions } from "../lib/llm.js";
 
 /** Workflow-state types that count as "started" (no state move needed). */
 const STARTED_TYPES: Record<string, true> = {
@@ -107,16 +108,30 @@ export async function emitThought(
 /**
  * Drive one agent loop iteration over the session history + prompt context.
  *
- * V1 (by design — NO LLM yet): emits a `response` activity echoing the issue
- * identifier and the first 200 chars of `promptContext`. Proves the
- * createAgentActivity round-trip end to end; the LLM-backed reasoning is a
- * follow-up that swaps in here without touching the call sites.
+ * Calls the LLM gateway (`src/lib/llm.ts`) to reason over the issue context +
+ * reconstructed activity history, then parses the structured output into an
+ * ordered list of activities and emits each via `createAgentActivity`.
  *
- * @returns the created `response` activity's node id.
+ * First slice (Track 3): the LLM may emit `thought`, `response`, `elicitation`,
+ * and `error` activities ONLY — `action` activities carry Linear mutations and
+ * require the D2 guardrail gate (Track 1 Phase 3), so they are rejected here
+ * until guardrails land. If the LLM call itself fails (timeout/non-2xx/bad
+ * JSON), the loop falls back to a single `error` activity so the AIG session
+ * never wedges (the `error` content type exists for exactly this per the AIG
+ * contract, see header line 19-20).
+ *
+ * The `emitThought` BEFORE this call (in `driveLoop`, line ~244) is
+ * load-bearing for the 10s SLA — the LLM's emitted `thought`, if any, is a
+ * SUPPLEMENTARY thought, not the SLA heartbeat.
+ *
+ * @param completeFn injected LLM client (tests stub this; production uses
+ *   the real gateway client from `src/lib/llm.ts`).
+ * @returns the last created activity's node id.
  */
 export async function driveAgentLoop(
   client: LinearClient,
   event: AgentSessionEvent,
+  completeFn: LLMCompleteFn = llmComplete,
 ): Promise<string> {
   const sessionId = sessionOf(event);
 
@@ -126,32 +141,218 @@ export async function driveAgentLoop(
   const session = await client.agentSession(sessionId);
   const activities = await session.activities();
 
-  // V1 echo — summarize the activity count + promptContext snippet. No LLM.
-  const historyCount = activities.nodes.length;
-  const context = event.promptContext ?? "";
-  const summary = context.slice(0, 200);
+  const messages: ChatMessage[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: buildUserPrompt(event, activities.nodes),
+    },
+  ];
 
-  const issueId = event.agentSession.issueId ?? "unknown";
-  const body =
-    `Received: ${issueId} — promptContext summary: ${summary}\n` +
-    `(session history: ${historyCount} activity/activities)`;
+  let plans: ActivityPlan[];
+  try {
+    const raw = await completeFn(messages, LLM_OPTS);
+    plans = parseLLMActivities(raw);
+  } catch (err) {
+    // LLM gateway failure (timeout / non-2xx / bad JSON) — the AIG contract
+    // defines the `error` content type for exactly this. Emit a single error
+    // activity so the session recovers rather than wedging.
+    const reason = err instanceof LLMError ? err.message : (err instanceof Error ? err.message : String(err));
+    plans = [{ type: "error", body: `Agent loop failed: ${reason}` }];
+  }
 
+  // Fallback: if the LLM returned an empty plan, emit a minimal response so
+  // the session always gets a reply (the daemon acks regardless — this is a
+  // UX cushion, not a correctness guard).
+  if (plans.length === 0) {
+    plans = [{ type: "response", body: "No actionable response was generated." }];
+  }
+
+  let lastId = "";
+  for (const plan of plans) {
+    lastId = await emitActivity(client, sessionId, plan);
+  }
+  return lastId;
+}
+
+/** Injected LLM completion signature — tests stub this; no real gateway. */
+export type LLMCompleteFn = (
+  messages: ChatMessage[],
+  opts: CompleteOptions,
+) => Promise<string>;
+
+/**
+ * First-slice activity types the LLM may emit. `action` (which carries Linear
+ * mutations) is excluded until the D2 guardrail gate (Track 1 Phase 3) lands.
+ */
+export type ActivityType = "thought" | "response" | "elicitation" | "error";
+
+/** A parsed activity the LLM wants the loop to emit, in order. */
+export interface ActivityPlan {
+  type: ActivityType;
+  body: string;
+}
+
+/** The structured type a forbidden `action` activity would carry. */
+const ACTION_TYPE = "action";
+
+/** Rejected-activity-type message — constant, so the test can match on it. */
+const ACTION_REJECTED_MSG =
+  "parseLLMActivities rejected an 'action' activity: guardrails not yet in place (Track 1 Phase 3)";
+
+/**
+ * Parse structured LLM output into an ordered list of activities to emit.
+ *
+ * Accepts a JSON array of `{ type, body }` objects. The first slice restricts
+ * `type` to `thought` | `response` | `elicitation` | `error` — an `action` type
+ * is REJECTED (thrown), because actions carry Linear mutations and the D2
+ * guardrail gate from Track 1 Phase 3 is not yet in place.
+ *
+ * Tolerant of a leading/trailing code-fence wrapper (```json … ```) the gateway
+ * may add when its JSON mode is off; extracts the inner JSON array.
+ */
+export function parseLLMActivities(raw: string): ActivityPlan[] {
+  const json = stripFence(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error(`parseLLMActivities: LLM output is not valid JSON: ${preview(raw)}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`parseLLMActivities: expected a JSON array, got ${preview(json)}`);
+  }
+
+  const plans: ActivityPlan[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") {
+      throw new Error(`parseLLMActivities: activity entry is not an object: ${preview(json)}`);
+    }
+    const obj = item as Record<string, unknown>;
+    const type = obj.type;
+    const body = obj.body;
+    if (typeof type !== "string" || typeof body !== "string") {
+      throw new Error(`parseLLMActivities: activity missing string type/body: ${preview(json)}`);
+    }
+    if (type === ACTION_TYPE) {
+      throw new Error(ACTION_REJECTED_MSG);
+    }
+    if (!isValidActivityType(type)) {
+      throw new Error(`parseLLMActivities: unknown activity type '${type}' (allowed: thought, response, elicitation, error)`);
+    }
+    plans.push({ type: type as ActivityType, body });
+  }
+  return plans;
+}
+
+/** The LLM gateway call options for the agent loop — deterministic-leaning. */
+const LLM_OPTS: CompleteOptions = { maxTokens: 512, temperature: 0.3 };
+
+/**
+ * System prompt defining the 5 AIG activity types + the first-slice guardrail
+ * (no `action`). Constrains the model to emit a JSON array of activities.
+ */
+const SYSTEM_PROMPT =
+  "You are the linearctl agent operating inside Linear's Agent Interaction Gateway (AIG). " +
+  "You receive issue context as XML and the prior activity history. Reason over the context and " +
+  "decide what activities to emit next.\n\n" +
+  "Linear AIG defines 5 activity content types an agent may emit:\n" +
+  "  - thought:      a short reasoning step or plan.\n" +
+  "  - action:       a Linear mutation, with an optional result. (In this FIRST SLICE you MUST NOT emit 'action' — guardrails are not yet in place.)\n" +
+  "  - elicitation:  ask the user a clarifying question.\n" +
+  "  - response:     a final answer to the user.\n" +
+  "  - error:        report a failure so the session can recover.\n" +
+  "('prompt' is user-only; never emit it.)\n\n" +
+  "OUTPUT FORMAT: respond with ONLY a JSON array of objects, each {\"type\": \"...\", \"body\": \"...\"}. " +
+  "Do not include markdown, prose, or any text outside the JSON array.\n" +
+  "First-slice constraint: type MUST be one of thought, response, elicitation, or error. Never 'action'.\n" +
+  "Example: [{\"type\":\"response\",\"body\":\"I've reviewed the issue.\"}]";
+
+/**
+ * Build the user message: the issue XML (`promptContext`) + reconstructed
+ * activity history. The best-practices doc says reconstruct history from
+ * Agent Activities, not editable comments.
+ */
+function buildUserPrompt(
+  event: AgentSessionEvent,
+  activities: AgentActivity[],
+): string {
+  const issueId = event.agentSession?.issueId ?? "unknown";
+  const context = event.promptContext ?? "(no promptContext — direct chat / prompted follow-up)";
+  const history =
+    activities.length === 0
+      ? "(no prior activities — first turn)"
+      : activities
+          .map((a, i) => `[${i}] ${describeActivity(a)}`)
+          .join("\n");
+  const followUp = event.agentActivity?.body
+    ? `\n\nNew user message: ${event.agentActivity.body}`
+    : "";
+  return (
+    `Issue: ${issueId}\n\n` +
+    `Issue context (XML):\n${context}\n\n` +
+    `Prior activity history (reconstructed):\n${history}${followUp}`
+  );
+}
+
+/**
+ * Render one SDK {@link AgentActivity} as a single history line for the prompt.
+ * `content` is a discriminated union: `.type` is always present; `.body` exists
+ * on every variant except `action` (which carries `action`/`parameter`/`result`
+ * instead). We read defensively so a thin/partial payload never breaks the loop.
+ */
+function describeActivity(a: AgentActivity): string {
+  const c = a.content as { type?: string; body?: string | null; action?: unknown; result?: unknown } | null;
+  const type = c?.type ?? "unknown";
+  const body = typeof c?.body === "string" ? c.body : JSON.stringify(c?.action ?? c?.result ?? "");
+  return `${type}: ${body}`;
+}
+
+/**
+ * Emit one parsed activity plan as a `createAgentActivity` call. Returns the
+ * created activity's node id; throws on SDK-reported failure (shared by all
+ * activity types).
+ */
+async function emitActivity(
+  client: LinearClient,
+  sessionId: string,
+  plan: ActivityPlan,
+): Promise<string> {
   const payload = await client.createAgentActivity({
     agentSessionId: sessionId,
-    content: { type: "response", body },
+    content: { type: plan.type, body: plan.body },
   });
   if (!payload?.success) {
     throw new Error(
-      `createAgentActivity(response) did not succeed for session ${sessionId}`,
+      `createAgentActivity(${plan.type}) did not succeed for session ${sessionId}`,
     );
   }
   const activity = await payload.agentActivity;
   if (!activity?.id) {
     throw new Error(
-      `createAgentActivity(response) returned no activity id for session ${sessionId}`,
+      `createAgentActivity(${plan.type}) returned no activity id for session ${sessionId}`,
     );
   }
   return activity.id;
+}
+
+/** Type guard narrowing a string to a first-slice {@link ActivityType}. */
+function isValidActivityType(type: string): type is ActivityType {
+  return type === "thought" || type === "response" || type === "elicitation" || type === "error";
+}
+
+/** Strip a ```json … ``` fence wrapper if present; otherwise return as-is. */
+function stripFence(raw: string): string {
+  const trimmed = raw.trim();
+  const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fence ? fence[1] : trimmed;
+}
+
+/** Short preview of raw text for error diagnostics (never the full body — may be sensitive). */
+function preview(raw: string): string {
+  const s = raw.trim().replace(/\n/g, " ");
+  return s.length > 120 ? `${s.slice(0, 120)}…` : s;
 }
 
 /**
@@ -217,7 +418,7 @@ export async function moveToStartedIfDelegated(
 export interface EventLoopResult {
   /** Thought activity id — emitted FIRST to satisfy the 10s SLA. */
   thoughtId: string;
-  /** Response activity id — the V1 echo. */
+  /** Response activity id — the LLM's primary response (last emitted activity). */
   responseId: string;
   /** State id the issue was moved to, or null if it was already started / no issue. */
   movedToStateId: string | null;
@@ -235,6 +436,7 @@ export interface EventLoopResult {
 export async function driveLoop(
   client: LinearClient,
   event: AgentSessionEvent,
+  completeFn: LLMCompleteFn = llmComplete,
 ): Promise<EventLoopResult> {
   const sessionId = sessionOf(event);
 
@@ -243,7 +445,7 @@ export async function driveLoop(
   // `created` webhook, so this ordering is load-bearing.
   const thoughtId = await emitThought(client, sessionId, "Received the session — starting work.");
 
-  const responseId = await driveAgentLoop(client, event);
+  const responseId = await driveAgentLoop(client, event, completeFn);
   const movedToStateId = await moveToStartedIfDelegated(client, event);
 
   return { thoughtId, responseId, movedToStateId };
@@ -259,6 +461,7 @@ export async function driveLoop(
 export async function runEventLoop(
   event: AgentSessionEvent,
   token: string,
+  completeFn: LLMCompleteFn = llmComplete,
 ): Promise<EventLoopResult> {
-  return driveLoop(makeOAuthClient(token), event);
+  return driveLoop(makeOAuthClient(token), event, completeFn);
 }
