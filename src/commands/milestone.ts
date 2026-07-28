@@ -1,5 +1,6 @@
 import { makeClient } from "../client.js";
 import { milestones, deleteMilestone, createMilestone } from "../core/milestones.js";
+import { milestoneGaps } from "../core/milestone-gaps.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 
@@ -17,6 +18,11 @@ export interface MilestoneCreateOptions {
 
 export interface MilestoneDeleteOptions {
   yes?: boolean;
+  json?: boolean;
+}
+
+export interface MilestoneGapOptions {
+  project: string;
   json?: boolean;
 }
 
@@ -70,6 +76,53 @@ export async function milestoneDelete(id: string, opts: MilestoneDeleteOptions):
       ? `deleted milestone "${res.name}" (${res.id}).\n`
       : `[dry-run] would delete milestone "${res.name}" (${res.id}); re-run with --yes to delete.\n`,
   );
+}
+
+/**
+ * `linearctl milestone gap --project <ref> [--json]` — surface milestone
+ * coverage gaps: empty milestones (ghosts), project issues with no milestone
+ * (unassigned), and overview-doc `##` sections with no matching ticket
+ * (doc-section gaps). Read-only; see docs/spec.md §6.5/§6.13.
+ */
+export async function milestoneGap(opts: MilestoneGapOptions): Promise<void> {
+  const client = makeClient();
+  const gaps = await milestoneGaps(client, opts.project);
+
+  if (opts.json) {
+    printJson(gaps);
+    return;
+  }
+
+  const lines: string[] = [];
+  lines.push(
+    `${gaps.project} — coverage gaps`,
+  );
+  lines.push(
+    `  empty milestones: ${gaps.emptyMilestones.length}`,
+    `  unassigned issues: ${gaps.unassignedIssues.length}`,
+    `  doc-section gaps: ${gaps.docSectionGaps.length}`,
+  );
+  if (gaps.emptyMilestones.length > 0) {
+    lines.push("", "empty milestones (zero issues):");
+    for (const m of gaps.emptyMilestones) {
+      lines.push(
+        `  ${m.name}  ${m.id}${m.targetDate ? `  (due ${m.targetDate})` : ""}`,
+      );
+    }
+  }
+  if (gaps.unassignedIssues.length > 0) {
+    lines.push("", "unassigned to a milestone:");
+    for (const i of gaps.unassignedIssues) {
+      lines.push(`  ${i.identifier}  ${i.title}  [${i.state}]`);
+    }
+  }
+  if (gaps.docSectionGaps.length > 0) {
+    lines.push("", "overview-doc sections with no matching ticket:");
+    for (const s of gaps.docSectionGaps) {
+      lines.push(`  [${s.index}] ${s.heading}`);
+    }
+  }
+  process.stdout.write(lines.join("\n") + "\n");
 }
 
 /** A 20-cell ASCII progress bar, e.g. `[██████████░░░░░░░░░░]`. */
