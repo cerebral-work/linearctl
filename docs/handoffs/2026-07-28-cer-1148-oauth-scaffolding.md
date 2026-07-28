@@ -1,9 +1,9 @@
-# Handoff — CER-1148 OAuth scaffolding landed; 4 operator questions open
+# Handoff — CER-1148 OAuth scaffolding landed; all operator questions resolved
 
 **Date:** 2026-07-28
 **PR:** [#112](https://github.com/cerebral-work/linearctl/pull/112) (squash-merged `eaa1043`, on `main`)
 **Ticket:** [CER-1148](https://linear.app/cerebral-work/issue/CER-1148) — `feat(agent): OAuth actor=app scaffolding`
-**Status:** code + contract tests + live `whoami` verified; 4 operator questions block live `client_credentials` mint verification only.
+**Status:** code + contract tests + live `whoami` + **live `client_credentials` mint** all verified (2026-07-28 handoff session). All 4 operator questions resolved; the 1P `credential` (client_secret) was refreshed and the live Path A mint now resolves the `unsigned-gg` app actor. See "Operator decisions (resolved 2026-07-28)" below.
 
 ---
 
@@ -39,7 +39,7 @@
    "id": "c69a51af-8bcd-49e6-be9a-e73a86438b7d"}
   ```
 - [x] no secret in git/logs (1P read by field ID; tokens flow through stdout only on `--json`)
-- [x] `dev_app_token` + `dev_user_token` resolve via field ID (trailing-space label bug sidestepped)
+- [x] `linearctl auth client-credentials --json` → **live mint verified (2026-07-28)**: operator refreshed the 1P `credential` (client_secret) field after an initial `invalid_secret` rejection; the freshly-minted token resolves the `unsigned-gg` app actor via `auth whoami` (actorKind: app, isApp: true, name: unsigned-gg). No token values surfaced in this verification.
 
 ### Implementation note — app-actor detection
 Linear returns a pre-exchanged `dev_app_token` viewer as `__typename: "User"` (not `"Application"`) but with an `@oauthapp.linear.app` service-account email. `verifyToken` detects app actors via **either** signal (typename primary, email suffix fallback):
@@ -51,39 +51,59 @@ A freshly-minted `client_credentials` token will likely return `__typename: "App
 
 ---
 
-## 4 open operator questions (§7 of the dispatch plan) — block live Path A verification only
+## Operator decisions (resolved 2026-07-28 handoff session)
 
-These are **operator-gated** (Linear UI / workspace admin). The code is complete; only the live `auth client-credentials` mint can't be verified until q1 is answered. Do NOT guess on these.
+All 4 prior operator questions are now **answered and verified live**. The code is complete and the live `client_credentials` mint resolves the `unsigned-gg` app actor (the 1P `credential`/client_secret was refreshed by the operator after an initial `invalid_secret` rejection).
 
-1. **Is "client credentials tokens" toggled ON** for the `linear-unsigned-oauth` app in Linear Settings → API → Applications → edit? — *Required for Path A (`auth client-credentials`). The `whoami` against `dev_app_token` succeeded (proves the app actor + scopes are correct), but the `client_credentials` grant specifically needs this toggle. Operator must verify in the Linear UI.*
-2. **Has the app been installed in the `unsigned-gg` workspace** (admin approval)? — The `dev_app_token` resolving as `unsigned-gg` suggests yes, but confirm: Path A tokens only see public teams until installation happens.
-3. **Commit `client_id` (`d43119e2c9d81440287d9a364beb9885`) as a default, or always read from 1Password?** — Currently read from 1P for consistency with the rest of the secret. `client_id` is not secret-named, so committing it as a default is safe if you prefer config-file reuse. Recommend keeping 1P-only.
-4. **Dev redirect strategy** — register `https://app.dev.unsigned.gg/oauth/linear/callback` alongside the prod URL in the Linear app so staging OAuth (Path B dev) works? Currently only `https://app.unsigned.gg/oauth/linear/callback` is registered.
+1. **"client credentials tokens" toggle** — **ON** (operator confirmed). Path A grant is enabled on the Linear app.
+2. **App installed in `unsigned-gg` workspace** — **Yes** (operator confirmed). App-actor calls resolve against the workspace.
+3. **Commit `client_id` as a default, or always read from 1Password?** — **Always read from 1Password** (operator confirmed). `client_id` stays in the `linear-unsigned-oauth` 1P item; no credential values committed to the repo.
+4. **Dev redirect strategy** — **No `dev.` URLs.** Lyra dev cluster is decommissioning (OPS-468); all endpoints consolidate on prod `*.unsigned.gg`. Only registered redirect: `https://app.unsigned.gg/oauth/linear/callback`.
 
-**To complete verification once q1 is confirmed ON:**
-```bash
-cd ~/projects/cerebral/linearctl
-bun build ./src/index.ts --compile --minify --outfile dist/linearctl
-./dist/linearctl auth client-credentials --json   # mints a live 30-day app-actor token
-./dist/linearctl auth whoami --json               # should resolve unsigned-gg app actor
-```
+### Endpoint inventory (consolidated on `app.unsigned.gg`)
+
+| endpoint | URL | 1P field |
+|---|---|---|
+| OAuth callback (Path B redirect) | `https://app.unsigned.gg/oauth/linear/callback` | `redirect_url` |
+| Webhook receiver (CER-1149 follow-up) | `https://app.unsigned.gg/webhooks/linear` | `webhook_url` |
+
+### Webhook signing (operator requirement)
+
+Linear webhooks carry HMAC signatures. The receiver at `https://app.unsigned.gg/webhooks/linear` **must verify signatures** against the `webhook_secret` 1Password field (field ID `zfgau2zjmlgsaxam2mh24jmz6a`). The `readLinearOAuthCreds()` helper in `src/lib/secrets.ts` already reads this field; the CER-1149 webhook receiver consumes it. linearctl itself does not (it's the agent loop, not the receiver).
+
+### 1Password field audit (`linear-unsigned-oauth`, vault `cloud`, 2026-07-28)
+
+| field | id | role |
+|---|---|---|
+| `credential` | `credential` | OAuth client_secret — refreshed 2026-07-28; live mint verified |
+| `client_id` | `26za4ioosshacw7vn2jwgmf4cu` | OAuth client_id |
+| `webhook_url` | `73ldnmye2kavtciji4v36i3nre` | webhook receiver URL |
+| `webhook_secret` | `zfgau2zjmlgsaxam2mh24jmz6a` | webhook HMAC signing secret |
+| `dev_app_token` | `uaoaxvx42cir2dgqdfgk7vlgca` | pre-exchanged app token (verified live via `auth whoami`) |
+| `dev_user_token` | `ex2h6hzl7orh6gdrio6zeqrwia` | pre-exchanged user token |
+| `redirect_url` | `5ehgmyh4uwnli5sgrhkkmemdva` | registered OAuth redirect |
+
+All 7 fields present and populated (field lengths omitted; secret-named fields never surfaced). Field IDs are stable regardless of label typos (the `dev_user_token` label has a trailing space).
 
 ---
 
 ## Non-goals honored (separate follow-ups, not in this PR)
 
 - **dc frontend callback handler** (`/oauth/linear/callback`) — lives in `unsigned/gg/services/dc`. The `auth exchange-code` verb accepts the code the dc redirect produces, but the dc side is its own workstream.
-- **revenant webhook receiver** (`/webhooks/linear`, signature verification against `webhook_secret`) — lives in the revenant daemon. The `webhook_secret` 1Password field is read by `readLinearOAuthCreds()` but linearctl doesn't consume it; revenant does.
+- **webhook receiver** (`https://app.unsigned.gg/webhooks/linear`, HMAC signature verification against the `webhook_secret` 1P field) — consolidated on `app.unsigned.gg` per operator decision (was "revenant webhook receiver"; Lyra dev decommission per OPS-468 retires any `dev.`/`revenant.` host). The `webhook_secret` 1P field is read by `readLinearOAuthCreds()` but linearctl doesn't consume it; the CER-1149 receiver does.
 - **T14 / CER-1149 — `linearctl watch`** — the AgentSessionEvent daemon. Uses the app-actor token this PR introduces; the follow-up builds the webhook subscriber loop + 10s-thought + `createAgentActivity` on top of `makeOAuthClient`.
 
 ---
 
 ## What the next linearctl session should do first
 
-1. **Confirm q1–q4 with the operator.** If q1 is ON, run the live `auth client-credentials` mint + `whoami` to close the §6 verification checklist for Path A. If q1 is OFF, file a Linear comment on CER-1148 documenting the blocker + close the ticket as code-complete-pending-operator-toggle (the code is done; the toggle is out of code's hands).
-2. **Update `PUNCH-LIST.md`** — CER-1148 is still listed under "Deferred" (line 22). Move it to "Shipped" with the PR #112 link. (I did not update PUNCH-LIST in this PR — it's a doc churn that belongs to the ticket-close step, not the code PR.)
-3. **Consider whether `auth` should surface in the MCP tool list** (`src/mcp/serve.ts`). Currently `auth` is CLI-only — the MCP surface exposes `whoami`/`project_list`/`digest`/etc. but not `auth client-credentials`, because token minting is an operator action, not an agent action. Confirm this is the intended boundary.
-4. **Start T14 / CER-1149** (`linearctl watch`) — it depends on this PR's `makeOAuthClient` + the app-actor token. The handoff plan's §4 architecture decision (who holds what) still governs: linearctl owns the agent loop, revenant owns the webhook receiver, dc owns the browser redirect.
+All operator questions (§7 q1–q4) are **resolved** and the live `client_credentials` mint is **verified** — there is no longer a blocker to close. The remaining steps are forward-looking:
+
+1. **Merge PR #114** (this handoff update) once the agentic jury approves. The code PR (#112) and the punch-list update (#113) are already on `main`.
+2. **Update `docs/spec.md` §6.18** — its heading still reads *"live mint pending operator gate"*; flip it to *verified* (separate follow-up; not in this PR's diff). The §12 T13 row is already accurate.
+3. **Confirm the MCP-tool boundary for `auth`** (`src/mcp/serve.ts`). Currently `auth` is CLI-only — the MCP surface exposes `whoami`/`project_list`/`digest`/etc. but not `auth client-credentials`, because token minting is an operator action, not an agent action. Confirm this is the intended boundary before CER-1149 lands (the watch daemon will need to mint its own token via Path A).
+4. **Start T14 / CER-1149** (`linearctl watch`) — it depends on `makeOAuthClient` + the app-actor token (now verified). Builds the webhook subscriber loop (10s thought, `createAgentActivity`) on top of the `webhook_url` + `webhook_secret` 1P fields already audited above. The receiver lives at `https://app.unsigned.gg/webhooks/linear` with HMAC signature verification against `webhook_secret`.
+5. **Start CER-1188** (maintainer-agent facility) — phased, depends on CER-1149. The handoff plan's §4 architecture decision (who holds what) still governs: linearctl owns the agent loop, the `app.unsigned.gg` webhook receiver owns the entry point, dc owns the browser redirect.
 
 ## Audit artifacts (in the omp session that did this work, NOT in this repo)
 
