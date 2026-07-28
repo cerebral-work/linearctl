@@ -4,7 +4,7 @@ import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
-import { milestone, milestoneDelete, milestoneCreate, milestoneGap } from "./commands/milestone.js";
+import { milestone, milestoneDelete, milestoneCreate, milestoneUpdate, milestoneGap } from "./commands/milestone.js";
 import { projectCreate, projectList, projectUpdate } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { comment } from "./commands/comment.js";
@@ -121,6 +121,16 @@ milestoneCmd
   .option("--yes", "perform the delete (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((id, opts) => milestoneDelete(id, opts));
+milestoneCmd
+  .command("update")
+  .description("Update a project milestone (dry-run unless --apply).")
+  .argument("<id>", "milestone UUID (find via `milestone --json`)")
+  .option("--name <name>", "new milestone name")
+  .option("--target-date <YYYY-MM-DD>", "new planned delivery date")
+  .option("--desc <markdown|->", "new description (use '-' for stdin)")
+  .option("--apply", "write the update (default is a dry-run preview)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => milestoneUpdate(id, opts));
 milestoneCmd
   .command("gap")
   .description("Milestone coverage gaps: empty milestones, unassigned issues, doc-section gaps.")
