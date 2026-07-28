@@ -524,9 +524,11 @@ program
  program
    .command("watch")
    .description("Run the full agent-session loop from an AgentSessionEvent webhook payload (CER-1149).")
-   .option("--once", "run exactly one loop iteration (the long-running tail is CER-1149 follow-up)")
-   .option("--payload <file|->", "AgentSessionEvent payload JSON file; '-' reads stdin")
-   .option("--json", "emit the emitted activity node ids as JSON")
+  .option("--once", "run exactly one loop iteration (the long-running tail is CER-1149 follow-up)")
+  .option("--payload <file|->", "AgentSessionEvent payload JSON file; '-' reads stdin")
+  .option("--no-delegate", "skip the operator-delegate attempt (force the full-loop fallback)")
+  .option("--socket <path>", "operator Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
+  .option("--json", "emit the emitted activity node ids as JSON")
    .action((opts) => watch(opts));
 
 program.parseAsync().catch((err: unknown) => {
