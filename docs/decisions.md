@@ -159,3 +159,53 @@ secret-update.
 - ⚠️ macOS runner minutes are charged against the GitHub Actions free tier (public repos get unlimited, but we have private repos in the org).
 - ⚠️ The build matrix now has two runners instead of one; release time increases slightly (parallel, but macOS runners are slower to spin up).
 - ⚠️ Certificate renewal is a manual rotation every ~5 years (or sooner if compromised).
+
+---
+
+## ADR-0008 — Ink for the `linearctl tui` dashboard
+
+**Status:** Accepted (2026-07-28).
+
+**Context.** `linearctl tui` (CER-1550) is the third interaction mode — a
+full-screen terminal dashboard over the existing `core/*` functions
+(`docs/features/tui.md:22-24`). The feature spec defers the library choice to an
+ADR (`tui.md:135-137`). The landscape survey
+(`docs/features/tui-cli-landscape/typescript-javascript.md:31-43`) evaluated the
+TS/JS TUI ecosystem candidates:
+
+| Library | GH ★ | Weekly DL | Status | Adopters |
+|---------|------|-----------|--------|----------|
+| **ink** | 38.1k | 4.2M | ✅ v7.0.6 | Claude Code, Gemini CLI, GitHub Copilot CLI |
+| OpenTUI | 11.9k | 119k | ✅ v0.4.3 | OpenCode, terminal.shop |
+| Glyph | 40 | low | ⚠️ early | Aion, Epist |
+
+**Decision.** Adopt **Ink** (v7.0.6) as the full-screen TUI renderer. Build
+components from Ink's `Box`/`Text`/`useInput`/`useApp` primitives — **not**
+`@inkjs/ui`, which is stale (v2.0.0, 2yr old, `typescript-javascript.md:48`). The
+spec already mandates this primitive-only path (`tui.md:125-127`).
+
+**Why Ink (not OpenTUI / Glyph).** The adoption signals are decisive — three
+major production agentic CLIs (Claude Code, Gemini CLI, Copilot CLI) ship
+Ink-based TUIs at scale (`typescript-javascript.md:35`). The initial TUI surface
+is 5 read-only panes (`tui.md:60-68`); Ink's React reconciliation is fast enough
+(`tui.md:129-131`). OpenTUI (11.9k ★) is the performance play for a heavy
+dashboard, but read-only panes don't need a Zig core. Glyph (40 ★, early-stage)
+has the richest component library but the adoption risk is too high for a tool
+that must be reliable.
+
+**Consequences.**
+- ✅ Familiar React component model; the TUI is pure presentation over `core/*`
+  (`tui.md:28-32`), never talking to Linear directly.
+- ✅ `ink-testing-library` enables in-memory render tests with stdin mocking —
+  no real TTY needed (`typescript-javascript.md:105`).
+- ⚠️ Binary size grows ~2MB (spec warns, `tui.md:198`); acceptable for a
+  pinned-version internal CLI (per ADR-0001's size rationale).
+- ⚠️ `@inkjs/ui` being stale means every custom component is hand-built from
+  primitives. This is the Ink-recommended path and keeps the dep tree thin.
+
+**Rejected — OpenTUI.** Higher performance (native Zig core, cell-diffing) but
+the first slice is read-only and Ink's reconciliation is sufficient. Revisit if
+the dashboard grows to hundreds of live-updating issues (`tui.md:129-133`).
+
+**Rejected — Glyph.** Richest components (20+, focus system, modal, JumpNav) but
+40★ and early-stage — too risky for a reliability-first tool (`tui.md:132-133`).

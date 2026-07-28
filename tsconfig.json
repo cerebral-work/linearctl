@@ -13,7 +13,11 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    // Ink (ADR-0008) renders via React's automatic JSX runtime. `.tsx` files
+    // import React hooks (`useInput`, `useApp`, `useState`) and emit elements
+    // that tsc must type-check against `@types/react`.
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
 }
