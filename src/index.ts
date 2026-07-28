@@ -4,7 +4,7 @@ import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
-import { milestone, milestoneDelete, milestoneCreate } from "./commands/milestone.js";
+import { milestone, milestoneDelete, milestoneCreate, milestoneGap } from "./commands/milestone.js";
 import { projectCreate, projectList, projectUpdate } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
 import { comment } from "./commands/comment.js";
@@ -119,6 +119,12 @@ milestoneCmd
   .option("--yes", "perform the delete (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((id, opts) => milestoneDelete(id, opts));
+milestoneCmd
+  .command("gap")
+  .description("Milestone coverage gaps: empty milestones, unassigned issues, doc-section gaps.")
+  .requiredOption("--project <ref>", "project (UUID, slug id, or name)")
+  .option("--json", "emit JSON")
+  .action((opts) => milestoneGap(opts));
 
 const projectCmd = program
   .command("project")
