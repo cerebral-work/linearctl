@@ -10,6 +10,7 @@
 * **roadmap:** milestone timeline view with progress and issue lists per milestone (CER-1688)
 * **watch:** `linearctl watch --once --payload` — full-loop fallback path for AgentSessionEvent payloads; loop driver library (`emitThought` → `driveAgentLoop` → `moveToStartedIfDelegated`) with 10s-SLA thought-first ordering (CER-1149)
 * **operator:** `linearctl operator` long-running daemon — CF Queue `linear-agent-events` consumer + Unix-socket control (POST /delegate, GET /healthz) for `linearctl watch` delegation; token cache, graceful SIGINT/SIGTERM shutdown (CER-1149)
+* **handoff:** `linearctl handoff` command tree — create / list / show / resolve session handoff notes persisted as markdown under `~/.local/state/linearctl/handoffs/` (XDG state dir shared with the operator socket); cross-session memory bridge for the maintainer-agent (Track 6 sub-feature B)
 
 
 ### Bug Fixes
