@@ -25,6 +25,7 @@ import { standup } from "./commands/standup.js";
 import { pull } from "./commands/pull.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { authClientCredentials, authExchangeCode, authRefresh, authWhoami } from "./commands/auth.js";
+import { watch } from "./commands/watch.js";
 import { DEFAULT_BOT_SCOPES } from "./core/auth.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { roadmap } from "./commands/roadmap.js";
@@ -510,6 +511,14 @@ authCmd
   .option("--user", "use the dev_user_token instead of dev_app_token")
   .option("--json", "emit JSON")
   .action((opts) => authWhoami(opts));
+
+program
+  .command("watch")
+  .description("Run the full agent-session loop from an AgentSessionEvent webhook payload (CER-1149).")
+  .option("--once", "run exactly one loop iteration (the long-running tail is CER-1149 follow-up)")
+  .option("--payload <file|->", "AgentSessionEvent payload JSON file; '-' reads stdin")
+  .option("--json", "emit the emitted activity node ids as JSON")
+  .action((opts) => watch(opts));
 
 program.parseAsync().catch((err: unknown) => {
   // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.

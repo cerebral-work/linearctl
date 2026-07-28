@@ -8,6 +8,7 @@
 * **milestone:** `milestone create` subcommand — create project milestones headless (CER-1686)
 * **project:** `project update` subcommand — update project state, name, description (CER-1687)
 * **roadmap:** milestone timeline view with progress and issue lists per milestone (CER-1688)
+* **watch:** `linearctl watch --once --payload` — full-loop fallback path for AgentSessionEvent payloads; loop driver library (`emitThought` → `driveAgentLoop` → `moveToStartedIfDelegated`) with 10s-SLA thought-first ordering (CER-1149)
 
 
 ### Bug Fixes
