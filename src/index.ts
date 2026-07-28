@@ -567,6 +567,8 @@ program
   .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--queue-poll-interval <ms>", "queue poll interval in ms")
   .option("--json", "emit the listening address as JSON")
+  .option("--role <name...>", "boot a maintainer-agent role on cadence (repeatable: intake-triage, grooming)")
+  .option("--check", "connect to a running operator, GET /readyz, exit 0/1 (does NOT start the daemon)")
   .action((opts) => operator(opts));
 
  program
