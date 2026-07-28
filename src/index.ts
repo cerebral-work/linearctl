@@ -27,6 +27,7 @@ import { ratelimit } from "./commands/ratelimit.js";
 import { authClientCredentials, authExchangeCode, authRefresh, authWhoami } from "./commands/auth.js";
 import { watch } from "./commands/watch.js";
 import { operator } from "./commands/operator.js";
+import { tui } from "./commands/tui.js";
 import { DEFAULT_BOT_SCOPES } from "./core/auth.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { handoffCreate, handoffList, handoffShow, handoffResolve } from "./commands/handoff.js";
@@ -577,6 +578,14 @@ program
   .option("--socket <path>", "operator Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--json", "emit the emitted activity node ids as JSON")
    .action((opts) => watch(opts));
+
+program
+  .command("tui")
+  .description("Full-screen dashboard over core/* (CER-1550). TTY-gated — needs an interactive terminal.")
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--focus <pane>", "initial pane: triage (first slice)")
+  .action((opts) => tui(opts));
 
 program.parseAsync().catch((err: unknown) => {
   // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.
