@@ -93,8 +93,14 @@ apply` time), or inject it per-run:
 LINEAR_API_KEY="op://<vault>/<item>/<field>" op run -- linearctl whoami
 ```
 
-The key is **never** stored, cached, logged, or printed; `*.env` is git-ignored. A
-native OAuth `actor=app` path is future work (§10).
+The key is **never** stored, cached, logged, or printed; `*.env` is git-ignored.
+
+A native OAuth `actor=app` path is now implemented (T13 / CER-1148) — see
+§10 and `linearctl auth --help`. The OAuth path is **additive**: existing
+commands keep the env-only `LINEAR_API_KEY` contract; `linearctl auth
+client-credentials` mints a 30-day app-actor token from the
+`linear-unsigned-oauth` 1Password item for the revenant bot / `linearctl watch`
+daemon; `auth exchange-code` / `auth refresh` cover the browser install path.
 
 ## 6. Command reference
 
@@ -243,6 +249,32 @@ milestone timeline with target dates, progress bars (done/open), and issue
 lists per milestone. Sorted by target date (undated first). `--json` emits
 structured milestone + issue data for piping. If a project has no milestones,
 suggests `milestone create`. See CER-1688.
+
+### 6.18 `linearctl auth` — *implemented + verified (contract tests; live mint pending operator gate)*
+`linearctl auth <verb>` — OAuth token lifecycle for the `linear-unsigned-oauth`
+1Password item (the `unsigned-gg` Linear bot). Four verbs covering the two
+OAuth paths (spec §5):
+
+- `auth client-credentials [--scope ...] [--json]` — **Path A** (recommended for
+  the revenant bot): mints a 30-day app-actor token via the
+  `client_credentials` grant (server-to-server, no browser, no refresh token).
+  Reads `client_id` + `client_secret` from 1Password by field ID. Requires the
+  "client credentials tokens" toggle ON on the Linear OAuth app (operator
+  question §7 q1).
+- `auth exchange-code <code> [--redirect-uri ...] [--json]` — **Path B**: trades an
+  authorization_code (from the dc `/oauth/linear/callback` redirect) for a 24h
+  access_token + refresh_token.
+- `auth refresh <refreshToken> [--json]` — **Path B refresh**.
+- `auth whoami [--token <token>] [--user] [--json]` — verify a token resolves as
+  the expected actor (`actorKind: "app"` proves `actor=app` worked). Defaults to
+  the `dev_app_token` 1Password field; `--user` uses `dev_user_token`; `--token`
+  verifies an arbitrary token (e.g. one just minted).
+
+The OAuth path is **additive** — existing commands keep the env-only
+`LINEAR_API_KEY` contract. Token values flow through stdout (the caller's
+responsibility to capture via `--json`); they are never written to disk or
+logs. See `src/lib/oauth.ts` (transport), `src/lib/secrets.ts` (1Password),
+`src/core/auth.ts` (orchestration), `src/commands/auth.ts` (CLI). CER-1148.
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:
@@ -376,7 +408,7 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T10 | `feat(xref): PR↔issue cross-ref audit` — *shipped (§6.10)* | M3 | open PRs w/o issue; done issues w/o merged PR |
 | T11 | `feat(release-notes): notes from completed issues` — *shipped* | M3 | range → grouped by label (`src/commands/release-notes.ts`) |
 | T12 | `feat(standup): render digest (+ operator-gated Slack)` — *shipped (read path; Slack send deferred)* | M3 | never auto-post (`src/commands/standup.ts`) |
-| T13 | `feat(agent): OAuth actor=app scaffolding` | M4 | app registration, scopes, token storage — **CER-1148** |
+| T13 | `feat(agent): OAuth actor=app scaffolding` — *shipped (§6.18 `linearctl auth`; CER-1148)* | M4 | `auth client-credentials` (Path A, 30d app token) + `auth exchange-code` / `auth refresh` (Path B); credentials read from 1Password `linear-unsigned-oauth` item by field ID; **CER-1148** |
 | T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities — **CER-1149** |
 | T15 | `chore(release): macOS notarization / codesign` — *pipeline built (ADR-0007); gated on Apple Developer Program enrollment (CER-1150)* | M2 | Gatekeeper quarantine fix for darwin assets; build-darwin job on `macos-latest`, dormant-until-keyed |
 | T16 | `ci: SHA-pin all GitHub Actions` — *shipped* | M1 | supply-chain hardening (all workflows pin to commit SHA) |
