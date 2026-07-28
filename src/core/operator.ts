@@ -190,11 +190,16 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   const tokenCache = makeTokenCache(minter);
   await tokenCache.refreshToken();
 
-  // Last-known queue depth, surfaced by /healthz.
+  // Readiness signals surfaced by /readyz (Track 4): token age, last poll,
+  // CF env presence. Presence-only booleans — secrets never leave /readyz.
+  const tokenMintedAt = Date.now();
+  let lastPollAt: number | null = null;
+
+  // Last-known queue depth, surfaced by /healthz + /readyz.
   let lastQueueDepth = 0;
   let polling = false;
 
-  // Build the request handler: /healthz + /delegate. Unknown → 404.
+  // Build the request handler: /healthz + /readyz + /delegate. Unknown → 404.
   const handler: ControlHandler = (req: ControlRequest): Promise<ControlResponse> | ControlResponse => {
     if (req.method === "GET" && req.path === "/healthz") {
       const body = JSON.stringify({
@@ -208,6 +213,34 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         body,
       };
     }
+
+    // /readyz (Track 4): "is the daemon actually able to consume?" — distinct
+    // from /healthz ("is the process alive?"). Reports CF env presence (never
+    // the values), token age (30d lifetime → re-mint near expiry), last poll
+    // time (null until the first poll lands), and last-known queue depth.
+    if (req.method === "GET" && req.path === "/readyz") {
+      const ready =
+        !!queueEnv && tokenMintedAt > 0 && lastPollAt !== null
+          ? lastPollAt > Date.now() - 3 * DEFAULT_QUEUE_POLL_INTERVAL_MS
+          : false;
+      const body = JSON.stringify({
+        ok: ready,
+        cfEnv: {
+          accountId: !!queueEnv?.CF_ACCOUNT_ID,
+          queueId: !!queueEnv?.CF_QUEUE_ID,
+          apiToken: !!queueEnv?.CF_API_TOKEN,
+        },
+        tokenAgeSec: Math.floor((Date.now() - tokenMintedAt) / 1000),
+        lastPoll: lastPollAt === null ? null : new Date(lastPollAt).toISOString(),
+        queueDepth: lastQueueDepth,
+      });
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body,
+      };
+    }
+
 
     if (req.method === "POST" && req.path === "/delegate") {
       return (async (): Promise<ControlResponse> => {
@@ -283,6 +316,11 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
       console.error(`operator: queue pull HTTP ${res.status}: ${text.slice(0, 200)}`);
       return;
     }
+
+    // Mark a successful poll — /readyz uses this to confirm the poller is live
+    // (not just "env present"). Set before parsing: a successful HTTP pull from
+    // the queue API proves reachability + token validity for that surface.
+    lastPollAt = Date.now();
 
     let messages: Array<{ receipt: string; body: string }>;
     try {

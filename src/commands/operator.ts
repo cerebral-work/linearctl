@@ -8,7 +8,7 @@
  * until SIGINT/SIGTERM, which trigger graceful shutdown (stop polling, drain
  * in-flight events + role runs, close + unlink the socket).
  *
- *   `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json]`
+ *   `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check]`
  *
  * `--socket` overrides the default `~/.local/state/linearctl/operator.sock`.
  * `--role` repeats to boot roles from `src/core/role-catalog.ts` (e.g.
@@ -19,10 +19,15 @@
  *
  * The token value is never logged/echoed. Only redacted handles appear in
  * error messages, matching the `src/lib/secrets.ts` Secret pattern.
+ *
+ * `--check` does NOT start the daemon — it connects to a running operator's
+ * Unix socket, GETs `/readyz`, prints the readiness report, and exits 0 if
+ * ready / 1 if not (a drain on the runbook's step-7 smoke). CF env is reported
+ * presence-only (never the values).
  */
 
 import { printJson } from "../lib/output.js";
-import { DEFAULT_OPERATOR_SOCKET } from "../lib/control-socket.js";
+import { DEFAULT_OPERATOR_SOCKET, makeControlClient } from "../lib/control-socket.js";
 import { startOperator, type OperatorOptions } from "../core/operator.js";
 import { getRole, type RoleDescriptor, type RoleRunner } from "../core/role-catalog.js";
 import { runIntakeTriage } from "../roles/intake-triage.js";
@@ -37,6 +42,17 @@ export interface OperatorCommandOptions {
   role?: string[];
   /** Emit the listening address as JSON on stdout (suppresses the human banner). */
   json?: boolean;
+  /** Don't start the daemon — probe a running operator's /readyz and exit 0/1 (Track 4). */
+  check?: boolean;
+}
+
+/** The parsed /readyz report body (presence-only — no secret values). */
+interface ReadyzReport {
+  ok: boolean;
+  cfEnv: { accountId: boolean; queueId: boolean; apiToken: boolean };
+  tokenAgeSec: number;
+  lastPoll: string | null;
+  queueDepth: number;
 }
 
 function parsePollInterval(raw: string | undefined): number | undefined {
@@ -58,7 +74,7 @@ const ROLE_RUNNERS: Record<string, RoleRunner> = {
   grooming: runGrooming,
 };
 
-/** Resolve `--role` names to descriptors + runners, throwing on a tyop. */
+/** Resolve `--role` names to descriptors + runners, throwing on a typo. */
 function resolveRoles(
   names: string[] | undefined,
 ): { roles: RoleDescriptor[]; runners: Record<string, RoleRunner> } | undefined {
@@ -66,7 +82,7 @@ function resolveRoles(
   const roles: RoleDescriptor[] = [];
   const runners: Record<string, RoleRunner> = {};
   for (const name of names) {
-    const role = getRole(name); // throws on unknown name (typo) with the known list
+    const role = getRole(name);
     roles.push(role);
     const runner = ROLE_RUNNERS[name];
     if (!runner) {
@@ -80,12 +96,20 @@ function resolveRoles(
 }
 
 /**
- * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json]`.
+ * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check]`.
  *
  * Starts the daemon and blocks until SIGINT/SIGTERM. The banner goes to
- * stderr so stdout stays clean for `--json` machine output.
+ * stderr so stdout stays clean for `--json` machine output. `--check` short-
+ * circuits: it probes a running operator's `/readyz` and exits 0/1 instead of
+ * starting a new daemon.
  */
 export async function operator(opts: OperatorCommandOptions): Promise<void> {
+  // --check: probe a running operator, don't start one.
+  if (opts.check) {
+    await checkOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json);
+    return;
+  }
+
   const resolved = resolveRoles(opts.role);
 
   const operatorOpts: OperatorOptions = {
@@ -110,4 +134,47 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
   // Block until the process is killed (startOperator wired the signal handlers).
   // `startOperator`'s shutdown handler calls process.exit(0); we just hold here.
   return new Promise(() => {});
+}
+
+/**
+ * Probe a running operator's `/readyz` over the Unix socket + report.
+ *
+ * Print the readiness report (presence-only CF env, token age, last poll,
+ * queue depth) and exit 0 if the daemon is ready to consume / 1 otherwise.
+ * A connection failure (no daemon, socket stale) is a not-ready result with a
+ * diagnostic on stderr — it is NOT a thrown exception, so the runbook's step-7
+ * smoke gets a clean exit code rather than a stack trace.
+ *
+ * `--json` prints the raw /readyz body as JSON; the default prints a human report.
+ */
+export async function checkOperator(socketPath: string, json?: boolean): Promise<void> {
+  let report: ReadyzReport;
+  try {
+    const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
+    const res = await client.request("GET", "/readyz");
+    if (res.status !== 200) {
+      process.stderr.write(`operator --check: /readyz returned HTTP ${res.status}\n`);
+      process.exit(1);
+    }
+    report = JSON.parse(res.body ?? "") as ReadyzReport;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (json) printJson({ ok: false, error: msg });
+    else process.stderr.write(`operator --check: not ready — ${msg}\n`);
+    process.exit(1);
+  }
+
+  if (json) {
+    printJson(report);
+  } else {
+    const cf = report.cfEnv;
+    process.stdout.write(
+      `operator readiness: ${report.ok ? "READY" : "NOT READY"}\n` +
+        `  cf env: accountId=${cf.accountId} queueId=${cf.queueId} apiToken=${cf.apiToken}\n` +
+        `  token age: ${report.tokenAgeSec}s\n` +
+        `  last poll: ${report.lastPoll ?? "(never)"}\n` +
+        `  queue depth: ${report.queueDepth}\n`,
+    );
+  }
+  process.exit(report.ok ? 0 : 1);
 }
