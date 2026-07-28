@@ -1,9 +1,16 @@
 # linearctl — Backlog Punch-List
 
-> Updated 2026-07-25. All actionable items shipped. The remaining backlog is
-> M4 (agent facility) + TUI — operator-gated / large scope. See
-> `roadmap-linearctl.md` for the full milestone view and `docs/spec.md` §12
-> for the complete ticket table (T1-T26). 238 tests pass, 0 fail.
+> Updated 2026-07-28. CER-1148 (OAuth `actor=app` scaffolding) shipped
+> (PR #112). Remaining backlog: T14/CER-1149 (`linearctl watch`), the TUI,
+> and notarization — operator-gated / large scope. See `roadmap-linearctl.md`
+> for the full milestone view and `docs/spec.md` §12 for the complete ticket
+> table (T1-T26). 272 tests pass, 0 fail.
+
+## Shipped (2026-07-28 — PR #112 / commit eaa1043)
+
+| ID | Pri | Title |
+|---|---|---|
+| ✅ [CER-1148](https://linear.app/cerebral-work/issue/CER-1148) | P4 | `feat(auth)`: OAuth `actor=app` scaffolding — `linearctl auth` subcommand (client-credentials / exchange-code / refresh / whoami); 1Password `linear-unsigned-oauth` item by field ID; live `whoami` verified |
 
 ## Shipped (2026-07-24 — PR #89 / commit 1955a99)
 
@@ -19,9 +26,7 @@
 | ID | Pri | Title | Assignee | Milestone | Age |
 |---|---|---|---|---|---|
 | [CER-1550](https://linear.app/cerebral-work/issue/CER-1550) | P0 | `feat(tui)`: full-screen keyboard-driven dashboard over `core/*` | unassigned | M4 | 13d |
-| [CER-1148](https://linear.app/cerebral-work/issue/CER-1148) | P4 | `feat(agent)`: OAuth `actor=app` scaffolding | ctodie | M4 | 49d |
 | [CER-1149](https://linear.app/cerebral-work/issue/CER-1149) | P4 | `feat(agent)`: `linearctl watch` — AgentSessionEvent daemon | ctodie | M4 | 49d |
-| [CER-1188](https://linear.app/cerebral-work/issue/CER-1188) | P4 | `feat(agent)`: `linearctl` maintainer-agent facility (phased) | ctodie | M4 | 47d |
 | [CER-1150](https://linear.app/cerebral-work/issue/CER-1150) | P4 | `chore(release)`: macOS notarization / codesign | ctodie | M2 | 49d |
 
 
