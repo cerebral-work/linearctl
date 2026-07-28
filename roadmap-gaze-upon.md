@@ -5,7 +5,7 @@
 > Source: `linearctl search --project gaze-upon --state all --json`.
 > Milestones created and issues assigned via `linearctl milestone create` + `update --stdin --apply`.
 
-## Live Linear State (auto-rendered 2026-07-27 22:00 UTC)
+## Live Linear State (auto-rendered 2026-07-28 11:11 UTC)
 
 | Milestone | Linear ID | Target Date | Issues | Progress |
 |----------|-----------|------------|--------|----------|
