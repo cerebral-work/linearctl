@@ -413,3 +413,69 @@ describe("runEventLoop", () => {
     expect(calls.map((c) => c.contentType)).toEqual(["thought", "response"]);
   });
 });
+
+// ---- tryDelegate: operator-socket delegation + fallback seam ----
+
+import { tryDelegate } from "../src/commands/watch.js";
+import type { EventLoopResult } from "../src/core/watch.js";
+
+describe("tryDelegate", () => {
+  test("returns the result when the operator responds 200", async () => {
+    const expected: EventLoopResult = {
+      thoughtId: "delegated-thought",
+      responseId: "delegated-response",
+      movedToStateId: "delegated-state",
+    };
+    mock.module("../src/lib/control-socket.js", () => ({
+      DEFAULT_OPERATOR_SOCKET: "/tmp/test-operator.sock",
+      makeControlClient: () => ({
+        request: async () => ({
+          status: 200,
+          headers: {},
+          body: JSON.stringify(expected),
+        }),
+      }),
+    }));
+    const result = await tryDelegate(JSON.stringify({ action: "created" }), "/tmp/test-operator.sock");
+    expect(result).toEqual(expected);
+    mock.restore();
+  });
+
+  test("returns null (fallback) when the operator is unreachable (ECONNREFUSED)", async () => {
+    mock.module("../src/lib/control-socket.js", () => ({
+      DEFAULT_OPERATOR_SOCKET: "/tmp/test-operator.sock",
+      makeControlClient: () => ({
+        request: async () => {
+ throw new Error("connect ECONNREFUSED");
+        },
+      }),
+    }));
+    const result = await tryDelegate(JSON.stringify({ action: "created" }), "/tmp/test-operator.sock");
+    expect(result).toBeNull();
+    mock.restore();
+  });
+
+  test("returns null when the operator responds non-200 (unhealthy)", async () => {
+    mock.module("../src/lib/control-socket.js", () => ({
+      DEFAULT_OPERATOR_SOCKET: "/tmp/test-operator.sock",
+      makeControlClient: () => ({
+        request: async () => ({ status: 500, headers: {}, body: "internal error" }),
+      }),
+    }));
+    const result = await tryDelegate(JSON.stringify({ action: "created" }), "/tmp/test-operator.sock");
+    expect(result).toBeNull();
+    mock.restore();
+  });
+
+  test("returns null when the operator response body is not valid JSON", async () => {
+    mock.module("../src/lib/control-socket.js", () => ({
+      DEFAULT_OPERATOR_SOCKET: "/tmp/test-operator.sock",
+      makeControlClient: () => ({
+        request: async () => ({ status: 200, headers: {}, body: "not-json{{" }),
+      }),
+    }));
+    const result = await tryDelegate(JSON.stringify({ action: "created" }), "/tmp/test-operator.sock");
+    expect(result).toBeNull();
+    mock.restore();
+  });
+});
