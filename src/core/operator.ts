@@ -24,6 +24,8 @@
 
 import { loadClientCreds, mintClientCredentialsToken, DEFAULT_BOT_SCOPES } from "./auth.js";
 import { runEventLoop, type AgentSessionEvent, type EventLoopResult } from "./watch.js";
+import { scheduleRole, type RoleSchedulerHandle, type TokenProvider } from "./scheduler.js";
+import { cadenceToMs, type RoleDescriptor, type RoleRunResult } from "./role-catalog.js";
 import {
   startControlServer,
   type ControlServer,
@@ -98,6 +100,15 @@ export interface OperatorOptions {
   queueEnv?: QueueEnv | null;
   /** Register SIGINT/SIGTERM handlers (default true). Tests pass false to use `handle.shutdown()` directly. */
   registerSignals?: boolean;
+  /**
+   * Roles to boot alongside the poller + control server (CER-1188). Each is a
+   * {@link RoleDescriptor} from `src/core/role-catalog.ts`. The daemon schedules
+   * each role on its D4 cadence after the token cache mints, sharing the cached
+   * app-actor token so role actions attribute as the bot, not a user (D2).
+   */
+  roles?: RoleDescriptor[];
+  /** Override the role runners (tests inject stubs; default loads `src/roles/*`). */
+  roleRunners?: Record<string, (token: string) => Promise<unknown>>;
 }
 
 /** An in-memory token cache. The token value never leaves here except to Linear. */
@@ -152,6 +163,8 @@ export interface OperatorHandle {
   stop: () => Promise<void>;
   /** Whether queue polling is active (false when CF env absent). */
   readonly polling: boolean;
+  /** Role names booted on cadence (CER-1188). Empty when no `--role` given. */
+  readonly roles: string[];
 }
 
 /**
@@ -356,6 +369,30 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     // Fire the first poll immediately so a backlog drains promptly.
     pollOnce().finally(() => schedulePoll());
   }
+  // --- Role schedulers (CER-1188) ---
+  // Boot each role on its D4 cadence, sharing the cached app-actor token.
+  // Roles fire immediately (backlog drain) then re-arm on cadence, mirroring
+  // the queue poller. The token is the app actor (never a user token), so role
+  // actions attribute as the bot — the D2 autonomy boundary made physical.
+  const roleSchedulers: RoleSchedulerHandle[] = [];
+  if (opts.roles?.length) {
+    const tokenProvider: TokenProvider = () => tokenCache.getToken();
+    for (const role of opts.roles) {
+      const runner = opts.roleRunners?.[role.name];
+      if (!runner) {
+        console.error(`operator: role "${role.name}" has no runner — skipping`);
+        continue;
+      }
+      const handle = scheduleRole(
+        role,
+        cadenceToMs(role.cadence),
+        runner as (token: string) => Promise<RoleRunResult>,
+        tokenProvider,
+      );
+      roleSchedulers.push(handle);
+      console.error(`operator: role "${role.name}" scheduled (${role.cadence})`);
+    }
+  }
 
   // --- Graceful shutdown ---
   let stopped = false;
@@ -372,7 +409,10 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     console.error(`operator: received ${signal}; shutting down`);
     stopRequested = true;
     clearTimeout(pollTimer);
-    // Drain in-flight events (bounded by batch_size=1).
+    // Stop role schedulers + drain any in-flight role run (CER-1188).
+    for (const sched of roleSchedulers) sched.stop();
+    await Promise.all(roleSchedulers.map((s) => s.drain()));
+    // Drain in-flight queue events (bounded by batch_size=1).
     const deadline = Date.now() + 10_000;
     while (inFlight > 0 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
@@ -393,6 +433,7 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   return {
     socketPath: server.socketPath,
     polling,
+    roles: roleSchedulers.map((s) => s.role.name),
     shutdown,
     stop: shutdown,
   };
