@@ -5,7 +5,7 @@
 > fallback path; daemon follow-up). Remaining: T14/CER-1149 daemon, TUI,
 > notarization — operator-gated / large scope. See `roadmap-linearctl.md`
 > for the full milestone view and `docs/spec.md` §12 for the complete ticket
-> table (T1-T26). 297 tests pass, 0 fail.
+> table (T1-T26). 301 tests pass, 0 fail (654 expects, 45 files).
 ## Shipped (2026-07-28 — CER-1149 loop driver slice)
 
 | ID | Pri | Title |
@@ -133,7 +133,7 @@ intake-triage · sprint planner · grooming · roadmap · release-manager
 (gated) · dependency/security · observability/error-insight · dogfood ·
 knowledge.
 
-**WIP plan:** `docs/agent-facility.md` (first pass, approved direction).
+**Planned (not yet authored):** `docs/agent-facility.md` — the WIP plan the decisions below reference. Authoring is Track 1 Phase 0 (CER-1188); the file does not yet exist in the repo.
 **Status:** phased — the OAuth scaffolding (CER-1148) and `watch` daemon
 (CER-1149) are the M4 prerequisites.
 

@@ -32,12 +32,12 @@ against live data.
 `cycle`, `stale`, `xref` (with `--fix`), `release-notes`, `standup`,
 `ratelimit`, `doc` get/set, `comment`, `roadmap`, `pull` (soma funnel
 contract), `--limit` bounded pull, Loop recipe catalog, dev loop scripts,
-CONTRIBUTING.md, full core test coverage (238 tests).
+CONTRIBUTING.md, full core test coverage (301 tests).
 
 ### M4 — Native agent 🔲 (operator-gated)
 OAuth `actor=app` (CER-1148), `watch` daemon (CER-1149), maintainer-agent
 facility (CER-1188). TUI (CER-1550) competes for this slot. Standup Slack
-send (T12 Slack portion) deferred.
+send (T12) shipped — PR #104, `--slack --apply` (CER-1730).
 
 ## Deferred tickets (4 open in Linear)
 
@@ -87,12 +87,12 @@ send (T12 Slack portion) deferred.
 | xref (gate, fix) | xref-fix.test.ts, xref-gate.test.ts | — |
 | watch (emitThought, driveAgentLoop, moveToStartedIfDelegated, driveLoop) | watch.test.ts | 14 |
 | operator (healthz, delegate, shutdown, queue poll/ack, SIGTERM subprocess) | operator.test.ts | 11 |
-| + remaining test files | | 297 total |
+| + remaining test files | | 301 total |
 
 ## Repo metrics
 
-| Tests | 297 pass, 0 fail |
-| Expect calls | 650 |
+| Tests | 301 pass, 0 fail (654 expects) |
+| Expect calls | 654 |
 | Test files | 45 |
 | Core modules | 25 |
 | Commands | 28 |

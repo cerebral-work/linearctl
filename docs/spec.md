@@ -283,7 +283,7 @@ Surfaced from patterns this codebase already exercises:
 2. **`linearctl stale [--older 30d]`** — in-progress issues untouched for *N* days (rot detector).
 3. **`linearctl xref [--pr N]`** — ~~PR ↔ issue cross-ref audit~~ *shipped* (§6.10, incl. `--fix`).
 4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
-5. **`linearctl standup [--slack #chan]`** — render `digest` as a standup; **operator-gated** Slack send (never auto-post).
+5. **`linearctl standup [--slack <url>]`** — render `digest` as a standup; **operator-gated** Slack send via `--slack --apply` (PR #104, CER-1730). Dry-run unless `--apply`; never auto-posts. *(shipped)*
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
 7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
 8. *(shipped — §6.13)* **`linearctl doc`** — get/set a project's overview document headlessly. (Observed pain-point: the unsigned-paas house rule mirrors plan docs to the Linear project overview, which was unfulfillable without the UI.)
@@ -407,7 +407,7 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T9 | `feat(stale): stale in-progress sweep` — *shipped (§6.9)* | M3 | untouched > N days |
 | T10 | `feat(xref): PR↔issue cross-ref audit` — *shipped (§6.10)* | M3 | open PRs w/o issue; done issues w/o merged PR |
 | T11 | `feat(release-notes): notes from completed issues` — *shipped* | M3 | range → grouped by label (`src/commands/release-notes.ts`) |
-| T12 | `feat(standup): render digest (+ operator-gated Slack)` — *shipped (read path; Slack send deferred)* | M3 | never auto-post (`src/commands/standup.ts`) |
+| T12 | `feat(standup): render digest (+ operator-gated Slack)` — *shipped (read path + Slack send via `--slack --apply`, PR #104 / CER-1730)* | M3 | never auto-post (`src/commands/standup.ts`) |
 | T13 | `feat(agent): OAuth actor=app scaffolding` — *shipped (§6.18 `linearctl auth`; CER-1148)* | M4 | `auth client-credentials` (Path A, 30d app token) + `auth exchange-code` / `auth refresh` (Path B); credentials read from 1Password `linear-unsigned-oauth` item by field ID; **CER-1148** |
 | T14 | `feat(agent): linearctl watch — AgentSessionEvent daemon` | M4 | created/prompted loop, 10s thought, activities — **CER-1149** |
 | T15 | `chore(release): macOS notarization / codesign` — *pipeline built (ADR-0007); gated on Apple Developer Program enrollment (CER-1150)* | M2 | Gatekeeper quarantine fix for darwin assets; build-darwin job on `macos-latest`, dormant-until-keyed |
