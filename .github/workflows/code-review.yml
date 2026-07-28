@@ -66,7 +66,7 @@ jobs:
         env:
           LITELLM_URL: "${{ vars.AGENT_JURY_API_URL || 'http://llm.llm.svc.cluster.local:4000' }}"
           LITELLM_KEY: "${{ secrets.AGENT_JURY_API_KEY || '' }}"
-          AGENT_JURY_MODEL: "${{ vars.AGENT_JURY_MODEL || 'zai/GLM-5.2' }}"
+          AGENT_JURY_MODEL: "${{ vars.AGENT_JURY_MODEL || 'glm-5.2' }}"
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           PR_TITLE: ${{ steps.pr.outputs.title }}
           FILES_CHANGED: ${{ steps.pr.outputs.files }}
@@ -82,7 +82,7 @@ jobs:
             JURY_MODEL="$AGENT_JURY_MODEL"
             MAX_TOKENS=1000000
           else
-            JURY_MODEL="zai/GLM-5.2-Flash"
+            JURY_MODEL="glm-5.2-fast"
             MAX_TOKENS=4096
           fi
           echo "Using model=$JURY_MODEL max_tokens=$MAX_TOKENS (rust=$HAS_RUST lines=$DIFF_LINES)" >&2
@@ -160,7 +160,7 @@ jobs:
           CONFIDENCE: ${{ steps.review.outputs.confidence }}
           FINDINGS_COUNT: ${{ steps.review.outputs.findings_count }}
           REVIEW_FAILED: ${{ steps.review.outputs.review_failed }}
-          MODEL: ${{ vars.AGENT_JURY_MODEL || 'zai/GLM-5.2' }}
+          MODEL: ${{ vars.AGENT_JURY_MODEL || 'glm-5.2' }}
         run: |
           set -euo pipefail
           API="https://api.github.com/repos/$REPO"
