@@ -44,7 +44,7 @@ send (T12 Slack portion) deferred.
 | ID | Pri | Title | Assignee | Blocker |
 |---|---|---|---|---|
 | CER-1148 | P4 | `feat(agent)`: OAuth `actor=app` scaffolding | ctodie | M4 prerequisite |
-| CER-1149 | P4 | `feat(agent)`: `linearctl watch` — AgentSessionEvent daemon | ctodie | M4; depends on CER-1148 |
+| CER-1149 | P4 | `feat(agent)`: `linearctl watch` — AgentSessionEvent daemon | ctodie | loop driver + watch CLI shipped (full-loop fallback); daemon follow-up |
 | CER-1150 | P4 | `chore(release)`: macOS notarization / codesign | ctodie | Apple Developer Program enrollment |
 | CER-1188 | P4 | `feat(agent)`: maintainer-agent facility (phased) | ctodie | M4; depends on CER-1148 + CER-1149 |
 | CER-1550 | P0 | `feat(tui)`: full-screen keyboard-driven dashboard over `core/*` | unassigned | scope decision needed |
@@ -85,17 +85,17 @@ send (T12 Slack portion) deferred.
 | whoami (viewer + org) | whoami.test.ts | 3 |
 | dupcheck | dupcheck.test.ts | — |
 | xref (gate, fix) | xref-fix.test.ts, xref-gate.test.ts | — |
-| + remaining test files | | 238 total |
+| watch (emitThought, driveAgentLoop, moveToStartedIfDelegated, driveLoop) | watch.test.ts | 14 |
+| + remaining test files | | 286 total |
 
 ## Repo metrics
 
 | Metric | Value |
-|---|---|
-| Tests | 238 pass, 0 fail |
-| Expect calls | 470 |
-| Test files | 40 |
-| Core modules | 23 |
-| Commands | 26 |
+| Tests | 286 pass, 0 fail |
+| Expect calls | 615 |
+| Test files | 44 |
+| Core modules | 24 |
+| Commands | 27 |
 | Typecheck | clean |
 | Version | 0.7.0 |
 | Runtime | bun 1.3.14 |
