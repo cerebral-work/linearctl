@@ -86,16 +86,16 @@ send (T12 Slack portion) deferred.
 | dupcheck | dupcheck.test.ts | — |
 | xref (gate, fix) | xref-fix.test.ts, xref-gate.test.ts | — |
 | watch (emitThought, driveAgentLoop, moveToStartedIfDelegated, driveLoop) | watch.test.ts | 14 |
-| + remaining test files | | 286 total |
+| operator (healthz, delegate, shutdown, queue poll/ack, SIGTERM subprocess) | operator.test.ts | 11 |
+| + remaining test files | | 297 total |
 
 ## Repo metrics
 
-| Metric | Value |
-| Tests | 286 pass, 0 fail |
-| Expect calls | 615 |
-| Test files | 44 |
-| Core modules | 24 |
-| Commands | 27 |
+| Tests | 297 pass, 0 fail |
+| Expect calls | 650 |
+| Test files | 45 |
+| Core modules | 25 |
+| Commands | 28 |
 | Typecheck | clean |
 | Version | 0.7.0 |
 | Runtime | bun 1.3.14 |
