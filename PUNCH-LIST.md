@@ -1,10 +1,16 @@
 # linearctl — Backlog Punch-List
 
 > Updated 2026-07-28. CER-1148 (OAuth `actor=app` scaffolding) shipped
-> (PR #112). Remaining backlog: T14/CER-1149 (`linearctl watch`), the TUI,
-> and notarization — operator-gated / large scope. See `roadmap-linearctl.md`
+> (PR #112). CER-1149 loop driver + `linearctl watch` CLI shipped (full-loop
+> fallback path; daemon follow-up). Remaining: T14/CER-1149 daemon, TUI,
+> notarization — operator-gated / large scope. See `roadmap-linearctl.md`
 > for the full milestone view and `docs/spec.md` §12 for the complete ticket
-> table (T1-T26). 272 tests pass, 0 fail.
+> table (T1-T26). 286 tests pass, 0 fail.
+## Shipped (2026-07-28 — CER-1149 loop driver slice)
+
+| ID | Pri | Title |
+|---|---|---|
+| 🔵 [CER-1149](https://linear.app/cerebral-work/issue/CER-1149) | P4 | `feat(watch)`: `linearctl watch` — full-loop fallback path — loop driver library (`emitThought` → `driveAgentLoop` → `moveToStartedIfDelegated`) + `watch --once --payload` CLI verb; 10s-SLA thought-first ordering; daemon delegate-to-operator branch is follow-up |
 
 ## Shipped (2026-07-28 — PR #112 / commit eaa1043)
 
