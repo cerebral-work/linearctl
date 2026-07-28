@@ -24,6 +24,8 @@ import { releaseNotesCmd } from "./commands/release-notes.js";
 import { standup } from "./commands/standup.js";
 import { pull } from "./commands/pull.js";
 import { ratelimit } from "./commands/ratelimit.js";
+import { authClientCredentials, authExchangeCode, authRefresh, authWhoami } from "./commands/auth.js";
+import { DEFAULT_BOT_SCOPES } from "./core/auth.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { roadmap } from "./commands/roadmap.js";
 import { loopsLint } from "./commands/loops.js";
@@ -474,6 +476,40 @@ mcpCmd
   .command("serve")
   .description("Run the stdio MCP server exposing linearctl's tools.")
   .action(() => serve());
+
+const authCmd = program
+  .command("auth")
+  .description("OAuth token lifecycle for the linear-unsigned-oauth app (CER-1148 / T13).");
+
+authCmd
+  .command("client-credentials")
+  .description("Mint a 30-day app-actor token via the client_credentials grant (Path A; revenant bot).")
+  .option("--scope <scopes>", "comma-separated scopes", DEFAULT_BOT_SCOPES)
+  .option("--json", "emit JSON")
+  .action((opts) => authClientCredentials(opts));
+
+authCmd
+  .command("exchange-code")
+  .description("Exchange an authorization_code (from the dc browser redirect) for access+refresh tokens (Path B).")
+  .argument("<code>", "authorization code from the redirect")
+  .option("--redirect-uri <url>", "redirect URI (must match the authorize URL; defaults to the app's registered redirect)")
+  .option("--json", "emit JSON")
+  .action((code, opts) => authExchangeCode(code, opts));
+
+authCmd
+  .command("refresh")
+  .description("Refresh an expired access_token using its refresh_token (Path B).")
+  .argument("<refreshToken>", "the refresh_token from a prior exchange")
+  .option("--json", "emit JSON")
+  .action((refreshToken, opts) => authRefresh(refreshToken, opts));
+
+authCmd
+  .command("whoami")
+  .description("Verify a token resolves as the expected actor (app vs user). Defaults to the dev_app_token from 1Password.")
+  .option("--token <token>", "verify an arbitrary token (default: dev_app_token from 1Password)")
+  .option("--user", "use the dev_user_token instead of dev_app_token")
+  .option("--json", "emit JSON")
+  .action((opts) => authWhoami(opts));
 
 program.parseAsync().catch((err: unknown) => {
   // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.
