@@ -26,6 +26,7 @@ import { pull } from "./commands/pull.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { authClientCredentials, authExchangeCode, authRefresh, authWhoami } from "./commands/auth.js";
 import { watch } from "./commands/watch.js";
+import { operator } from "./commands/operator.js";
 import { DEFAULT_BOT_SCOPES } from "./core/auth.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
 import { roadmap } from "./commands/roadmap.js";
@@ -513,12 +514,22 @@ authCmd
   .action((opts) => authWhoami(opts));
 
 program
-  .command("watch")
-  .description("Run the full agent-session loop from an AgentSessionEvent webhook payload (CER-1149).")
+  .command("operator")
+  .description("Long-running daemon: polls the CF Queue + serves linearctl watch via a Unix socket (CER-1149).")
+  .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
+  .option("--queue-poll-interval <ms>", "queue poll interval in ms")
+  .option("--json", "emit the listening address as JSON")
+  .action((opts) => operator(opts));
+
+ program
+   .command("watch")
+   .description("Run the full agent-session loop from an AgentSessionEvent webhook payload (CER-1149).")
   .option("--once", "run exactly one loop iteration (the long-running tail is CER-1149 follow-up)")
   .option("--payload <file|->", "AgentSessionEvent payload JSON file; '-' reads stdin")
+  .option("--no-delegate", "skip the operator-delegate attempt (force the full-loop fallback)")
+  .option("--socket <path>", "operator Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--json", "emit the emitted activity node ids as JSON")
-  .action((opts) => watch(opts));
+   .action((opts) => watch(opts));
 
 program.parseAsync().catch((err: unknown) => {
   // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.
