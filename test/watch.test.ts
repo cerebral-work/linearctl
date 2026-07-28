@@ -2,11 +2,11 @@ import { describe, expect, test, mock } from "bun:test";
 import type { LinearClient } from "@linear/sdk";
 import {
   emitThought,
-  driveAgentLoop,
   moveToStartedIfDelegated,
   driveLoop,
   runEventLoop,
   type AgentSessionEvent,
+  type LLMCompleteFn,
 } from "../src/core/watch.js";
 
 /**
@@ -15,7 +15,7 @@ import {
  * Stubs the {@link LinearClient} SDK surface (no network) so the loop driver is
  * exercised against the verified AIG contract:
  *   - `emitThought` calls `createAgentActivity` with content type `thought` + body
- *   - `driveAgentLoop` fetches session activities + emits a `response` activity (v1 echo)
+ *   - `driveAgentLoop` (LLM-backed, Track 3) is tested in watch-llm.test.ts; here the loop-level invariants (thought-first SLA ordering, state moves) hold with a stubbed `complete` fn
  *   - `moveToStartedIfDelegated` queries team states + moves the issue when
  *     delegated + unstarted, and is a no-op when already started
  *   - `runEventLoop` emits thought FIRST then response (the 10s-SLA ordering)
@@ -74,7 +74,7 @@ interface ActivityCall {
 function stubClient(opts: {
   issue?: StubIssue;
   states?: StubState[];
-  activities?: Array<{ id: string; contentType: string; body?: string }>;
+  activities?: Array<{ id: string; contentType?: string; body?: string; content?: { type?: string; body?: string | null } }>;
 }): { client: LinearClient; calls: ActivityCall[]; movedTo?: string; activityCounter: number } {
   const calls: ActivityCall[] = [];
   let activityCounter = 0;
@@ -141,6 +141,17 @@ function stubClient(opts: {
   return { client: stub, calls, activityCounter, get movedTo() { return movedTo; } };
 }
 
+/** A stub LLM `complete` fn that returns a single response activity. No real gateway. */
+const stubComplete: LLMCompleteFn = async () =>
+  JSON.stringify([{ type: "response", body: "stubbed LLM response" }]);
+
+/** A stub LLM `complete` fn that emits a thought then a response (ordering test). */
+const stubCompleteThoughtThenResponse: LLMCompleteFn = async () =>
+  JSON.stringify([
+    { type: "thought", body: "supplementary thought after SLA heartbeat" },
+    { type: "response", body: "stubbed LLM response" },
+  ]);
+
 // ---- emitThought ----
 
 describe("emitThought", () => {
@@ -170,38 +181,6 @@ describe("emitThought", () => {
   });
 });
 
-// ---- driveAgentLoop (v1 echo) ----
-
-describe("driveAgentLoop", () => {
-  test("fetches session activities + emits a 'response' activity echoing promptContext (first 200 chars)", async () => {
-    const promptContext =
-      "<issue identifier=\"CER-1149\"><title>watch loop driver</title><description>the full-loop fallback path</description></issue>";
-    const event = createdEvent({ promptContext });
-    const { client, calls } = stubClient({
-      activities: [{ id: "prior-1", contentType: "prompt", body: "do the thing" }],
-    });
-
-    const id = await driveAgentLoop(client, event);
-    expect(id).toBe("act-1");
-    expect(calls).toHaveLength(1);
-    expect(calls[0].contentType).toBe("response");
-    expect(calls[0].body).toContain("CER-1149");
-    expect(calls[0]?.body).toContain(promptContext.slice(0, 200));
-    expect(calls[0]?.body).toContain("(session history: 1 activity/activities)");
-  });
-
-  test("uses 'unknown' issue id when the session has no issueId", async () => {
-    const event: AgentSessionEvent = {
-      type: "AgentSessionEvent",
-      action: "created",
-      promptContext: "ctx",
-      agentSession: { id: "sess-direct" }, // no issueId — direct chat
-    };
-    const { client, calls } = stubClient({});
-    await driveAgentLoop(client, event);
-    expect(calls[0]?.body).toContain("Received: unknown");
-  });
-});
 
 // ---- moveToStartedIfDelegated ----
 
@@ -357,7 +336,7 @@ describe("driveLoop", () => {
       }),
     } as unknown as LinearClient;
 
-    const result = await driveLoop(client, event);
+    const result = await driveLoop(client, event, stubComplete);
 
     expect(order).toEqual(["thought", "response"]);
     expect(result.thoughtId).toBe("act-1");
@@ -375,11 +354,60 @@ describe("driveLoop", () => {
         teamId: "team-1",
       },
     });
-    const result = await driveLoop(client, event);
+    const result = await driveLoop(client, event, stubComplete);
     expect(result.thoughtId).toBe("act-1");
     expect(result.responseId).toBe("act-2");
     expect(result.movedToStateId).toBeNull();
     expect(calls.map((c) => c.contentType)).toEqual(["thought", "response"]);
+  });
+
+  test("the SLA emitThought fires BEFORE the LLM call (load-bearing ordering)", async () => {
+    // The 10s-SA heartbeat (emitThought) MUST precede the LLM call so the
+    // session is never marked unresponsive while the gateway is still thinking.
+    // We gate the LLM stub to only resolve once it has been invoked, and
+    // capture the activity-order at the moment the LLM call starts.
+    const event = createdEvent();
+    const orderAtLlmCall: string[] = [];
+    const { client, calls } = stubClient({
+      issue: {
+        id: "issue-uuid-1",
+        delegateId: "agent-user-uuid",
+        state: { id: "state-inprogress", name: "In Progress", type: "started" },
+        teamId: "team-1",
+      },
+    });
+    const gatedComplete: LLMCompleteFn = async () => {
+      // Snapshot the activities emitted SO FAR — if emitThought ran first,
+      // the `thought` is already recorded here.
+      orderAtLlmCall.push(...calls.map((c) => c.contentType));
+      return JSON.stringify([{ type: "response", body: "after-thought" }]);
+    };
+
+    await driveLoop(client, event, gatedComplete);
+
+    // At the moment the LLM was called, the `thought` heartbeat was already emitted.
+    expect(orderAtLlmCall).toEqual(["thought"]);
+    // Full order: thought → response.
+    expect(calls.map((c) => c.contentType)).toEqual(["thought", "response"]);
+  });
+
+  test("the LLM's supplementary thought is emitted AFTER the SLA heartbeat, not before", async () => {
+    // When the LLM itself emits a `thought`, that thought is SUPPLEMENTARY —
+    // it lands after the SLA emitThought, never replacing it.
+    const event = createdEvent();
+    const { client, calls } = stubClient({
+      issue: {
+        id: "issue-uuid-1",
+        delegateId: "agent-user-uuid",
+        state: { id: "state-inprogress", name: "In Progress", type: "started" },
+        teamId: "team-1",
+      },
+    });
+
+    await driveLoop(client, event, stubCompleteThoughtThenResponse);
+
+    // thought (SLA) → thought (supplementary) → response
+    expect(calls.map((c) => c.contentType)).toEqual(["thought", "thought", "response"]);
   });
 });
 
@@ -405,7 +433,7 @@ describe("runEventLoop", () => {
       },
     }));
 
-    const result = await runEventLoop(event, "opaque-minted-token");
+    const result = await runEventLoop(event, "opaque-minted-token", stubComplete);
     expect(builtWithToken).toBe("opaque-minted-token");
     expect(result.thoughtId).toBe("act-1");
     expect(result.responseId).toBe("act-2");
