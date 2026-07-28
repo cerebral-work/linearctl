@@ -250,7 +250,7 @@ lists per milestone. Sorted by target date (undated first). `--json` emits
 structured milestone + issue data for piping. If a project has no milestones,
 suggests `milestone create`. See CER-1688.
 
-### 6.18 `linearctl auth` — *implemented + verified (contract tests; live mint pending operator gate)*
+### 6.18 `linearctl auth` — *implemented + verified (contract tests + live mint)*
 `linearctl auth <verb>` — OAuth token lifecycle for the `linear-unsigned-oauth`
 1Password item (the `unsigned-gg` Linear bot). Four verbs covering the two
 OAuth paths (spec §5):
@@ -258,9 +258,9 @@ OAuth paths (spec §5):
 - `auth client-credentials [--scope ...] [--json]` — **Path A** (recommended for
   the revenant bot): mints a 30-day app-actor token via the
   `client_credentials` grant (server-to-server, no browser, no refresh token).
-  Reads `client_id` + `client_secret` from 1Password by field ID. Requires the
-  "client credentials tokens" toggle ON on the Linear OAuth app (operator
-  question §7 q1).
+  Reads `client_id` + `client_secret` from 1Password by field ID. The
+  "client credentials tokens" toggle is ON on the Linear OAuth app (operator
+  confirmed 2026-07-28); the live mint resolves the `unsigned-gg` app actor.
 - `auth exchange-code <code> [--redirect-uri ...] [--json]` — **Path B**: trades an
   authorization_code (from the dc `/oauth/linear/callback` redirect) for a 24h
   access_token + refresh_token.
