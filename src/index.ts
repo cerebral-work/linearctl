@@ -29,6 +29,7 @@ import { watch } from "./commands/watch.js";
 import { operator } from "./commands/operator.js";
 import { DEFAULT_BOT_SCOPES } from "./core/auth.js";
 import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from "./commands/doc.js";
+import { handoffCreate, handoffList, handoffShow, handoffResolve } from "./commands/handoff.js";
 import { roadmap } from "./commands/roadmap.js";
 import { loopsLint } from "./commands/loops.js";
 import { serve } from "./mcp/serve.js";
@@ -459,6 +460,46 @@ docCmd
   .requiredOption("--file <path>", "markdown file ('-' reads stdin)")
   .option("--json", "emit JSON")
   .action((opts) => docSetOverview(opts));
+
+const handoffCmd = program
+  .command("handoff")
+  .description("Session handoff notes (cross-session memory): create / list / show / resolve.");
+
+handoffCmd
+  .command("create")
+  .description("Persist a session handoff to ~/.local/state/linearctl/handoffs/. --body reads markdown; '-' reads stdin.")
+  .requiredOption("--title <text>", "handoff title (slugifies into the id)")
+  .option("--body <md|->", "markdown body ('-' reads stdin); omit with --skeleton to emit the template")
+  .option("--pr <ref>", "PR reference (e.g. #112)")
+  .option("--ticket <ref>", "Linear ticket (e.g. CER-1148)")
+  .option("--store <dir>", "handoff store dir (default: ~/.local/state/linearctl/handoffs/)")
+  .option("--skeleton", "emit the section template to stdout (for $EDITOR workflows) instead of creating")
+  .option("--json", "emit JSON")
+  .action((opts) => handoffCreate(opts));
+
+handoffCmd
+  .command("list")
+  .description("List handoffs, newest-first. --status filters (default: active).")
+  .option("--store <dir>", "handoff store dir (default: ~/.local/state/linearctl/handoffs/)")
+  .option("--status <active|resolved|all>", "status filter (default: active)", "active")
+  .option("--json", "emit JSON")
+  .action((opts) => handoffList(opts));
+
+handoffCmd
+  .command("show")
+  .description("Print one handoff in full (the stored markdown).")
+  .argument("<id>", "handoff id (e.g. 2026-07-28-oauth-scaffolding)")
+  .option("--store <dir>", "handoff store dir (default: ~/.local/state/linearctl/handoffs/)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => handoffShow(id, opts));
+
+handoffCmd
+  .command("resolve")
+  .description("Flip a handoff's status to resolved (preserves the body verbatim).")
+  .argument("<id>", "handoff id")
+  .option("--store <dir>", "handoff store dir (default: ~/.local/state/linearctl/handoffs/)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => handoffResolve(id, opts));
 
 program
   .command("ratelimit")
