@@ -18,6 +18,7 @@
 * **file:** `--stdin` dry-run now validates project name resolution so the preview matches `--apply` (CER-1604)
 * **operator:** make readiness and drain timing monotonic, acknowledge each queue message exactly once, keep authenticated queue response bodies out of logs, and remove CI-only test races.
 * **roles:** escape backslashes before pipes in intake-triage Markdown table titles.
+* **image:** remove the deleted react-devtools stub from the container build context so rootless BuildKit can compile the operator image.
 
 
 ## [0.7.0](https://github.com/cerebral-work/linearctl/compare/v0.6.0...v0.7.0) (2026-07-11)
