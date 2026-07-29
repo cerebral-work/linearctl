@@ -53,6 +53,22 @@ const SAMPLE_ITEMS: TriageItem[] = [
   }),
 ];
 
+// ---- Mock data for non-Triage panes (minimal shapes matching core types) ----
+
+import type { DigestResult, StaleResult } from "../src/core/grooming.js";
+import type { MilestoneResult } from "../src/core/milestones.js";
+import type { XrefResult } from "../src/core/xref.js";
+
+const MOCK_DIGEST: DigestResult = { since: "2026-07-22", total: 0, groups: [] };
+const MOCK_MILESTONE: MilestoneResult = { project: null, milestones: [] };
+const MOCK_XREF: XrefResult = { repo: "cerebral-work/linearctl", openPRs: 0, mergedPRs: 0, findings: [] };
+const MOCK_STALE: StaleResult = { olderThanDays: 14, criticalDays: 30, warn: 0, critical: 0, items: [] };
+
+/** Shared Dashboard props with mock data for non-Triage panes. */
+function dashboardProps(items: TriageItem[], team?: string[]) {
+  return { items, digestResult: MOCK_DIGEST, milestoneResult: MOCK_MILESTONE, xrefResult: MOCK_XREF, staleResult: MOCK_STALE, ...(team ? { team } : {}) };
+}
+
 /** Flush React 19's batched state updates (microtask queue). */
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 10));
@@ -232,7 +248,7 @@ describe("TriagePane", () => {
 
 describe("Dashboard", () => {
   test("renders the tab bar with all 5 panes", () => {
-    const { lastFrame } = render(<Dashboard items={SAMPLE_ITEMS} />);
+    const { lastFrame } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Digest");
     expect(frame).toContain("Triage");
@@ -242,58 +258,54 @@ describe("Dashboard", () => {
   });
 
   test("defaults to the Triage pane (tab 2) with items visible", () => {
-    const { lastFrame } = render(<Dashboard items={SAMPLE_ITEMS} />);
+    const { lastFrame } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     const frame = lastFrame() ?? "";
     // Triage pane is active by default — items render
     expect(frame).toContain("Triage queue");
     expect(frame).toContain("CER-142");
   });
 
-  test("1 switches to Digest (placeholder)", async () => {
-    const { lastFrame, stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+  test("1 switches to Digest pane", async () => {
+    const { lastFrame, stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("1");
     await flush();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Digest");
-    expect(frame).toContain("not yet implemented");
     unmount();
   });
 
-  test("3 switches to Milestone (placeholder)", async () => {
-    const { lastFrame, stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+  test("3 switches to Milestone pane", async () => {
+    const { lastFrame, stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("3");
     await flush();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Milestone");
-    expect(frame).toContain("not yet implemented");
     unmount();
   });
 
-  test("4 switches to Xref (placeholder)", async () => {
-    const { lastFrame, stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+  test("4 switches to Xref pane", async () => {
+    const { lastFrame, stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("4");
     await flush();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Xref");
-    expect(frame).toContain("not yet implemented");
     unmount();
   });
 
-  test("5 switches to Stale (placeholder)", async () => {
-    const { lastFrame, stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+  test("5 switches to Stale pane", async () => {
+    const { lastFrame, stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("5");
     await flush();
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Stale");
-    expect(frame).toContain("not yet implemented");
     unmount();
   });
 
   test("2 switches back to Triage after visiting another pane", async () => {
-    const { lastFrame, stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+    const { lastFrame, stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("1");
     await flush();
-    expect(lastFrame() ?? "").toContain("not yet implemented");
+    expect(lastFrame() ?? "").toContain("Digest");
     stdin.write("2");
     await flush();
     const frame = lastFrame() ?? "";
@@ -303,20 +315,20 @@ describe("Dashboard", () => {
   });
 
   test("q triggers exit (no crash)", () => {
-    const { stdin, unmount } = render(<Dashboard items={SAMPLE_ITEMS} />);
+    const { stdin, unmount } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     stdin.write("q");
     unmount();
     expect(true).toBe(true);
   });
 
   test("renders the team label when scoped", () => {
-    const { lastFrame } = render(<Dashboard items={SAMPLE_ITEMS} team={["CER"]} />);
+    const { lastFrame } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS, ["CER"])} />);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("CER");
   });
 
   test("renders 'all teams' when no team specified", () => {
-    const { lastFrame } = render(<Dashboard items={SAMPLE_ITEMS} />);
+    const { lastFrame } = render(<Dashboard {...dashboardProps(SAMPLE_ITEMS)} />);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("all teams");
   });
@@ -415,7 +427,7 @@ describe("app() — fetch wiring", () => {
     expect(items[0]!.identifier).toBe("CER-142");
 
     // Step 2: those items render in Dashboard without error.
-    const { lastFrame } = render(<Dashboard items={items} team={["CER"]} />);
+    const { lastFrame } = render(<Dashboard {...dashboardProps(items, ["CER"])} />);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("CER-142");
     expect(frame).toContain("Triage queue");
