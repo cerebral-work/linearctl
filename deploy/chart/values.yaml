@@ -1,21 +1,34 @@
-# linearctl Helm chart values
-# Defaults are safe-by-design: dry-run mode, no auto-publish, no secrets in values.
+# linearctl operator daemon — Helm chart values (PR #120, chart 0.2.0).
+#
+# The operator is a single-actor Deployment: no Service, no Ingress, no leader-
+# election Role/Binding, no metrics ServiceMonitor, no loop-recipe ConfigMap.
+# It serves linearctl watch over a Unix socket + uses exec probes against its
+# own /healthz + /readyz. Secrets are rendered from OpenBao by ExternalSecret
+# (never committed as values); only the secret *names* + *keys* live here.
 
 image:
-  repository: ghcr.io/cerebral-work/linearctl
+  # Harbor is the estate registry (NOT GHCR). The tag placeholder is replaced
+  # at deploy time by ArgoCD with `git-<12-char SHA>`; never `latest`.
+  repository: harbor.unsigned.gg/platform/linearctl
   pullPolicy: IfNotPresent
-  # Digest-pinned in production. Never use :latest in a reconciliation loop.
-  tag: "latest"
+  tag: "git-000000000000"  # placeholder — ArgoCD overrides with the exact source SHA tag
 
-# Deployment shape — always-on, leader-elected so only one pod owns the schedule.
+# imagePullSecrets — the daemon pulls from Harbor via the platform-pull
+# dockerconfigjson from OpenBao (ExternalSecret `linearctl-harbor-pull`).
+imagePullSecrets:
+  - name: linearctl-harbor-pull
+
+# Deploy the operator daemon (single-actor — the app-actor token is the
+# identity, not a fleet).
 deployment:
-  replicas: 2
-  leaderElection: true
-  # K8s coordination.k8s.io/Lease — no third-party lock manager.
-  leaseName: linearctl-leader
-  leaseDuration: 15s
-  leaseRenewDeadline: 10s
-  leaseRetryPeriod: 2s
+  replicas: 1
+  args:
+    - "operator"
+    - "--role"
+    - "intake-triage"
+    - "--role"
+    - "grooming"
+    - "--json"  # suppresses the human banner; stdout stays clean for logs
 
   resources:
     requests:
@@ -25,87 +38,66 @@ deployment:
       cpu: 200m
       memory: 256Mi
 
-  # The opera runs the schedule internally (not k8s CronJob) so it can react
-  # to Linear webhooks between ticks.
-  schedule:
-    tick: "*/5 * * * *"          # 5-min evaluation
-    digestWeekly: "0 16 * * 5"   # Friday 16:00 — digest → Pulse + Slack + email
-    triageSweep: "0 9 * * 1"     # Monday 09:00 — triage debt sweep
-    staleSweep: "0 10 * * 1"    # Monday 10:00 — stale issue sweep
+# Runtime secrets — each is a Kubernetes Secret created by an ExternalSecret
+# from OpenBao. Only the secret *name* + *key* live here; never the values.
+# The daemon mints its own app-actor Linear token at startup from the OAuth
+# client creds (client_credentials grant) — there is no personal LINEAR_API_KEY
+# and no `op` binary in the pod.
+env:
+  # 1. Linear OAuth app creds (client_credentials) — the daemon's identity.
+  #    ExternalSecret `linearctl-oauth` from OpenBao.
+  linearOauthClientId:
+    secretKeyRef:
+      name: linearctl-oauth
+      key: client-id
+  linearOauthClientSecret:
+    secretKeyRef:
+      name: linearctl-oauth
+      key: client-secret
+  # 2. Cloudflare Queue consumer — polls `linear-agent-events` for AgentSessionEvents.
+  #    ExternalSecret `linearctl-cf-queue` from OpenBao.
+  cfAccountId:
+    secretKeyRef:
+      name: linearctl-cf-queue
+      key: account-id
+  cfQueueId:
+    secretKeyRef:
+      name: linearctl-cf-queue
+      key: queue-id
+  cfApiToken:
+    secretKeyRef:
+      name: linearctl-cf-queue
+      key: api-token
+  # 3. LLM gateway — the in-cluster LiteLLM proxy (namespace llm, port 4000).
+  #    ExternalSecret `linearctl-llm` from OpenBao; base/model are chart values.
+  llmBaseUrl:
+    value: "http://llm.llm.svc.cluster.local:4000/v1"
+  llmModel:
+    value: "glm-5.2"
+  llmApiKey:
+    secretKeyRef:
+      name: linearctl-llm
+      key: api-key
 
-  # Safe-by-default: no outbound publish without operator sign-off.
-  publish:
-    dryRun: true                 # log "would publish" + dedup hash; no mutations
-    operatorGate: true           # first publish per (surface × audience) needs sign-off
+# Health — exec probes against the daemon's own Unix socket:
+#   liveness  → `linearctl operator --health` (GET /healthz — process alive)
+#   readiness → `linearctl operator --check`   (GET /readyz  — able to consume)
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    initialDelaySeconds: 3
+    periodSeconds: 5
 
-# Funnel contract — the headless PULL + TRANSITION + COMMENT surface.
-# The soma-operator's WorkSource reconcile loop implements against this.
-funnel:
+# NetworkPolicy — egress only (DNS, HTTPS to Cloudflare, namespace llm:4000).
+# Zero ingress: the daemon is not addressable from outside the pod.
+networkPolicy:
   enabled: true
-  # The exact funnel query the soma-operator runs (EST team, soma-ingest label, Todo+Backlog states).
-  # linearctl pull --team EST --state-set Todo --state-set Backlog --label soma-ingest --json
-  team: EST
-  states: ["Todo", "Backlog"]
-  label: soma-ingest
-  # Conformance test: the operator's CI runs `linearctl pull` full-unbounded
-  # and asserts its own GraphQL returns the same set. No runtime coupling.
-  conformanceTest: true
+  llmNamespace: llm
+  llmPort: 4000
 
-# Credentials — resolved from OpenBao (primary) at runtime. Never in values.
-# Create an ExternalSecret pointing at these keys.
-secrets:
-  linearApiKey:
-    secretName: linearctl-linear-api-key
-    key: api-key
-  slackWebhook:
-    secretName: linearctl-slack-webhook
-    key: webhook-url
-    # Per-channel webhooks for the digest publisher.
-    channels:
-      engineering: "#eng-cerebral"
-
-# Publish surfaces (see docs/features/orchestra.md §6 for the full catalog).
-# Each surface is a pluggable Renderer + Sink pair. Dry-run by default.
-surfaces:
-  linearPulse:
-    enabled: true
-    # createProjectUpdate / createInitiativeUpdate mutations
-  slack:
-    enabled: true
-    # incoming webhook per channel
-  web:
-    enabled: false
-    # static artifact → Cloudflare Pages (future)
-  email:
-    enabled: false
-    # SES / Mailerlite (future)
-
-# Webhook ingress — Linear → opera HTTPS endpoint for reactive mode.
-webhook:
+# PDB — keep the single replica from being drained unsafely (minAvailable: 1).
+podDisruptionBudget:
   enabled: true
-  # Signature verification against shared secret.
-  secretName: linearctl-webhook-secret
-  # Subscribed Linear events:
-  # - ProjectUpdate (created/updated → re-render cross-cutting digest)
-  # - AgentSession (created → forward to future M4 native agent)
-  # - Issue (created → match Loop recipe trigger → preview-only, never auto-act)
-
-# Observability — the opera exports standard Prometheus/Loki/health endpoints.
-service:
-  type: ClusterIP
-  port: 8080
-
-metrics:
-  enabled: true
-  path: /metrics
-  # Digests published, errors by surface, last-run latency, webhook queue depth.
-
-health:
-  liveness: /healthz
-  readiness: /readyz
-
-# Loop recipes — mounted from the repo's .linearctl/loop-recipes/ as a ConfigMap.
-loopRecipes:
-  configMapName: linearctl-loop-recipes
-  # `linearctl loops lint` runs on pod startup; fails the readiness probe if recipes are invalid.
-  lintOnStartup: true
+  minAvailable: 1

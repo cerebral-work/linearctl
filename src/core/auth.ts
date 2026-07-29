@@ -18,7 +18,7 @@ import { readLinearOAuthCreds, type Secret } from "../lib/secrets.js";
 /** Default scopes for the revenant-as-unsigned-gg-bot (assignment + mention triggers). */
 export const DEFAULT_BOT_SCOPES = "read,write,app:assignable,app:mentionable";
 
-/** Client credentials resolved from 1Password (secrets held in memory only). */
+/** Client credentials resolved from env or 1Password (secrets held in memory only). */
 export interface ResolvedClientCreds {
   clientId: string;
   clientSecret: string;
@@ -26,17 +26,64 @@ export interface ResolvedClientCreds {
   redirectUri: string;
   devAppToken: Secret | null;
   devUserToken: Secret | null;
+  /** Where the creds came from — surfaces in startup logs (no secret values). */
+  source: "env" | "1password";
 }
 
-/** Load OAuth app credentials from 1Password. Throws if `op` is unsigned-in or fields are missing. */
-export function loadClientCreds(): ResolvedClientCreds {
-  const creds = readLinearOAuthCreds();
+/**
+ * Load OAuth app credentials for the operator daemon.
+ *
+ * Cluster-safe (PR #120): the daemon has no `op` binary in its pod. It prefers
+ * the `LINEAR_OAUTH_CLIENT_ID` + `LINEAR_OAUTH_CLIENT_SECRET` env pair (rendered
+ * from an OpenBao-backed Secret at runtime). An optional
+ * `LINEAR_OAUTH_REDIRECT_URI` overrides the registered redirect for the CLI
+ * `exchange-code` path.
+ *
+ * Precedence:
+ *   1. Both `LINEAR_OAUTH_CLIENT_ID` + `LINEAR_OAUTH_CLIENT_SECRET` set → env
+ *      path (no `op` dependency). `dev*Token` are absent (the daemon mints its
+ *      own app-actor token at startup via `mintClientCredentialsToken`).
+ *   2. Exactly one of the pair set → throw a clear config error. Half a cred
+ *      pair is an operator footgun (a typo'd env that silently falls back to
+ *      1Password and mints as a different identity).
+ *   3. Neither set → fall back to 1Password (`op read`) for the local CLI,
+ *      which carries the dev tokens too.
+ */
+export function loadClientCreds(
+  readCreds: typeof readLinearOAuthCreds = readLinearOAuthCreds,
+): ResolvedClientCreds {
+  const envId = process.env.LINEAR_OAUTH_CLIENT_ID;
+  const envSecret = process.env.LINEAR_OAUTH_CLIENT_SECRET;
+
+  if (envId || envSecret) {
+    // Partial-env is a misconfiguration, not a fallback trigger.
+    if (!envId || !envSecret) {
+      throw new Error(
+        "linearctl OAuth: partial env credentials — set BOTH " +
+          "LINEAR_OAUTH_CLIENT_ID and LINEAR_OAUTH_CLIENT_SECRET (or neither to " +
+          "fall back to 1Password for local CLI). A half pair is a typo that " +
+          "would silently mint as the wrong identity.",
+      );
+    }
+    return {
+      clientId: envId,
+      clientSecret: envSecret,
+      redirectUri: process.env.LINEAR_OAUTH_REDIRECT_URI ?? "",
+      devAppToken: null,
+      devUserToken: null,
+      source: "env",
+    };
+  }
+
+  // Neither env var set — local CLI mode: resolve from 1Password (`op read`).
+  const creds = readCreds();
   return {
     clientId: creds.clientId.value,
     clientSecret: creds.clientSecret.value,
     redirectUri: creds.redirectUrl.value,
     devAppToken: creds.devAppToken,
     devUserToken: creds.devUserToken,
+    source: "1password",
   };
 }
 

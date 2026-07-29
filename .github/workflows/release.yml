@@ -139,6 +139,7 @@ jobs:
       - name: Compile ${{ matrix.target }}
         run: |
           bun build ./src/index.ts --compile --minify \
+            --define 'process.env.DEV="false"' \
             --target=${{ matrix.target }} --outfile linearctl
 
       - name: Archive (GoReleaser-style name for mise asset scoring)
@@ -207,6 +208,7 @@ jobs:
       - name: Compile ${{ matrix.target }}
         run: |
           bun build ./src/index.ts --compile --minify \
+            --define 'process.env.DEV="false"' \
             --target=${{ matrix.target }} --outfile linearctl
 
       - name: Check signing readiness

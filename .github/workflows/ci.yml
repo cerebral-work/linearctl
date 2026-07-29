@@ -36,7 +36,10 @@ jobs:
           # Enables the read-only live-API contract tests (test/live-contract.test.ts);
           # they self-skip when the secret is absent (e.g. forks).
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-        run: bun test
+        run: |
+          # Capture the ONE full-suite run for the next step. GitHub's bash uses
+          # pipefail, so a test failure still fails this step through tee.
+          bun test 2>&1 | tee "${RUNNER_TEMP}/bun-test.log"
 
       - name: Verify live-contract tests ran (not skipped)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -49,14 +52,14 @@ jobs:
             echo "::warning::To fix: add the LINEAR_API_KEY secret to the repo (Settings → Secrets → Actions)."
             exit 1
           fi
-          # Re-run just the live-contract tests with verbose output to confirm they execute (not skip)
-          OUTPUT=$(bun test test/live-contract.test.ts 2>&1)
-          echo "$OUTPUT"
-          # If the tests skipped, bun reports 0 pass — that's a CI gate failure
-          if echo "$OUTPUT" | grep -q "0 pass"; then
-            echo "::error::Live-contract tests skipped despite LINEAR_API_KEY being set — check test.skipIf logic."
+          # The full Test step already ran the live suite. Verify that same run
+          # executed all four contracts instead of issuing a second API burst.
+          live_passes=$(grep -c "(pass) live API contract" "${RUNNER_TEMP}/bun-test.log" || true)
+          if [ "${live_passes}" -ne 4 ]; then
+            echo "::error::Expected 4 live-contract passes in the full test run; found ${live_passes}."
             exit 1
           fi
+          echo "Verified ${live_passes} live Linear API contracts in the full test run."
 
       # Compile + run the real binary so a compile or module-load/bundling failure
       # is caught at PR time (the @linear/sdk import executes at startup). The SDK

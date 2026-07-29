@@ -1,9 +1,9 @@
 apiVersion: v2
 name: linearctl
-description: Headless Linear API orchestration — CLI, funnel contract, and Loop recipe authority for in-cluster reconciliation loops.
+description: linearctl operator daemon — the in-cluster maintainer-agent runtime (CF Queue consumer + Unix-socket control + D4 role scheduler).
 type: application
-version: 0.1.0
-appVersion: "latest"
+version: 0.2.0
+appVersion: "0.7.0"
 home: https://github.com/cerebral-work/linearctl
 sources:
   - https://github.com/cerebral-work/linearctl
@@ -13,8 +13,7 @@ maintainers:
 keywords:
   - linear
   - linearctl
-  - funnel
-  - loops
-  - soma
+  - operator
+  - agent
   - reconciliation
   - gitops

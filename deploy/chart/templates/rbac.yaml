@@ -1,3 +1,12 @@
+{{- /*
+ServiceAccount only (PR #120, chart 0.2.0).
+
+The operator daemon is a single-actor Deployment. It does NOT need leader
+election (no Role/RoleBinding for coordination.k8s.io/leases), nor any
+in-cluster Kubernetes API access — it polls the Cloudflare Queue and calls the
+Linear + LLM APIs over HTTP. automountServiceAccountToken is false so no API
+credential is mounted into the pod.
+*/ -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -5,35 +14,6 @@ metadata:
   labels:
     app.kubernetes.io/name: linearctl
     app.kubernetes.io/instance: {{ .Release.Name }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ .Release.Name }}-leader-election
-  labels:
-    app.kubernetes.io/name: linearctl
-    app.kubernetes.io/instance: {{ .Release.Name }}
-rules:
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    resourceNames: ["{{ .Release.Name }}-leader"]
-    verbs: ["get", "update", "patch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ .Release.Name }}-leader-election
-  labels:
-    app.kubernetes.io/name: linearctl
-    app.kubernetes.io/instance: {{ .Release.Name }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ .Release.Name }}-leader-election
-subjects:
-  - kind: ServiceAccount
-    name: {{ .Release.Name }}-sa
-    namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+automountServiceAccountToken: false
