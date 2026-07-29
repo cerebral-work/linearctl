@@ -169,3 +169,76 @@ export async function createMilestone(
     targetDate: ms.targetDate ? new Date(ms.targetDate).toISOString().slice(0, 10) : null,
   };
 }
+
+export interface UpdateMilestoneParams {
+  id: string;
+  name?: string;
+  targetDate?: string;
+  description?: string;
+}
+
+export interface UpdatedMilestone {
+  id: string;
+  name: string;
+  before: { name: string; targetDate: string | null; description?: string | null };
+  after: { name: string; targetDate: string | null; description?: string | null };
+  updated: boolean;
+}
+
+/**
+ * Update a project milestone by UUID. Fetches the milestone first (to surface
+ * the before-state and fail clearly on a bad id), then patches only the fields
+ * provided. `apply: false` is a dry-run preview, mirroring `deleteMilestone`.
+ * See CER-1759.
+ */
+export async function updateMilestone(
+  client: LinearClient,
+  params: UpdateMilestoneParams,
+  apply: boolean,
+): Promise<UpdatedMilestone> {
+  const milestone = await withRetry(() => client.projectMilestone(params.id));
+  if (!milestone) throw new Error(`no milestone with id ${JSON.stringify(params.id)}.`);
+
+  const beforeName = milestone.name;
+  const beforeTargetDate = milestone.targetDate
+    ? new Date(milestone.targetDate).toISOString().slice(0, 10)
+    : null;
+  const beforeDescription = (await milestone.description) ?? null;
+
+  const input: Record<string, string> = {};
+  if (params.name !== undefined) input.name = params.name;
+  if (params.targetDate !== undefined) input.targetDate = params.targetDate;
+  if (params.description !== undefined) input.description = params.description;
+
+  if (apply) {
+    const res = await withRetry(() => client.updateProjectMilestone(params.id, input));
+    if (!res.success) throw new Error("Linear reported the milestone update did not succeed.");
+    const updated = await res.projectMilestone;
+    if (!updated) throw new Error("milestone updated but the payload returned no milestone.");
+    return {
+      id: updated.id,
+      name: updated.name,
+      before: { name: beforeName, targetDate: beforeTargetDate, description: beforeDescription },
+      after: {
+        name: updated.name,
+        targetDate: updated.targetDate
+          ? new Date(updated.targetDate).toISOString().slice(0, 10)
+          : null,
+        description: (await updated.description) ?? null,
+      },
+      updated: true,
+    };
+  }
+
+  const afterName = params.name ?? beforeName;
+  const afterTargetDate = params.targetDate ?? beforeTargetDate;
+  const afterDescription = params.description !== undefined ? params.description : beforeDescription;
+
+  return {
+    id: params.id,
+    name: afterName,
+    before: { name: beforeName, targetDate: beforeTargetDate, description: beforeDescription },
+    after: { name: afterName, targetDate: afterTargetDate, description: afterDescription },
+    updated: false,
+  };
+}

@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { milestones, deleteMilestone, createMilestone } from "../core/milestones.js";
+import { milestones, deleteMilestone, createMilestone, updateMilestone } from "../core/milestones.js";
 import { milestoneGaps } from "../core/milestone-gaps.js";
 import { readStdin } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
@@ -18,6 +18,14 @@ export interface MilestoneCreateOptions {
 
 export interface MilestoneDeleteOptions {
   yes?: boolean;
+  json?: boolean;
+}
+
+export interface MilestoneUpdateOptions {
+  name?: string;
+  targetDate?: string;
+  desc?: string;
+  apply?: boolean;
   json?: boolean;
 }
 
@@ -76,6 +84,60 @@ export async function milestoneDelete(id: string, opts: MilestoneDeleteOptions):
       ? `deleted milestone "${res.name}" (${res.id}).\n`
       : `[dry-run] would delete milestone "${res.name}" (${res.id}); re-run with --yes to delete.\n`,
   );
+}
+
+/**
+ * `linearctl milestone update <id> [--name] [--target-date] [--desc]` — edit a
+ * project milestone's fields. Dry-run by default; `--apply` writes. The `--desc -`
+ * convention reads markdown from stdin. See CER-1759.
+ */
+export async function milestoneUpdate(
+  id: string,
+  opts: MilestoneUpdateOptions,
+): Promise<void> {
+  const client = makeClient();
+  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+
+  const res = await updateMilestone(
+    client,
+    { id, name: opts.name, targetDate: opts.targetDate, description },
+    opts.apply === true,
+  );
+
+  if (opts.json) {
+    printJson(res);
+    return;
+  }
+
+  const changes: string[] = [];
+  if (res.before.name !== res.after.name) {
+    changes.push(`  name:   ${res.before.name} → ${res.after.name}`);
+  }
+  if (res.before.targetDate !== res.after.targetDate) {
+    changes.push(`  due:    ${res.before.targetDate ?? "(none)"} → ${res.after.targetDate ?? "(none)"}`);
+  }
+  if (res.before.description !== res.after.description) {
+    changes.push(`  desc:   (updated)`);
+  }
+
+  if (changes.length === 0) {
+    process.stdout.write(
+      res.updated
+        ? `updated milestone "${res.name}" (${res.id}) — no field changes detected.\n`
+        : `[dry-run] milestone "${res.name}" (${res.id}) — no field changes specified.\n`,
+    );
+    return;
+  }
+
+  process.stdout.write(
+    (res.updated ? "" : "[dry-run] would ") +
+      `update milestone "${res.name}" (${res.id}):\n` +
+      changes.join("\n") +
+      "\n",
+  );
+  if (!res.updated) {
+    process.stdout.write("re-run with --apply to write.\n");
+  }
 }
 
 /**
