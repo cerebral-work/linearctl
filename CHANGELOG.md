@@ -16,7 +16,7 @@
 ### Bug Fixes
 
 * **file:** `--stdin` dry-run now validates project name resolution so the preview matches `--apply` (CER-1604)
-* **operator:** make readiness and drain timing monotonic, acknowledge each queue message exactly once, and remove CI-only test races.
+* **operator:** make readiness and drain timing monotonic, acknowledge each queue message exactly once, keep authenticated queue response bodies out of logs, and remove CI-only test races.
 * **roles:** escape backslashes before pipes in intake-triage Markdown table titles.
 
 

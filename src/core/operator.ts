@@ -315,9 +315,11 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     }
 
     if (!res.ok) {
-      // Don't echo the token. Log the status + a redacted fragment of the body.
-      const text = await res.text().catch(() => "");
-      console.error(`operator: queue pull HTTP ${res.status}: ${text.slice(0, 200)}`);
+      // Authenticated API response bodies are untrusted and may contain
+      // sensitive context. Status is sufficient for diagnosis; never read/log
+      // the body (and never echo the bearer token).
+      console.error(`operator: queue pull HTTP ${res.status}`);
+
       return;
     }
 

@@ -315,6 +315,42 @@ describe("operator queue poller", () => {
     }
   });
 
+  test("does not read or log an authenticated queue error body", async () => {
+    let pullCount = 0;
+    let bodyRead = false;
+    const secretBody = "sensitive upstream context must stay out of logs";
+
+    const queueFetcher = async (): Promise<Response> => {
+      pullCount += 1;
+      const response = new Response(secretBody, { status: 401 });
+      Object.defineProperty(response, "text", {
+        value: async () => {
+          bodyRead = true;
+          return secretBody;
+        },
+      });
+      return response;
+    };
+
+    const { opts } = stubDeps();
+    opts.queuePollIntervalMs = 5;
+    opts.queueFetcher = queueFetcher;
+    opts.queueEnv = {
+      CF_ACCOUNT_ID: "acct-test",
+      CF_QUEUE_ID: "queue-test",
+      CF_API_TOKEN: "token-test",
+    };
+
+    const handle = await startOperator(opts);
+    try {
+      // A second pull is scheduled only after the first failure branch returns.
+      await waitFor(() => pullCount >= 2);
+      expect(bodyRead).toBe(false);
+    } finally {
+      await handle.shutdown();
+    }
+  });
+
   test("does not start polling when queueEnv is null (polling flag false)", async () => {
     const { opts } = stubDeps();
     const handle = await startOperator(opts);
