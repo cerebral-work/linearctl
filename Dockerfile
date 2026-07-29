@@ -7,10 +7,6 @@
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS build
 WORKDIR /app
 COPY package.json bun.lock tsconfig.json ./
-# The react-devtools-core build-time stub must be present before `bun install`
-# resolves the `file:` dependency (see src/stubs/react-devtools-core/). DEV=false
-# dead-codes the devtools runtime path; the stub is a no-op in the bundle.
-COPY src/stubs/ src/stubs/
 RUN bun install --frozen-lockfile --production
 COPY src/ src/
 COPY docs/ docs/
