@@ -1,3 +1,11 @@
+{{- /*
+Operator Deployment (PR #120, chart 0.2.0).
+
+Single-actor Deployment. No Service/Ingress — the daemon is not addressable
+from outside its pod (Unix-socket + exec probes only). Secrets are env refs to
+ExternalSecret-rendered Kubernetes Secrets (OpenBao-backed); no secret values
+in the chart. automountServiceAccountToken: false (no in-cluster API access).
+*/ -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +14,7 @@ metadata:
     app.kubernetes.io/name: linearctl
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
 spec:
   replicas: {{ .Values.deployment.replicas }}
   selector:
@@ -17,13 +26,15 @@ spec:
       labels:
         app.kubernetes.io/name: linearctl
         app.kubernetes.io/instance: {{ .Release.Name }}
-      annotations:
-        checksum/loop-recipes: {{ include (print $.Template.BasePath "/loop-recipes-cm.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ .Release.Name }}-sa
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
+        runAsGroup: 65532
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
@@ -38,6 +49,18 @@ spec:
               drop: ["ALL"]
           args: {{ .Values.deployment.args | toJson }}
           env:
+            # 1. Linear OAuth app creds (client_credentials grant at startup).
+            - name: LINEAR_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.linearOauthClientId.secretKeyRef.name }}
+                  key: {{ .Values.env.linearOauthClientId.secretKeyRef.key }}
+            - name: LINEAR_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.linearOauthClientSecret.secretKeyRef.name }}
+                  key: {{ .Values.env.linearOauthClientSecret.secretKeyRef.key }}
+            # 2. Cloudflare Queue consumer.
             - name: CF_ACCOUNT_ID
               valueFrom:
                 secretKeyRef:
@@ -53,47 +76,40 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.env.cfApiToken.secretKeyRef.name }}
                   key: {{ .Values.env.cfApiToken.secretKeyRef.key }}
+            # 3. LLM gateway — in-cluster LiteLLM proxy.
             - name: LLM_BASE_URL
               value: {{ .Values.env.llmBaseUrl.value | quote }}
             - name: LLM_MODEL
               value: {{ .Values.env.llmModel.value | quote }}
-            - name: LINEAR_API_KEY
+            - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.env.linearApiKey.secretKeyRef.name }}
-                  key: {{ .Values.env.linearApiKey.secretKeyRef.key }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.service.port }}
-              protocol: TCP
+                  name: {{ .Values.env.llmApiKey.secretKeyRef.name }}
+                  key: {{ .Values.env.llmApiKey.secretKeyRef.key }}
           {{- with .Values.deployment.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          # Exec probes — `linearctl operator --check` hits the daemon's /readyz
-          # via the Unix socket. Liveness uses the process-is-alive /healthz.
+          # Exec probes — the daemon serves /healthz + /readyz on its Unix
+          # socket; the binary probes its own socket. No HTTP port exposed.
+          #   liveness  → --health (GET /healthz — process alive)
+          #   readiness → --check   (GET /readyz  — able to consume)
           livenessProbe:
             exec:
-              command: ["/app/linearctl", "operator", "--check"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
+              command: ["/app/linearctl", "operator", "--health"]
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           readinessProbe:
             exec:
               command: ["/app/linearctl", "operator", "--check"]
-            initialDelaySeconds: 3
-            periodSeconds: 5
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           volumeMounts:
-            - name: loop-recipes
-              mountPath: /app/.linearctl/loop-recipes
-              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: state
               mountPath: /home/nonroot/.local/state/linearctl
       volumes:
-        - name: loop-recipes
-          configMap:
-            name: {{ .Values.loopRecipes.configMapName }}
         - name: tmp
           emptyDir: {}
         - name: state

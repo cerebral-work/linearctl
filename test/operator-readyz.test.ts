@@ -255,6 +255,83 @@ describe("linearctl operator --check", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("--check");
     expect(stdout).toContain("operator");
+    // PR #120: --help must also advertise the new --health flag.
+    expect(stdout).toContain("--health");
+  }, 15_000);
+});
+
+/**
+ * `linearctl operator --health` (PR #120) — liveness probe. Distinct from
+ * `--check` (readiness): --health GETs /healthz (process-alive: uptime +
+ * queue depth), --check GETs /readyz (able-to-consume: cf env + last poll).
+ * The cluster's liveness probe uses --health; readiness uses --check.
+ * The two flags are mutually exclusive (an explicit error, not silent precedence).
+ */
+describe("linearctl operator --health", () => {
+  test("exits 0 + prints ALIVE against a running operator", async () => {
+    const socketPath = tempSocketPath();
+    const opts: OperatorOptions = {
+      socketPath,
+      registerSignals: false,
+      tokenMinter: async () => "opaque",
+      eventLoopRunner: async (_e: AgentSessionEvent) => ({ thoughtId: "t", responseId: "r", movedToStateId: null }),
+      queueEnv: null,
+    };
+    const handle = await startOperator(opts);
+    try {
+      const { code, stdout, stderr } = await runHealth(socketPath, false);
+      expect(code).toBe(0);
+      expect(stdout).toContain("ALIVE");
+      expect(stdout).toContain("uptime:");
+      expect(stdout).toContain("queue depth:");
+      expect(stderr).toBe("");
+    } finally {
+      await handle.shutdown();
+    }
+  }, 15_000);
+
+  test("--json prints the raw /healthz body + exit 0 when alive", async () => {
+    const socketPath = tempSocketPath();
+    const opts: OperatorOptions = {
+      socketPath,
+      registerSignals: false,
+      tokenMinter: async () => "opaque",
+      eventLoopRunner: async (_e: AgentSessionEvent) => ({ thoughtId: "t", responseId: "r", movedToStateId: null }),
+      queueEnv: null,
+    };
+    const handle = await startOperator(opts);
+    try {
+      const { code, stdout } = await runHealth(socketPath, true);
+      expect(code).toBe(0);
+      const body = JSON.parse(stdout);
+      expect(body.ok).toBe(true);
+      expect(typeof body.uptime).toBe("number");
+      expect(body.queueDepth).toBe(0);
+    } finally {
+      await handle.shutdown();
+    }
+  }, 15_000);
+
+  test("exits 1 + stderr diagnostic when no daemon is listening", async () => {
+    const socketPath = tempSocketPath(); // nothing bound here
+    const { code, stderr, stdout } = await runHealth(socketPath, false);
+    expect(code).toBe(1);
+    expect(stderr).toContain("not alive");
+    expect(stdout).toBe("");
+  }, 15_000);
+
+  test("exits 0 from --help and advertises --health + --role + --check", async () => {
+    const { code, stdout } = await runHealthHelp();
+    expect(code).toBe(0);
+    expect(stdout).toContain("--health");
+    expect(stdout).toContain("--check");
+    expect(stdout).toContain("--role");
+  }, 15_000);
+
+  test("--health + --check together is rejected with an explicit error (exit 1)", async () => {
+    const { code, stderr } = await runHealthMutex();
+    expect(code).toBe(1);
+    expect(stderr).toMatch(/mutually exclusive/i);
   }, 15_000);
 });
 
@@ -276,6 +353,25 @@ function runCheck(socketPath: string, json: boolean): Promise<{
 
 function runHelp(): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return runChild(["run", "src/index.ts", "operator", "--check", "--help"]);
+}
+
+function runHealth(socketPath: string, json: boolean): Promise<{
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  const args = ["run", "src/index.ts", "operator", "--health", "--socket", socketPath];
+  if (json) args.push("--json");
+  return runChild(args);
+}
+
+function runHealthMutex(): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  // --health + --check together must be rejected deterministically.
+  return runChild(["run", "src/index.ts", "operator", "--health", "--check"]);
+}
+
+function runHealthHelp(): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return runChild(["run", "src/index.ts", "operator", "--health", "--help"]);
 }
 
 async function runChild(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {

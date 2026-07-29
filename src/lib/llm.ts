@@ -1,18 +1,22 @@
 /**
  * LLM gateway client (Track 3) — OpenAI-compatible chat completion over the
- * estate's tailnet LiteLLM gateway.
+ * estate LLM gateway.
  *
- * The gateway lives at `http://llm/v1` (the tailnet LiteLLM gateway, reachable
- * from the operator daemon). It exposes an OpenAI-compatible
+ * Cluster deployment (PR #120): the gateway is the in-cluster LiteLLM proxy at
+ * `http://llm.llm.svc.cluster.local:4000/v1`, reachable over the pod network
+ * (no tailnet dependency). It exposes an OpenAI-compatible
  * `/chat/completions` endpoint, so this client uses a plain `fetch` — no SDK
  * dependency (respects the minimal-deps doctrine, `docs/decisions.md` ADR-0001).
  *
  * Config (env, with defaults):
- *   - `LLM_BASE_URL` — gateway base, default `http://llm/v1`
- *   - `LLM_MODEL`     — model alias, default `llm/glm-5.2`
+ *   - `LLM_BASE_URL` — gateway base, default `http://llm.llm.svc.cluster.local:4000/v1`
+ *     (the chart sets this via a Deployment env ref; local dev overrides to
+ *     `http://llm/v1` for the tailnet gateway).
+ *   - `LLM_MODEL`     — model alias, default `glm-5.2`
+ *   - `LLM_API_KEY`   — optional. When set, adds `Authorization: Bearer <key>`.
+ *     The key is held only for the request; it is NEVER logged, echoed, or
+ *     surfaced in an `LLMError` message (per estate secret rules).
  *
- * The gateway is tailnet-internal: no API key is required in the linearctl
- * repo (the daemon's env provisions any auth the operator deems necessary).
  * Per estate secret rules, this module NEVER logs prompts or responses verbatim
  * — issue descriptions carried in `promptContext` may contain sensitive text.
  */
@@ -25,7 +29,7 @@ export interface ChatMessage {
 
 /** Options for {@link complete}. */
 export interface CompleteOptions {
-  /** Model alias to route through the LiteLLM gateway. Default `llm/glm-5.2`. */
+  /** Model alias to route through the LiteLLM gateway. Default `glm-5.2`. */
   model?: string;
   /** Max tokens for the completion (the AIG slice budgets ~512). */
   maxTokens?: number;
@@ -52,10 +56,10 @@ export class LLMError extends Error {
 /** Fetch-like signature, mirroring `src/lib/oauth.ts`'s `FetchLike` for injection. */
 export type FetchLike = typeof fetch;
 
-/** Default gateway base — `http://llm/v1` tailnet LiteLLM gateway. */
-const DEFAULT_LLM_BASE_URL = "http://llm/v1";
+/** Default gateway base — in-cluster LiteLLM proxy (PR #120 chart value). */
+const DEFAULT_LLM_BASE_URL = "http://llm.llm.svc.cluster.local:4000/v1";
 /** Default model alias routed through the LiteLLM gateway. */
-const DEFAULT_LLM_MODEL = "llm/glm-5.2";
+const DEFAULT_LLM_MODEL = "glm-5.2";
 /** Hard timeout for the gateway call — the daemon must not wedge the session. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -82,15 +86,20 @@ export async function complete(
     max_tokens: opts.maxTokens ?? 512,
     temperature: opts.temperature ?? 0.3,
   };
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  // Optional `LLM_API_KEY`: when set, add a Bearer header. The key is held
+  // only for this request and is NEVER surfaced in an LLMError message.
+  const apiKey = process.env.LLM_API_KEY;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });

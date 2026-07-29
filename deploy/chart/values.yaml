@@ -1,22 +1,34 @@
-# linearctl Helm chart values
-# The operator daemon: long-running, polls the CF Queue, serves linearctl watch,
-# and boots maintainer-agent roles on cadence (CER-1149 + CER-1188).
+# linearctl operator daemon — Helm chart values (PR #120, chart 0.2.0).
+#
+# The operator is a single-actor Deployment: no Service, no Ingress, no leader-
+# election Role/Binding, no metrics ServiceMonitor, no loop-recipe ConfigMap.
+# It serves linearctl watch over a Unix socket + uses exec probes against its
+# own /healthz + /readyz. Secrets are rendered from OpenBao by ExternalSecret
+# (never committed as values); only the secret *names* + *keys* live here.
 
 image:
-  repository: ghcr.io/cerebral-work/linearctl
+  # Harbor is the estate registry (NOT GHCR). The tag placeholder is replaced
+  # at deploy time by ArgoCD with `git-<12-char SHA>`; never `latest`.
+  repository: harbor.unsigned.gg/platform/linearctl
   pullPolicy: IfNotPresent
-  tag: "latest"  # Digest-pinned in production via ArgoCD
+  tag: "git-000000000000"  # placeholder — ArgoCD overrides with the exact source SHA tag
 
-# Deploy the operator daemon (not the old pull/funnel reconciler).
+# imagePullSecrets — the daemon pulls from Harbor via the platform-pull
+# dockerconfigjson from OpenBao (ExternalSecret `linearctl-harbor-pull`).
+imagePullSecrets:
+  - name: linearctl-harbor-pull
+
+# Deploy the operator daemon (single-actor — the app-actor token is the
+# identity, not a fleet).
 deployment:
-  replicas: 1  # Single-actor — the app-actor token is the identity, not a fleet
+  replicas: 1
   args:
     - "operator"
     - "--role"
     - "intake-triage"
     - "--role"
     - "grooming"
-    # "--json" suppresses the human banner (stdout is clean for logs)
+    - "--json"  # suppresses the human banner; stdout stays clean for logs
 
   resources:
     requests:
@@ -26,11 +38,24 @@ deployment:
       cpu: 200m
       memory: 256Mi
 
-# Environment — the operator daemon needs CF Queue access + LLM gateway.
-# Secrets resolved from OpenBao (primary) via ExternalSecret at runtime.
-# Never put secret values in values.yaml.
+# Runtime secrets — each is a Kubernetes Secret created by an ExternalSecret
+# from OpenBao. Only the secret *name* + *key* live here; never the values.
+# The daemon mints its own app-actor Linear token at startup from the OAuth
+# client creds (client_credentials grant) — there is no personal LINEAR_API_KEY
+# and no `op` binary in the pod.
 env:
-  # Cloudflare Queue (the operator polls this for AgentSessionEvents)
+  # 1. Linear OAuth app creds (client_credentials) — the daemon's identity.
+  #    ExternalSecret `linearctl-oauth` from OpenBao.
+  linearOauthClientId:
+    secretKeyRef:
+      name: linearctl-oauth
+      key: client-id
+  linearOauthClientSecret:
+    secretKeyRef:
+      name: linearctl-oauth
+      key: client-secret
+  # 2. Cloudflare Queue consumer — polls `linear-agent-events` for AgentSessionEvents.
+  #    ExternalSecret `linearctl-cf-queue` from OpenBao.
   cfAccountId:
     secretKeyRef:
       name: linearctl-cf-queue
@@ -43,32 +68,36 @@ env:
     secretKeyRef:
       name: linearctl-cf-queue
       key: api-token
-  # LLM gateway (tailnet — the daemon calls http://llm/v1 for driveAgentLoop)
+  # 3. LLM gateway — the in-cluster LiteLLM proxy (namespace llm, port 4000).
+  #    ExternalSecret `linearctl-llm` from OpenBao; base/model are chart values.
   llmBaseUrl:
-    value: "http://llm/v1"
+    value: "http://llm.llm.svc.cluster.local:4000/v1"
   llmModel:
-    value: "llm/glm-5.2"
-  # Linear API key (for the roles' Linear calls — triage, stale, comment)
-  linearApiKey:
+    value: "glm-5.2"
+  llmApiKey:
     secretKeyRef:
-      name: linearctl-linear-api-key
+      name: linearctl-llm
       key: api-key
 
-# Health — the operator serves /healthz + /readyz on its Unix socket.
-# K8s probes use an exec sidecar: `linearctl operator --check` hits /readyz.
-# The container also exposes a simple HTTP /healthz for kubelet probes.
-service:
-  type: ClusterIP
-  port: 8080
+# Health — exec probes against the daemon's own Unix socket:
+#   liveness  → `linearctl operator --health` (GET /healthz — process alive)
+#   readiness → `linearctl operator --check`   (GET /readyz  — able to consume)
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    initialDelaySeconds: 3
+    periodSeconds: 5
 
-health:
-  liveness: /healthz
-  readiness: /readyz
-  # The operator daemon listens on a Unix socket for /readyz.
-  # For K8s HTTP probes, the container runs a tiny health-proxy alongside.
-  # Alternatively, use exec probes: `linearctl operator --check`
+# NetworkPolicy — egress only (DNS, HTTPS to Cloudflare, namespace llm:4000).
+# Zero ingress: the daemon is not addressable from outside the pod.
+networkPolicy:
+  enabled: true
+  llmNamespace: llm
+  llmPort: 4000
 
-# Loop recipes — mounted from the repo's .linearctl/loop-recipes/ as a ConfigMap.
-loopRecipes:
-  configMapName: linearctl-loop-recipes
-  lintOnStartup: true
+# PDB — keep the single replica from being drained unsafely (minAvailable: 1).
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

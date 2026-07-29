@@ -28,9 +28,12 @@ Each step below names the invariant gate it satisfies.
 | What | Where verified |
 |------|----------------|
 | Operator daemon code merged to `main` | `src/core/operator.ts` `startOperator` |
-| `linearctl` binary builds (`bun build --compile`) | `package.json` `build` script |
-| `wrangler` CLI (Cloudflare) available | `wrangler --version` |
-| `linearctl` Linear OAuth creds in 1Password | `src/lib/secrets.ts` `readLinearOAuthCreds` |
+| `linearctl` binary builds (`bun run build`) | `package.json` `build` script |
+| `wrangler` CLI (Cloudflare) available | `wrangler --version` (queue create only) |
+| `linearctl` Linear OAuth creds in 1Password (local CLI) | `src/lib/secrets.ts` `readLinearOAuthCreds` |
+| In-cluster BuildKit runner (image build) | `ci-builds` namespace self-hosted runner |
+| Harbor registry reachability | `harbor.unsigned.gg/platform/linearctl` |
+| OpenBao secret store (runtime creds) | ExternalSecret `linearctl-*` keys |
 
 ---
 
@@ -82,8 +85,10 @@ Create it via the Cloudflare dashboard or API:
 - Permission: **Queues → Consume** (pull/ack) on `linear-agent-events` only.
 - Do NOT grant account-wide Queues edit, Workers edit, or DNS edit.
 
-Store the token in the daemon's secret store (Railway env / 1Password) as
-`CF_API_TOKEN`.
+Store the token in OpenBao (the cluster's secret store) under the
+`linearctl-cf-queue` key `api-token`; an ExternalSecret renders it into the
+pod env as `CF_API_TOKEN` at runtime. For local CLI/dev, `1Password` via
+`op run`.
 
 **Gate:** scope the token to the single queue. Verify presence (never the
 value):
@@ -100,11 +105,11 @@ value):
 
 ---
 
-## Step 4 — Set `CF_ACCOUNT_ID` + `CF_QUEUE_ID` + `CF_API_TOKEN` in daemon env
-
 The poller only starts when **all three** are present
-(`readQueueEnv`, `src/core/operator.ts:47-51`). Set them in the deploy target's
-env (Railway service variables / bare-metal systemd `Environment=`):
+(`readQueueEnv`, `src/core/operator.ts:47-51`). In-cluster, these come from the
+`linearctl-cf-queue` ExternalSecret (OpenBao-backed) wired by the Helm chart
+(`deploy/chart/templates/deployment.yaml` env refs). For local CLI/dev, export
+them into the shell:
 
 ```sh
 CF_ACCOUNT_ID=<your-cloudflare-account-id>
@@ -258,12 +263,26 @@ to avoid poisoning the queue — `src/core/operator.ts:340-344,352`). The token
 is cached in-memory, re-minted on a 401 from Linear
 (`src/core/operator.ts:372-379`).
 
-Deploy target (per ADR-0004, `docs/decisions.md:85-92` — Docker is deferred to
-exactly this M4 daemon):
-- **Railway** (recommended): the daemon is a long-running `bun` process;
-  `railway up` deploys from a Dockerfile. Needs `CF_*` env (Step 4) + tailnet
-  LLM gateway reachability (Track 3 — the V1 echo loop runs without it).
-- **K8s / bare metal** fallback if Railway can't reach the tailnet LLM gateway.
+Deploy target (PR #120 cluster contract):
+- **Image build**: rootless in-cluster BuildKit (unsigned-paas
+  `helm/compute/image-build` chart) run by self-hosted runners in namespace
+  `ci-builds`. Source: public `https://github.com/cerebral-work/linearctl.git` at
+  exact full SHA (no git clone token). Tags the image
+  `harbor.unsigned.gg/platform/linearctl:git-<12-char SHA>` — never `latest`,
+  never GHCR.
+- **Runtime secrets** (OpenBao → ExternalSecret): `linearctl-oauth`
+  (`client-id`/`client-secret` → `LINEAR_OAUTH_CLIENT_ID`/`_SECRET`), the
+  `linearctl-cf-queue` keys from Step 3-4, `linearctl-llm` (`api-key` →
+  `LLM_API_KEY`; base `http://llm.llm.svc.cluster.local:4000/v1`, model
+  `glm-5.2`), and `linearctl-harbor-pull` (dockerconfigjson from the existing
+  `platform-pull#dockerconfigjson` OpenBao key). The daemon mints its own
+  app-actor Linear token at startup — no `op` binary and no personal
+  `LINEAR_API_KEY` in the pod.
+- **Deploy**: ArgoCD chart source `harbor.unsigned.gg/helm-charts`, chart
+  `linearctl` revision `0.2.0`, plus ref-only values from unsigned-paas
+  `gitops/linearctl/values.yaml`. The chart renders only a ServiceAccount (automount
+  false), PDB, NetworkPolicy (DNS + HTTPS + namespace `llm:4000` egress, zero
+  ingress), and the Deployment — no Service/Ingress/leader-election/ServiceMonitor.
 
 **Gate:** `/readyz` `ok: true` + `lastPoll` recent under normal load. Watch the
 `operator:` stderr lines for `queue pull HTTP` (auth/reachability) and
@@ -282,6 +301,8 @@ exactly this M4 daemon):
 | `/readyz` `ok: false`, `cfEnv` true, `lastPoll` null | poller failing to reach queue | `CF_API_TOKEN` scope (Step 3); queue ID (Step 2) |
 | `queue pull HTTP 401` | CF token auth | re-create `CF_API_TOKEN` (Step 3); rotate the old one |
 | `event loop error: ...401...` | Linear token expired | daemon auto-re-mints (`:372-379`); if persistent, `loadClientCreds` stale |
+| `--health` exits 1, "not alive" | no daemon listening / socket stale | `linearctl operator` running? `--check` for readiness detail |
+| `loadClientCreds: partial env credentials` | only one of `LINEAR_OAUTH_CLIENT_ID`/`_SECRET` set | set BOTH (or neither, to fall back to 1Password for local CLI) |
 | thought never lands | receiver not enqueuing | Step 6 receiver deployed? Step 5 webhook URL correct? |
 | `--check` exits 1, "connect ENOENT" | no daemon listening | `linearctl operator` running? socket path correct? |
 
@@ -290,13 +311,15 @@ exactly this M4 daemon):
 ## Quick reference
 
 ```sh
-# Liveness (process alive)
+# Liveness (process alive) — kubelet liveness probe
+linearctl operator --health  # hits GET /healthz; exit 0 = alive, 1 = not
+
+# Readiness (able to consume) — kubelet readiness probe
 linearctl operator --check   # hits GET /readyz; exit 0 = ready, 1 = not
 
 # Start the daemon (blocks until SIGINT/SIGTERM)
 linearctl operator --json
 
-# Build + run from source
-bun build src/index.ts --compile --outfile linearctl
-./linearctl operator --check
-```
+# Build + run from source (standalone binary, no react-devtools runtime dep)
+bun run build
+./dist/linearctl operator --check

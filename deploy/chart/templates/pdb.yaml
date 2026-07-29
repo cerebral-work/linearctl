@@ -1,0 +1,25 @@
+{{- /*
+PodDisruptionBudget (PR #120, chart 0.2.0).
+
+Standalone template (the old service.yaml carried a PDB in the GHCR lane; this
+is now its own file). Keeps the single replica from being drained unsafely:
+minAvailable: 1 means a voluntary disruption (node drain) cannot evict the pod
+when no replacement is ready. The deployment is single-actor (the app-actor
+token is the identity), so a voluntary double-run must not happen.
+*/ -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-pdb
+  labels:
+    app.kubernetes.io/name: linearctl
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: linearctl
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

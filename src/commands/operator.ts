@@ -8,7 +8,7 @@
  * until SIGINT/SIGTERM, which trigger graceful shutdown (stop polling, drain
  * in-flight events + role runs, close + unlink the socket).
  *
- *   `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check]`
+ *   `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check] [--health]`
  *
  * `--socket` overrides the default `~/.local/state/linearctl/operator.sock`.
  * `--role` repeats to boot roles from `src/core/role-catalog.ts` (e.g.
@@ -24,6 +24,12 @@
  * Unix socket, GETs `/readyz`, prints the readiness report, and exits 0 if
  * ready / 1 if not (a drain on the runbook's step-7 smoke). CF env is reported
  * presence-only (never the values).
+ *
+ * `--health` (PR #120) does NOT start the daemon either — it connects to a
+ * running operator's Unix socket, GETs `/healthz`, prints the liveness report
+ * (uptime + queue depth), and exits 0 if alive / 1 if not. The cluster's
+ * liveness probe uses this; readiness uses `--check` (`/readyz`). `--health`
+ * and `--check` are mutually exclusive (an explicit error, not silent precedence).
  */
 
 import { printJson } from "../lib/output.js";
@@ -44,6 +50,8 @@ export interface OperatorCommandOptions {
   json?: boolean;
   /** Don't start the daemon — probe a running operator's /readyz and exit 0/1 (Track 4). */
   check?: boolean;
+  /** Don't start the daemon — probe a running operator's /healthz and exit 0/1 (PR #120 liveness). */
+  health?: boolean;
 }
 
 /** The parsed /readyz report body (presence-only — no secret values). */
@@ -52,6 +60,13 @@ interface ReadyzReport {
   cfEnv: { accountId: boolean; queueId: boolean; apiToken: boolean };
   tokenAgeSec: number;
   lastPoll: string | null;
+  queueDepth: number;
+}
+
+/** The parsed /healthz report body (PR #120 liveness — uptime + queue depth). */
+interface HealthReport {
+  ok: boolean;
+  uptime: number;
   queueDepth: number;
 }
 
@@ -96,15 +111,31 @@ function resolveRoles(
 }
 
 /**
- * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check]`.
+ * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check] [--health]`.
  *
  * Starts the daemon and blocks until SIGINT/SIGTERM. The banner goes to
  * stderr so stdout stays clean for `--json` machine output. `--check` short-
  * circuits: it probes a running operator's `/readyz` and exits 0/1 instead of
- * starting a new daemon.
+ * starting a new daemon. `--health` (PR #120) likewise short-circuits to probe
+ * `/healthz`; the two are mutually exclusive.
  */
 export async function operator(opts: OperatorCommandOptions): Promise<void> {
-  // --check: probe a running operator, don't start one.
+  // --health and --check are mutually exclusive — the liveness vs readiness
+  // probes must not be conflated. An explicit error beats silent precedence.
+  if (opts.health && opts.check) {
+    throw new Error(
+      "linearctl operator: --health and --check are mutually exclusive " +
+        "(--health probes /healthz for liveness, --check probes /readyz for readiness).",
+    );
+  }
+
+  // --health: probe liveness (/healthz), don't start the daemon.
+  if (opts.health) {
+    await healthOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json);
+    return;
+  }
+
+  // --check: probe readiness (/readyz), don't start the daemon.
   if (opts.check) {
     await checkOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json);
     return;
@@ -173,6 +204,47 @@ export async function checkOperator(socketPath: string, json?: boolean): Promise
         `  cf env: accountId=${cf.accountId} queueId=${cf.queueId} apiToken=${cf.apiToken}\n` +
         `  token age: ${report.tokenAgeSec}s\n` +
         `  last poll: ${report.lastPoll ?? "(never)"}\n` +
+        `  queue depth: ${report.queueDepth}\n`,
+    );
+  }
+  process.exit(report.ok ? 0 : 1);
+}
+
+/**
+ * Probe a running operator's `/healthz` over the Unix socket + report (PR #120).
+ *
+ * Liveness probe: "is the process alive?" — distinct from `--check`'s
+ * "is it able to consume?" readiness. Prints the liveness report (uptime +
+ * queue depth) and exits 0 if the daemon is alive / 1 otherwise. A connection
+ * failure (no daemon, socket stale) is a not-alive result with a diagnostic on
+ * stderr — not a thrown exception — so the kubelet exec liveness probe gets a
+ * clean exit code rather than a stack trace.
+ *
+ * `--json` prints the raw /healthz body as JSON; the default prints a human report.
+ */
+export async function healthOperator(socketPath: string, json?: boolean): Promise<void> {
+  let report: HealthReport;
+  try {
+    const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
+    const res = await client.request("GET", "/healthz");
+    if (res.status !== 200) {
+      process.stderr.write(`operator --health: /healthz returned HTTP ${res.status}\n`);
+      process.exit(1);
+    }
+    report = JSON.parse(res.body ?? "") as HealthReport;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (json) printJson({ ok: false, error: msg });
+    else process.stderr.write(`operator --health: not alive — ${msg}\n`);
+    process.exit(1);
+  }
+
+  if (json) {
+    printJson(report);
+  } else {
+    process.stdout.write(
+      `operator liveness: ${report.ok ? "ALIVE" : "NOT ALIVE"}\n` +
+        `  uptime: ${report.uptime}s\n` +
         `  queue depth: ${report.queueDepth}\n`,
     );
   }

@@ -573,12 +573,13 @@ authCmd
 
 program
   .command("operator")
-  .description("Long-running daemon: polls the CF Queue + serves linearctl watch via a Unix socket (CER-1149).")
+  .description("Long-running daemon: polls the CF Queue + serves watch delegation over a Unix socket. --check probes /readyz, --health probes /healthz (CER-1149).")
   .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--queue-poll-interval <ms>", "queue poll interval in ms")
   .option("--json", "emit the listening address as JSON")
   .option("--role <name...>", "boot a maintainer-agent role on cadence (repeatable: intake-triage, grooming)")
   .option("--check", "connect to a running operator, GET /readyz, exit 0/1 (does NOT start the daemon)")
+  .option("--health", "connect to a running operator, GET /healthz, exit 0/1 (mutually exclusive with --check)")
   .action((opts) => operator(opts));
 
  program

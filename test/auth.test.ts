@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
 import {
   clientCredentialsGrant,
   exchangeCode,
@@ -7,6 +7,7 @@ import {
   OAuthError,
   type FetchLike,
 } from "../src/lib/oauth.js";
+import { loadClientCreds } from "../src/core/auth.js";
 
 /**
  * Contract tests for the OAuth helpers (CER-1148 / T13).
@@ -201,5 +202,99 @@ describe("verifyToken", () => {
   test("throws when the response has no viewer (bad token)", async () => {
     const f = stubFetch({ body: { errors: [{ message: "unauthenticated" }] } });
     await expect(verifyToken("bad", f)).rejects.toBeInstanceOf(OAuthError);
+  });
+});
+
+describe("loadClientCreds — cluster-safe env/1Password precedence (PR #120)", () => {
+  const origId = process.env.LINEAR_OAUTH_CLIENT_ID;
+  const origSecret = process.env.LINEAR_OAUTH_CLIENT_SECRET;
+  const origRedirect = process.env.LINEAR_OAUTH_REDIRECT_URI;
+
+  beforeEach(() => {
+    delete process.env.LINEAR_OAUTH_CLIENT_ID;
+    delete process.env.LINEAR_OAUTH_CLIENT_SECRET;
+    delete process.env.LINEAR_OAUTH_REDIRECT_URI;
+  });
+
+  afterEach(() => {
+    if (origId === undefined) delete process.env.LINEAR_OAUTH_CLIENT_ID;
+    else process.env.LINEAR_OAUTH_CLIENT_ID = origId;
+    if (origSecret === undefined) delete process.env.LINEAR_OAUTH_CLIENT_SECRET;
+    else process.env.LINEAR_OAUTH_CLIENT_SECRET = origSecret;
+    if (origRedirect === undefined) delete process.env.LINEAR_OAUTH_REDIRECT_URI;
+    else process.env.LINEAR_OAUTH_REDIRECT_URI = origRedirect;
+  });
+
+  test("env pair (both set) resolves from env with no 1Password dependency", () => {
+    process.env.LINEAR_OAUTH_CLIENT_ID = "env-client-id";
+    process.env.LINEAR_OAUTH_CLIENT_SECRET = "env-client-secret";
+    const creds = loadClientCreds();
+    expect(creds.source).toBe("env");
+    expect(creds.clientId).toBe("env-client-id");
+    expect(creds.clientSecret).toBe("env-client-secret");
+    // The daemon mints its own app-actor token; dev tokens are absent in env mode.
+    expect(creds.devAppToken).toBeNull();
+    expect(creds.devUserToken).toBeNull();
+  });
+
+  test("optional LINEAR_OAUTH_REDIRECT_URI flows through as the redirectUri", () => {
+    process.env.LINEAR_OAUTH_CLIENT_ID = "id";
+    process.env.LINEAR_OAUTH_CLIENT_SECRET = "secret";
+    process.env.LINEAR_OAUTH_REDIRECT_URI = "https://app.example.com/cb";
+    const creds = loadClientCreds();
+    expect(creds.redirectUri).toBe("https://app.example.com/cb");
+  });
+
+  test("redirectUri defaults to empty when the optional env is unset", () => {
+    process.env.LINEAR_OAUTH_CLIENT_ID = "id";
+    process.env.LINEAR_OAUTH_CLIENT_SECRET = "secret";
+    const creds = loadClientCreds();
+    expect(creds.redirectUri).toBe("");
+  });
+
+  test("only CLIENT_ID set → throws a clear config error (not a silent 1P fallback)", () => {
+    process.env.LINEAR_OAUTH_CLIENT_ID = "id-only";
+    expect(() => loadClientCreds()).toThrow(/partial env credentials/i);
+    expect(() => loadClientCreds()).toThrow(/LINEAR_OAUTH_CLIENT_SECRET/);
+  });
+
+  test("only CLIENT_SECRET set → throws a clear config error", () => {
+    process.env.LINEAR_OAUTH_CLIENT_SECRET = "secret-only";
+    expect(() => loadClientCreds()).toThrow(/partial env credentials/i);
+    expect(() => loadClientCreds()).toThrow(/LINEAR_OAUTH_CLIENT_ID/);
+  });
+
+  test("neither env var set → routes to the 1Password fallback seam (no real op call)", () => {
+    // No env pair → loadClientCreds must reach readLinearOAuthCreds. To assert
+    // the route WITHOUT invoking the real `op` binary (which on a signed-in
+    // dev machine would read live 1Password secrets — a test-hygiene violation),
+    // stub the secrets module: the fake records that it was reached and returns
+    // placeholder handles. This proves the fallback seam routes to 1P, not env.
+    let reached = false;
+    mock.module("../src/lib/secrets.js", () => ({
+      readLinearOAuthCreds: () => {
+        reached = true;
+        return {
+          clientId: { value: "fake-1p-client-id", redacted: "<redacted>" },
+          clientSecret: { value: "fake-1p-secret", redacted: "<redacted>" },
+          webhookUrl: { value: "", redacted: "<redacted>" },
+          webhookSecret: { value: "", redacted: "<redacted>" },
+          devAppToken: { value: "fake-app-token", redacted: "<redacted>" },
+          devUserToken: { value: "fake-user-token", redacted: "<redacted>" },
+          redirectUrl: { value: "https://app.unsigned.gg/oauth/linear/callback", redacted: "<redacted>" },
+        };
+      },
+    }));
+
+    try {
+      const creds = loadClientCreds();
+      expect(reached).toBe(true);
+      expect(creds.source).toBe("1password");
+      expect(creds.clientId).toBe("fake-1p-client-id");
+      // dev tokens are carried through on the 1P path (local CLI mode).
+      expect(creds.devAppToken).not.toBeNull();
+    } finally {
+      mock.restore();
+    }
   });
 });
