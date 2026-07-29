@@ -15,13 +15,13 @@
     "whoami": "bun run src/index.ts whoami",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build ./src/index.ts --compile --minify --external react-devtools-core --outfile dist/linearctl",
+    "build": "bun build ./src/index.ts --compile --minify --outfile dist/linearctl",
     "dev:watch": "bun --watch run src/index.ts",
     "test:watch": "bun test --watch",
     "test:fast": "bun test --filter",
     "lint": "bun run typecheck",
     "ci": "bun run typecheck && bun test",
-    "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --external react-devtools-core --outfile dist/linearctl",
+    "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --outfile dist/linearctl",
     "quick": "bun run src/index.ts"
   },
   "keywords": [
@@ -42,6 +42,7 @@
     "ink": "^7.1.1",
     "picocolors": "^1.1.1",
     "react": "^19.2.8",
+    "react-devtools-core": "^7.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

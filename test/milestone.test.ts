@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LinearClient } from "@linear/sdk";
-import { createMilestone, resolveMilestoneId, deleteMilestone } from "../src/core/milestones.js";
+import { createMilestone, resolveMilestoneId, deleteMilestone, updateMilestone } from "../src/core/milestones.js";
 
 /** Type guard: does the record have this key? */
 function has<K extends string>(obj: Record<string, unknown>, key: K): obj is Record<K, unknown> & Record<string, unknown> {
@@ -14,6 +14,9 @@ function stubClient(opts: {
   milestoneName?: string;
   createSuccess?: boolean;
   deleteSuccess?: boolean;
+  updateSuccess?: boolean;
+  milestoneTargetDate?: string | null;
+  milestoneDescription?: string | null;
 }): {
   client: LinearClient;
   calls: Record<string, unknown>[];
@@ -43,6 +46,8 @@ function stubClient(opts: {
       Promise.resolve({
         id: opts.milestoneId ?? "ms-1",
         name: opts.milestoneName ?? "M1",
+        targetDate: opts.milestoneTargetDate ?? undefined,
+        description: Promise.resolve(opts.milestoneDescription ?? null),
       }),
     createProjectMilestone: (input: Record<string, unknown>) => {
       calls.push(input);
@@ -58,6 +63,21 @@ function stubClient(opts: {
     deleteProjectMilestone: (id: string) => {
       calls.push({ delete: id });
       return Promise.resolve({ success: opts.deleteSuccess ?? true });
+    },
+    updateProjectMilestone: (id: string, input: Record<string, unknown>) => {
+      calls.push({ update: id, input });
+      const mergedName = (has(input, "name") ? input.name : opts.milestoneName ?? "M1") as string;
+      const mergedTarget = (has(input, "targetDate") ? input.targetDate : opts.milestoneTargetDate) as string | null;
+      const mergedDesc = (has(input, "description") ? input.description : opts.milestoneDescription ?? null) as string | null;
+      return Promise.resolve({
+        success: opts.updateSuccess ?? true,
+        projectMilestone: Promise.resolve({
+          id: opts.milestoneId ?? "ms-1",
+          name: mergedName,
+          targetDate: mergedTarget,
+          description: Promise.resolve(mergedDesc),
+        }),
+      });
     },
   } as unknown as LinearClient;
 
@@ -174,5 +194,65 @@ describe("deleteMilestone", () => {
     const { client } = stubClient({ deleteSuccess: false });
 
     await expect(deleteMilestone(client, "ms-1", true)).rejects.toThrow(/did not succeed/);
+  });
+});
+
+
+describe("updateMilestone — CER-1759", () => {
+  test("dry-run (apply=false) returns updated=false, shows before→after for name", async () => {
+    const { client, calls } = stubClient({ milestoneName: "Old Name" });
+
+    const result = await updateMilestone(client, { id: "ms-1", name: "New Name" }, false);
+
+    expect(result.updated).toBe(false);
+    expect(result.before.name).toBe("Old Name");
+    expect(result.after.name).toBe("New Name");
+    expect(calls.filter((c) => "update" in c)).toHaveLength(0);
+  });
+
+  test("apply=true writes and returns updated=true with after-state", async () => {
+    const { client, calls } = stubClient({ milestoneName: "Old Name" });
+
+    const result = await updateMilestone(client, { id: "ms-1", name: "New Name" }, true);
+
+    expect(result.updated).toBe(true);
+    expect(result.after.name).toBe("New Name");
+    expect(result.before.name).toBe("Old Name");
+    expect(calls.filter((c) => "update" in c)).toHaveLength(1);
+  });
+
+  test("patches only provided fields, leaves absent ones unchanged", async () => {
+    const { client, calls } = stubClient({
+      milestoneName: "M1",
+      milestoneTargetDate: "2026-08-15",
+      milestoneDescription: "original desc",
+    });
+
+    const result = await updateMilestone(client, { id: "ms-1", targetDate: "2026-09-01" }, true);
+
+    expect(result.after.targetDate).toBe("2026-09-01");
+    expect(result.after.name).toBe("M1");
+    const updateCall = calls.find((c) => "update" in c);
+    expect(updateCall).toBeDefined();
+    const input = (updateCall as Record<string, unknown>).input as Record<string, unknown>;
+    expect(input.name).toBeUndefined();
+    expect(input.targetDate).toBe("2026-09-01");
+    expect(input.description).toBeUndefined();
+  });
+
+  test("throws when Linear reports update failure", async () => {
+    const { client } = stubClient({ updateSuccess: false });
+
+    await expect(updateMilestone(client, { id: "ms-1", name: "X" }, true)).rejects.toThrow(
+      /did not succeed/,
+    );
+  });
+
+  test("throws on bad milestone id", async () => {
+    const client = { projectMilestone: () => Promise.resolve(null) } as unknown as LinearClient;
+
+    await expect(updateMilestone(client, { id: "bad-id" }, false)).rejects.toThrow(
+      /no milestone with id/,
+    );
   });
 });
