@@ -328,9 +328,9 @@ describe("tui TTY gate", () => {
   test("non-TTY (piped) exits non-zero with 'requires a terminal' error", () => {
     // `linearctl tui` in a pipe hits the TTY gate (stdout is not a TTY).
     // The spawned process inherits piped stdio, so isTTY is false.
-    const proc = spawn("bun", ["run", "src/index.ts", "tui"], {
+    const proc = spawn(process.execPath, [import.meta.dir + "/../src/index.ts", "tui"], {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: "/tmp/linearctl-track2",
+      cwd: process.cwd(),
     });
     let stderr = "";
     proc.stderr.on("data", (chunk) => {
@@ -347,9 +347,9 @@ describe("tui TTY gate", () => {
   });
 
   test("--help exits 0 cleanly without entering the TUI", () => {
-    const proc = spawn("bun", ["run", "src/index.ts", "tui", "--help"], {
+    const proc = spawn(process.execPath, [import.meta.dir + "/../src/index.ts", "tui", "--help"], {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: "/tmp/linearctl-track2",
+      cwd: process.cwd(),
     });
     let stdout = "";
     let stderr = "";

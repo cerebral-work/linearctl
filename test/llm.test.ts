@@ -56,12 +56,12 @@ describe("complete() — request shape", () => {
     const out = await complete(DEFAULT_MESSAGES, {}, fetchImpl);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("http://llm/v1/chat/completions");
+    expect(calls[0].url).toBe("http://llm.llm.svc.cluster.local:4000/v1/chat/completions");
     expect(calls[0].method).toBe("POST");
     expect(calls[0].headers["Content-Type"]).toBe("application/json");
 
     const parsed = JSON.parse(calls[0].body);
-    expect(parsed.model).toBe("llm/glm-5.2");
+    expect(parsed.model).toBe("glm-5.2");
     expect(parsed.messages).toEqual(DEFAULT_MESSAGES);
     expect(parsed.max_tokens).toBe(512);
     expect(parsed.temperature).toBe(0.3);
@@ -207,5 +207,74 @@ describe("complete() — env-var override", () => {
     await complete(DEFAULT_MESSAGES, { model: "llm/explicit" }, fetchImpl);
     const parsed = JSON.parse(calls[0].body);
     expect(parsed.model).toBe("llm/explicit");
+  });
+});
+
+describe("complete() — auth + cluster config (PR #120)", () => {
+  const origBaseUrl = process.env.LLM_BASE_URL;
+  const origModel = process.env.LLM_MODEL;
+  const origApiKey = process.env.LLM_API_KEY;
+
+  beforeEach(() => {
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_API_KEY;
+  });
+
+  afterEach(() => {
+    if (origBaseUrl === undefined) delete process.env.LLM_BASE_URL;
+    else process.env.LLM_BASE_URL = origBaseUrl;
+    if (origModel === undefined) delete process.env.LLM_MODEL;
+    else process.env.LLM_MODEL = origModel;
+    if (origApiKey === undefined) delete process.env.LLM_API_KEY;
+    else process.env.LLM_API_KEY = origApiKey;
+  });
+
+  test("default model is glm-5.2 (not llm/glm-5.2) — the cluster contract", async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      json: { choices: [{ message: { content: "ok" } }] },
+    });
+    await complete(DEFAULT_MESSAGES, {}, fetchImpl);
+    const parsed = JSON.parse(calls[0].body);
+    expect(parsed.model).toBe("glm-5.2");
+  });
+
+  test("LLM_API_KEY adds an Authorization: Bearer <key> header", async () => {
+    const key = "fake-llm-key-for-tests";
+    process.env.LLM_API_KEY = key;
+    const { fetchImpl, calls } = fakeFetch({
+      json: { choices: [{ message: { content: "ok" } }] },
+    });
+    await complete(DEFAULT_MESSAGES, {}, fetchImpl);
+    expect(calls[0].headers.Authorization).toBe(`Bearer ${key}`);
+  });
+
+  test("absent LLM_API_KEY sends NO Authorization header", async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      json: { choices: [{ message: { content: "ok" } }] },
+    });
+    await complete(DEFAULT_MESSAGES, {}, fetchImpl);
+    expect(calls[0].headers.Authorization).toBeUndefined();
+  });
+
+  test("default base URL is the in-cluster LiteLLM proxy (not tailnet)", async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      json: { choices: [{ message: { content: "ok" } }] },
+    });
+    await complete(DEFAULT_MESSAGES, {}, fetchImpl);
+    expect(calls[0].url).toBe("http://llm.llm.svc.cluster.local:4000/v1/chat/completions");
+  });
+
+  test("the API key is NEVER surfaced in an LLMError message", async () => {
+    const secretKey = "fake-llm-key-surfaces-test";
+    process.env.LLM_API_KEY = secretKey;
+    const { fetchImpl } = fakeFetch({ status: 500, text: "boom" });
+    try {
+      await complete(DEFAULT_MESSAGES, {}, fetchImpl);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLMError);
+      expect((err as Error).message).not.toContain(secretKey);
+    }
   });
 });
