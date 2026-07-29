@@ -7,6 +7,38 @@
 - **Assignee:** unassigned
 - **Generated:** 2026-07-22
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — Intelligence & Productization | `dd5b1b50-8983-4618-8a8a-51279129687a` | 2026-11-30 | 2 | 0% (0/2) |
+| M3 — Automation & Deal Ops | `24fcefe7-af78-4f31-8cf4-6376939e7f42` | 2026-10-15 | 2 | 0% (0/2) |
+| M2 — Integrations & Bridges | `893f5702-1ce3-47fd-bac7-32173dba40bf` | 2026-09-15 | 1 | 0% (0/1) |
+| M1 — Foundation & Hardening | `ca6b60f1-4b37-43a0-aa48-18037676ccf9` | 2026-08-15 | 3 | 0% (0/3) |
+
+```
+CRM — 4 milestone(s)
+
+  M1 — Foundation & Hardening  (due 2026-08-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    CER-1668  [Backlog]  Re-point or scope the CER team GitHub sync (currently mirrors ALL CER issues into cerebral-work/reverie)
+    CER-1662  [Backlog]  Phase 1 — event backbone (crm-events Worker)
+    CER-1661  [Backlog]  Phase 0 — verify & harden
+
+  M2 — Integrations & Bridges  (due 2026-09-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    CER-1663  [Backlog]  Phase 2 — Linear bridge (first-party linear-app)
+
+  M3 — Automation & Deal Ops  (due 2026-10-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    CER-1665  [Backlog]  Phase 4 — deal-flow + fundraising ops
+    CER-1664  [Backlog]  Phase 3 — meeting → memory → Linear loop
+
+  M4 — Intelligence & Productization  (due 2026-11-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    CER-1667  [Backlog]  Phase 6 — productization consolidation
+    CER-1666  [Backlog]  Phase 5 — prospect enrichment & scoring
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestones
 
 | Milestone | Theme | Issues | Dependency |

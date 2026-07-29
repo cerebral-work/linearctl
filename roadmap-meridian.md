@@ -3,6 +3,33 @@
 > Generated 2026-07-22 from live Linear issues (project: Meridian, team OPS).
 > 6 issues, all in Backlog, all assigned to `ctodie`.
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M3 — Prod & Deploy | `230cdba3-59ee-4167-ace1-0483e19ef446` | 2026-09-02 | 2 | 100% (2/2) |
+| M2 — Snapshot Pipeline | `7e049290-fbbb-418e-a905-f542efae416c` | 2026-08-19 | 2 | 100% (2/2) |
+| M1 — Collector Sources | `a407aaf1-ef8d-4ec6-b55a-4345e53bc05d` | 2026-08-05 | 2 | 100% (2/2) |
+
+```
+Meridian — 3 milestone(s)
+
+  M1 — Collector Sources  (due 2026-08-05)  [████████████████████] 100%  2/2
+    OPS-858  [Done]  collector slice-3: implement gh.rs — open PRs + CI state per work-surface  @ctodie
+    OPS-857  [Done]  collector slice-2: implement git.rs — repo/branch/dirty state per work-surface  @ctodie
+
+  M2 — Snapshot Pipeline  (due 2026-08-19)  [████████████████████] 100%  2/2
+    OPS-861  [Done]  snapshot store + publish path — the collector writes locally and nothing ships it  @ctodie
+    OPS-860  [Done]  reader: wire VITE_SNAPSHOT_URL — render the real snapshot, not the mock  @ctodie
+
+  M3 — Prod & Deploy  (due 2026-09-02)  [████████████████████] 100%  2/2
+    OPS-862  [Done]  deploy activation: pwa-host path + app-sso middleware, then flip DEPLOY_ENABLED  @ctodie
+    OPS-859  [Done]  herdr.rs: one malformed pane blanks the entire fleet — skip-and-continue instead  @ctodie
+```
+
+*Last 7 days: 9 issue(s) touched, 6 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## What Meridian Is
 
 Meridian is a fleet visibility surface — a "bigboard" that renders the live

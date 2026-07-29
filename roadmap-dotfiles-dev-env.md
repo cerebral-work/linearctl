@@ -4,6 +4,36 @@
 > Source of truth: Linear (milestones + issue assignments persisted via `linearctl`).
 > Last synced: 2026-07-22 via `linearctl roadmap --project "Dotfiles & Dev Env"`.
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — Snapshot & tooling hygiene | `3920d927-d7d4-468d-b92a-61b49fe5994e` | 2026-08-29 | 1 | 0% (0/1) |
+| M2 — Prove end-to-end recovery | `231e456d-5d86-45c4-9460-f743a8400255` | 2026-08-18 | 2 | 0% (0/2) |
+| M3 — Restore-tag policy + version-bump cadence | `4fef2a53-01ff-4d56-a0a4-f70e9e6a4e16` | 2026-08-26 | 2 | 0% (0/2) |
+| M1 — Back up the unbacked authoring surface | `84b05e95-1696-45c4-ae80-d3869e4510e4` | 2026-08-08 | 1 | 0% (0/1) |
+
+```
+Dotfiles & Dev Env — 4 milestone(s)
+
+  M1 — Back up the unbacked authoring surface  (due 2026-08-08)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    TOD-928  [Backlog]  Track ~/.agents/ — skills are currently unbacked
+
+  M2 — Prove end-to-end recovery  (due 2026-08-18)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    TOD-930  [Backlog]  Verify claude-hud statusline renders (bun restored)
+    TOD-929  [Backlog]  Fresh-machine bootstrap runbook + test in a throwaway VM/container
+
+  M3 — Restore-tag policy + version-bump cadence  (due 2026-08-26)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    TOD-933  [Backlog]  CalVer restore-tag workflow + first anchor
+    TOD-931  [Backlog]  mise: version-bump cadence / upgrade flow
+
+  M4 — Snapshot & tooling hygiene  (due 2026-08-29)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    TOD-932  [Backlog]  settings.json snapshot refresh cadence (committed-once, will go stale)
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 The project tracks the hygiene, recoverability, and tooling integration of

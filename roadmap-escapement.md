@@ -7,6 +7,27 @@
 - **Assignee:** ctodie (all issues)
 - **Generated:** 2026-07-22
 
+## Live Linear State (auto-rendered 2026-07-29 14:30 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M2 — Adoption & Scope Governance | `1c98daaa-4945-4dc9-87b2-2750ecaa96ac` | 2026-08-01 | 1 | 0% (0/1) |
+| M1 — Core Runtime & Edge Binding | `5693790d-7e0c-4879-8a1c-97c4dec0a22a` | 2026-08-15 | 2 | 0% (0/2) |
+
+```
+escapement — 2 milestone(s)
+
+  M2 — Adoption & Scope Governance  (due 2026-08-01)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    EST-3  [Backlog]  escapement: adoption decision — do AgentHub DO + agent.unsigned.gg move under escapement?  @ctodie
+
+  M1 — Core Runtime & Edge Binding  (due 2026-08-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    EST-2  [Backlog]  escapement: engine↔edge binding — expose the core through the Worker edge  @ctodie
+    EST-1  [Backlog]  escapement-core: supervision + retry semantics (task failure, agent death, requeue policy)  @ctodie
+```
+
+*Last 7 days: 76 issue(s) touched, 21 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestones
 
 | Milestone | Theme | Issues | Dependency |

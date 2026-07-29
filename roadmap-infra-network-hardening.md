@@ -7,6 +7,30 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:33 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| TLS Verification & Transport Hardening | `529d179b-f952-453b-b6d4-8bd89ef2e59d` | 2026-07-25 | 0 | 0% (0/0) |
+| Public-Surface Header Enforcement (HSTS + CSP) | `c87ba8e3-c594-4c1f-8349-4f2ed9102965` | 2026-09-12 | 1 | 0% (0/1) |
+| Forgejo-Primary Migration & Access Reconciliation | `8dd3dfe7-651c-4c53-a949-399c96cb0bb9` | 2026-08-29 | 0 | 0% (0/0) |
+
+```
+Infra & Network Hardening — 3 milestone(s)
+
+  TLS Verification & Transport Hardening  (due 2026-07-25)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/0
+    (no issues)
+
+  Forgejo-Primary Migration & Access Reconciliation  (due 2026-08-29)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/0
+    (no issues)
+
+  Public-Surface Header Enforcement (HSTS + CSP)  (due 2026-09-12)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    SEC-19  [Backlog]  Verify HSTS + CSP headers live on public godseat surface post-publish
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Linear Milestones (created)
 
 | ID | Milestone | Target Date |

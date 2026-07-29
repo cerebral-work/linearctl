@@ -7,6 +7,42 @@
 > Rendered: 2026-07-22 via `linearctl roadmap --project "Identity & Realms" --json`
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — unsigned-paas Realm Brokering | `fad2c942-3ca8-40d1-b5cd-5d4e6f63daf5` | 2026-08-19 | 1 | 0% (0/1) |
+| M3 — Hardening & Operational Safety | `16ef2e1d-5d4f-471e-bcf7-30228d28d3f9` | 2026-08-05 | 2 | 100% (2/2) |
+| M2 — Realm Expansion: Clients & IdP Federation | `a84648e4-0344-42f0-b63f-4ef6a079d1ee` | 2026-07-09 | 1 | 100% (1/1) |
+| M1 — Cerebral Realm Activation | `cd4c93e0-69e8-4604-9ba0-b7fce7ad3851` | 2026-07-02 | 3 | 100% (3/3) |
+| M0 — Foundation: Config-as-Code & IdP Brokering | `7649c9bc-6cd1-4199-a335-701cf7bed70e` | 2026-06-15 | 2 | 100% (2/2) |
+
+```
+Identity & Realms — 5 milestone(s)
+
+  M0 — Foundation: Config-as-Code & IdP Brokering  (due 2026-06-15)  [████████████████████] 100%  2/2
+    OPS-264  [Done]  Google Workspace → Keycloak directory/login integration (OIDC brokering primary)  @ctodie
+    OPS-243  [Done]  Keycloak config-as-code via terraform-provider-keycloak  @ctodie
+
+  M1 — Cerebral Realm Activation  (due 2026-07-02)  [████████████████████] 100%  3/3
+    OPS-329  [Done]  cerebral: first Google login e2e + promote operator to cerebral-admins
+    OPS-328  [Done]  GCP: authorize Keycloak broker redirect URI on the cerebral OAuth client
+    OPS-327  [Done]  cerebral: delete temp bootstrap admin after ops-admin verification
+
+  M2 — Realm Expansion: Clients & IdP Federation  (due 2026-07-09)  [████████████████████] 100%  1/1
+    OPS-335  [Done]  Keycloak cerebral realm: pact clients + google-public IdP  @ctodie
+
+  M3 — Hardening & Operational Safety  (due 2026-08-05)  [████████████████████] 100%  2/2
+    OPS-541  [Done]  keycloak-config-cli on cerebral realm can prune cerebral-operators / board / pact-users — silent lockout of mission-control + dreams /ops  @ctodie
+    OPS-331  [Done]  docs: fold 2026-07-02 keycloak learnings into runbooks  @ctodie
+
+  M4 — unsigned-paas Realm Brokering  (due 2026-08-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-330  [Backlog]  unsigned-paas realm: Google Workspace brokering (OPS-264 remaining half)
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project charter
 
 Stand up Keycloak as the estate's identity and access backbone — managed as

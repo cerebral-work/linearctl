@@ -6,6 +6,42 @@
 > assigned via `linearctl update --milestone`. Live render:
 > `linearctl roadmap --project 'Fable Ensemble'`
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — Cutover + Re-measure | `7407aefc-390c-45ad-b288-df995e20e8e0` | 2026-10-28 | 2 | 0% (0/2) |
+| M3 — Owned-Weights Distill | `ce3481e1-2bca-4b6b-bf7b-3599cf3991f3` | 2026-10-14 | 2 | 0% (0/2) |
+| M2 — Prompted Ensemble Bridge | `489f5dab-b65e-460d-b6ae-d3c80a1dda18` | 2026-09-02 | 3 | 0% (0/3) |
+| M1 — Verification Spine | `0f1f03ed-0cef-4f85-b671-412bb495c785` | 2026-08-19 | 1 | 0% (0/1) |
+| M0 — Externalize the Substrate | `c1d4235b-cd29-45a6-bdb0-72553dec19d3` | 2026-08-05 | 1 | 0% (0/1) |
+
+```
+Fable Ensemble — 5 milestone(s)
+
+  M0 — Externalize the Substrate  (due 2026-08-05)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-231  [Backlog]  F0 — Externalize the substrate (reflex coverage audit + bookend skill)  @ctodie
+
+  M1 — Verification Spine  (due 2026-08-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-232  [Backlog]  F1 — Stand up the spine (two-engine eval harness + persona + frozen golden set)  @ctodie
+
+  M2 — Prompted Ensemble Bridge  (due 2026-09-02)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    OPS-902  [Triage]  feat(fable): bookend orchestrator — ship-feature skill as prompted pipeline
+    OPS-901  [Triage]  feat(fable): exemplar bank — freeze the golden set transcripts as retrieval corpus
+    OPS-900  [Triage]  feat(fable): rules-based router — prompt-family dispatch (engine 1 predicates)
+
+  M3 — Owned-Weights Distill  (due 2026-10-14)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    OPS-904  [Triage]  feat(fable): fine-tune distilled model on platform GPU substrate
+    OPS-903  [Triage]  feat(fable): distillation dataset — collect transfer pairs from M2 bridge runs
+
+  M4 — Cutover + Re-measure  (due 2026-10-28)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    OPS-906  [Triage]  feat(fable): acceptance — full golden-set re-measure + voice stability report
+    OPS-905  [Triage]  feat(fable): cutover — serve distilled weights behind the router
+```
+
+*Last 7 days: 7 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## What Fable Ensemble Is
 
 Fable Ensemble is the plan to preserve the operator's AI-assistant "voice"

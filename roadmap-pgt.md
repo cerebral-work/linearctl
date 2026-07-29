@@ -6,6 +6,37 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M3: Multi-File Project & Workflow | `44c2be7a-c3ad-4980-af50-680e8843e531` | 2026-09-23 | 3 | 0% (0/3) |
+| M2: Codegen Correctness & Hardening | `e103a252-c9c5-4dc9-9dc1-796ae65541d0` | 2026-09-02 | 3 | 0% (0/3) |
+| M1: Type System Foundations | `71bd2a93-65a5-4660-b7de-9b183c8a02d1` | 2026-08-12 | 4 | 0% (0/4) |
+
+```
+pgt — 3 milestone(s)
+
+  M1: Type System Foundations  (due 2026-08-12)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    CER-1593  [Backlog]  Allow inline string enums in struct fields
+    CER-1592  [Backlog]  Add generics support (type Response<T> { data T })
+    CER-1591  [Backlog]  Add map<K,V> type support to lexer, parser, AST, and codegen
+    CER-1590  [Backlog]  Add extended primitives to validator + all codegen backends
+
+  M2: Codegen Correctness & Hardening  (due 2026-09-02)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    CER-1598  [Backlog]  Canonical type ordering in pgt fmt
+    CER-1597  [Backlog]  Fix string enum Rust serde rename for non-PascalCase values
+    CER-1596  [Backlog]  Check summary + non-zero exit codes on validation errors
+
+  M3: Multi-File Project & Workflow  (due 2026-09-23)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    CER-1599  [Backlog]  Add pgt watch mode for iterative development
+    CER-1595  [Backlog]  Multi-file codegen project mode
+    CER-1594  [Backlog]  Multi-file fmt and check (accept multiple file args)
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 ```mermaid

@@ -6,6 +6,51 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Agent Secret Exfiltration Prevention | `38469279-db3c-4cb0-bdd0-c4e85811aa5c` | 2026-10-31 | 6 | 33% (2/6) |
+| TLS & Transport Hardening | `6eb4e12f-02b1-471f-a0fd-1119449e41a1` | 2026-09-12 | 3 | 67% (2/3) |
+| Access Control & Auth Hardening | `7424d2f4-b7f5-477a-9e13-1a62cfca5668` | 2026-09-26 | 4 | 75% (3/4) |
+| Secret Detection & Prevention | `a0e42514-ff3e-40f2-984a-914b8b9403b4` | 2026-08-15 | 2 | 50% (1/2) |
+| Dependency & Code Scanning | `9bc6f9d0-8d8f-4b85-b0c9-5b6ee2a7c434` | 2026-08-29 | 3 | 67% (2/3) |
+
+```
+Secrets & Credential Management — 5 milestone(s)
+
+  Secret Detection & Prevention  (due 2026-08-15)  [██████████░░░░░░░░░░] 50%  1/2
+    SEC-15  [Backlog]  GHAS spend decision — secret/code scanning for 57 private repos (incl. flagships)
+    SEC-7  [Done]  Enable GitHub secret scanning + push protection org-wide (disabled 67/67 repos)
+
+  Dependency & Code Scanning  (due 2026-08-29)  [█████████████░░░░░░░] 67%  2/3
+    SEC-16  [Backlog]  Triage 13 critical Dependabot alerts surfaced by estate-wide enablement (litellm ×9, rina ×3, terrarium ×1)
+    SEC-12  [Done]  Stand up code scanning (CodeQL) — zero repos have ever run an analysis
+    SEC-11  [Done]  Enable Dependabot across the estate (disabled 55/67 repos, incl. flagships)
+
+  TLS & Transport Hardening  (due 2026-09-12)  [█████████████░░░░░░░] 67%  2/3
+    SEC-18  [Backlog]  godseat HSTS+CSP commit parked unpublished — blocked on Forgejo reachability (SEC-13)
+    SEC-10  [Done]  dreamcode: NODE_TLS_REJECT_UNAUTHORIZED=0 on spawned Copilot LSP subprocess (copilot.rs:511)
+    SEC-9  [Done]  paas: unjustified TLS InsecureSkipVerify on outbound StartTLS (provision/email.go:65)
+
+  Access Control & Auth Hardening  (due 2026-09-26)  [███████████████░░░░░] 75%  3/4
+    SEC-17  [Done]  cerebral realm: `google-public` OIDC broker has no hosted-domain restriction — any Google account self-provisions a realm user  @ctodie
+    SEC-14  [Done]  SEC: kagent agent endpoints exposed unauthenticated on dev.unsigned.gg — harden + make durable  @ctodie
+    SEC-13  [In Progress]  Core-services: Cloudflare Access breaks Forgejo auth — Forgejo-primary migration + credential/monitoring hardening  @ctodie
+    SEC-8  [Done]  rina: unauthenticated debug-auth endpoint leaks partial session cookie + email/role — delete  @ctodie
+
+  Agent Secret Exfiltration Prevention  (due 2026-10-31)  [███████░░░░░░░░░░░░░] 33%  2/6
+    SEC-6  [In Progress]  Open decisions — interview before build  @ctodie
+    SEC-5  [Backlog]  WS5 — governance: encode trust tiers (Phase 3)
+    SEC-4  [Backlog]  WS2 — authenticated peer wakeups (Phase 2)
+    SEC-3  [Backlog]  WS3 — make secret→exfil structurally unreachable (Phase 1)
+    SEC-2  [Done]  WS1 — enforced PreToolUse gate on blast-radius actions (Phase 0)  @ctodie
+    SEC-1  [Done]  WS4 — send-keys attribution logging (Phase 0)  @ctodie
+```
+
+*Last 7 days: 14 issue(s) touched, 7 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestones
 
 ### M1 — Secret Detection & Prevention (Guardrails)
