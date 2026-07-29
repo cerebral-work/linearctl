@@ -73,6 +73,14 @@ export async function runIntakeTriage(token: string): Promise<RoleRunResult> {
   };
 }
 
+/** Escape a bounded title for one Markdown-table cell. */
+export function escapeTableCell(title: string): string {
+  // Bound the source first so truncation cannot cut an inserted escape pair.
+  // Escape backslashes before pipes: `\|` must become `\\\|`, not remain a
+  // backslash that neutralizes our pipe escape (CodeQL js/incomplete-sanitization).
+  return title.slice(0, 80).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+
 /** Render the triage + stale summary as Markdown. */
 function formatSummary(
   triageItems: Array<{ identifier: string; title: string; reasons: string[]; url: string }>,
@@ -92,7 +100,7 @@ function formatSummary(
   }
   lines.push("| Issue | Reasons | Title |", "|---|---|---|");
   for (const item of triageItems.slice(0, 20)) {
-    const title = item.title.replace(/\|/g, "\\|").slice(0, 80);
+    const title = escapeTableCell(item.title);
     lines.push(`| [${item.identifier}](${item.url}) | ${item.reasons.join(", ")} | ${title} |`);
   }
   if (triageItems.length > 20) {
