@@ -49,7 +49,9 @@ export interface ResolvedClientCreds {
  *   3. Neither set → fall back to 1Password (`op read`) for the local CLI,
  *      which carries the dev tokens too.
  */
-export function loadClientCreds(): ResolvedClientCreds {
+export function loadClientCreds(
+  readCreds: typeof readLinearOAuthCreds = readLinearOAuthCreds,
+): ResolvedClientCreds {
   const envId = process.env.LINEAR_OAUTH_CLIENT_ID;
   const envSecret = process.env.LINEAR_OAUTH_CLIENT_SECRET;
 
@@ -74,7 +76,7 @@ export function loadClientCreds(): ResolvedClientCreds {
   }
 
   // Neither env var set — local CLI mode: resolve from 1Password (`op read`).
-  const creds = readLinearOAuthCreds();
+  const creds = readCreds();
   return {
     clientId: creds.clientId.value,
     clientSecret: creds.clientSecret.value,

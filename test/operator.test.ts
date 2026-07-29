@@ -253,7 +253,7 @@ describe("operator queue poller", () => {
       expect(pullCount).toBeGreaterThanOrEqual(1);
       expect(loopCalls).toHaveLength(1);
       expect(loopCalls[0].agentSession.id).toBe("sess-queue-1");
-      expect(acked).toContain("rcpt-1");
+      expect(acked).toEqual(["rcpt-1"]);
     } finally {
       await handle.shutdown();
     }
@@ -305,8 +305,9 @@ describe("operator queue poller", () => {
       await waitFor(() => acked.includes("rcpt-bad"));
       await handle.shutdown();
 
-      // The malformed message was acked (not retried forever).
-      expect(acked).toContain("rcpt-bad");
+      // Malformed input is acknowledged exactly once: the shared finally path
+      // owns ACKs for both success and failure, preventing duplicate receipts.
+      expect(acked).toEqual(["rcpt-bad"]);
       // The loop never ran (body failed to parse).
       expect(loopCalls).toHaveLength(0);
     } finally {
@@ -332,8 +333,11 @@ describe("operator SIGTERM subprocess (graceful exit 0 + socket unlink)", () => 
       const dir = mkdtempSync(join(tmpdir(), "linearctl-op-sigterm-"));
       const socketPath = join(dir, "operator.sock");
 
-      // Spawn the fixture (stubbed deps, signal handlers ENABLED).
-      const child = spawn("bun", ["run", "test/fixtures/operator-sigterm.ts"], {
+      // Spawn the fixture with this test runner's Bun binary and an absolute
+      // path so CI does not depend on PATH or the checkout's working directory.
+      const fixturePath = join(import.meta.dir, "fixtures", "operator-sigterm.ts");
+      const child = spawn(process.execPath, ["run", fixturePath], {
+        cwd: join(import.meta.dir, ".."),
         env: { ...process.env, OPERATOR_SOCKET: socketPath },
         stdio: ["ignore", "pipe", "pipe"],
       });

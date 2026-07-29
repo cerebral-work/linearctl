@@ -191,9 +191,12 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   await tokenCache.refreshToken();
 
   // Readiness signals surfaced by /readyz (Track 4): token age, last poll,
-  // CF env presence. Presence-only booleans — secrets never leave /readyz.
-  const tokenMintedAt = Date.now();
+  // CF env presence. Durations use the monotonic clock so NTP/VM wall-clock
+  // corrections cannot produce a negative token age or stale/future polls.
+  // The wall timestamp remains solely for the human-readable lastPoll field.
+  const tokenMintedAtMonotonicMs = performance.now();
   let lastPollAt: number | null = null;
+  let lastPollAtMonotonicMs: number | null = null;
 
   // Last-known queue depth, surfaced by /healthz + /readyz.
   let lastQueueDepth = 0;
@@ -219,9 +222,10 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     // the values), token age (30d lifetime → re-mint near expiry), last poll
     // time (null until the first poll lands), and last-known queue depth.
     if (req.method === "GET" && req.path === "/readyz") {
+      const nowMonotonicMs = performance.now();
       const ready =
-        !!queueEnv && tokenMintedAt > 0 && lastPollAt !== null
-          ? lastPollAt > Date.now() - 3 * DEFAULT_QUEUE_POLL_INTERVAL_MS
+        !!queueEnv && lastPollAtMonotonicMs !== null
+          ? lastPollAtMonotonicMs > nowMonotonicMs - 3 * pollIntervalMs
           : false;
       const body = JSON.stringify({
         ok: ready,
@@ -230,7 +234,7 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
           queueId: !!queueEnv?.CF_QUEUE_ID,
           apiToken: !!queueEnv?.CF_API_TOKEN,
         },
-        tokenAgeSec: Math.floor((Date.now() - tokenMintedAt) / 1000),
+        tokenAgeSec: Math.max(0, Math.floor((nowMonotonicMs - tokenMintedAtMonotonicMs) / 1000)),
         lastPoll: lastPollAt === null ? null : new Date(lastPollAt).toISOString(),
         queueDepth: lastQueueDepth,
       });
@@ -320,7 +324,9 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     // Mark a successful poll — /readyz uses this to confirm the poller is live
     // (not just "env present"). Set before parsing: a successful HTTP pull from
     // the queue API proves reachability + token validity for that surface.
+    // Keep wall time for display and monotonic time for freshness decisions.
     lastPollAt = Date.now();
+    lastPollAtMonotonicMs = performance.now();
 
     let messages: Array<{ receipt: string; body: string }>;
     try {
@@ -343,7 +349,6 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         } catch (err) {
           const m = err instanceof Error ? err.message : String(err);
           console.error(`operator: queue message not valid JSON: ${m}; acking`);
-          await ack(msg.receipt, queueEnv, fetchImpl);
           continue;
         }
 
@@ -451,8 +456,8 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     for (const sched of roleSchedulers) sched.stop();
     await Promise.all(roleSchedulers.map((s) => s.drain()));
     // Drain in-flight queue events (bounded by batch_size=1).
-    const deadline = Date.now() + 10_000;
-    while (inFlight > 0 && Date.now() < deadline) {
+    const deadlineMonotonicMs = performance.now() + 10_000;
+    while (inFlight > 0 && performance.now() < deadlineMonotonicMs) {
       await new Promise((r) => setTimeout(r, 50));
     }
     await server.close();

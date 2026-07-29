@@ -462,6 +462,8 @@ export async function runEventLoop(
   event: AgentSessionEvent,
   token: string,
   completeFn: LLMCompleteFn = llmComplete,
+  clientFactory: (token: string) => LinearClient = makeOAuthClient,
 ): Promise<EventLoopResult> {
-  return driveLoop(makeOAuthClient(token), event, completeFn);
+  return driveLoop(clientFactory(token), event, completeFn);
+
 }

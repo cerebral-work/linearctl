@@ -288,38 +288,42 @@ describe("scheduler SIGTERM subprocess (graceful stop + drain)", () => {
       const marker = join(markerDir, "calls.txt");
       const fixturePath = join(import.meta.dir, "fixtures", "role-sigterm.ts");
 
-      const child = spawn("bun", ["run", fixturePath], {
-        cwd: "/tmp/linearctl-track1",
+      const child = spawn(process.execPath, ["run", fixturePath], {
+        cwd: join(import.meta.dir, ".."),
         env: { ...process.env, ROLE_SIGTERM_MARKER: marker },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
       try {
-        // Wait for "fixture: scheduled".
-        const ready = await new Promise<boolean>((resolve) => {
-          const to = setTimeout(() => resolve(false), 10_000);
-          child.stderr.on("data", (c: Buffer) => {
-            if (c.toString().includes("fixture: scheduled")) {
-              clearTimeout(to);
-              resolve(true);
-            }
-          });
+        let stderr = "";
+        const readyGate = Promise.withResolvers<boolean>();
+        // Integration-only deadline: a broken child must not orphan itself.
+        const readyTimeout = setTimeout(() => readyGate.resolve(false), 10_000);
+        child.stderr.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString();
+          if (stderr.includes("fixture: scheduled")) {
+            clearTimeout(readyTimeout);
+            readyGate.resolve(true);
+          }
         });
-        expect(ready).toBe(true);
-        // Let it fire a few times.
-        await new Promise((r) => setTimeout(r, 120));
-        const callsBefore = existsSync(marker) ? await readFile(marker) : "";
-        // Send SIGTERM — graceful stop + drain + exit 0.
+
+        expect(await readyGate.promise).toBe(true);
+
+        // Subscribe before signaling: a fast child must not exit between kill()
+        // and listener registration.
+        const exitGate = Promise.withResolvers<number | null>();
+        child.once("exit", (code) => exitGate.resolve(code));
         child.kill("SIGTERM");
-        const code = await new Promise<number | null>((resolve) => {
-          child.on("exit", (c) => resolve(c));
-          setTimeout(() => resolve(null), 10_000);
-        });
+
+        // Integration-only deadline: retain a bounded failure for hung drains.
+        const exitTimeout = setTimeout(() => exitGate.resolve(null), 10_000);
+        const code = await exitGate.promise;
+        clearTimeout(exitTimeout);
+
         expect(code).toBe(0);
-        // After SIGTERM, wait and confirm no further appends.
-        await new Promise((r) => setTimeout(r, 120));
-        const callsAfter = existsSync(marker) ? await readFile(marker) : "";
-        expect(callsAfter.length).toBe(callsBefore.length); // no growth after stop()
+        expect(stderr).toContain("fixture: stable after drain calls=");
+        const callsAfterExit = existsSync(marker) ? await readFile(marker) : "";
+        expect(callsAfterExit.length).toBeGreaterThan(0);
       } finally {
         if (child.exitCode === null) child.kill("SIGKILL");
       }

@@ -25,11 +25,14 @@ registerRole("sigterm-test", {
   guardrails: ["comment"],
 });
 const role = getRole("sigterm-test");
+let calls = 0;
+
 const handle = scheduleRole(
   role,
   30,
   async () => {
     appendFileSync(marker, "x");
+    calls += 1;
     return { summary: "ran" };
   },
   () => "tok",
@@ -38,7 +41,20 @@ const handle = scheduleRole(
 process.stderr.write("fixture: scheduled\n");
 process.once("SIGTERM", () => {
   handle.stop();
-  void handle.drain(500).then(() => process.exit(0));
+  void handle.drain(500).then(() => {
+    const callsAfterDrain = calls;
+    // This integration fixture deliberately crosses three real cadence
+    // intervals: proving stop() cleared the platform timer is the contract.
+    setTimeout(() => {
+      if (calls !== callsAfterDrain) {
+        process.stderr.write(`fixture: scheduler fired after drain (${callsAfterDrain} -> ${calls})\n`);
+        process.exit(3);
+      }
+      process.stderr.write(`fixture: stable after drain calls=${calls}\n`);
+      process.exit(0);
+    }, 90);
+  });
 });
 // Block until the signal handler calls process.exit(0).
-await new Promise(() => {});
+const never = Promise.withResolvers<void>();
+await never.promise;

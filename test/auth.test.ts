@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import {
   clientCredentialsGrant,
   exchangeCode,
@@ -265,36 +265,31 @@ describe("loadClientCreds — cluster-safe env/1Password precedence (PR #120)", 
   });
 
   test("neither env var set → routes to the 1Password fallback seam (no real op call)", () => {
-    // No env pair → loadClientCreds must reach readLinearOAuthCreds. To assert
-    // the route WITHOUT invoking the real `op` binary (which on a signed-in
-    // dev machine would read live 1Password secrets — a test-hygiene violation),
-    // stub the secrets module: the fake records that it was reached and returns
-    // placeholder handles. This proves the fallback seam routes to 1P, not env.
+    // No env pair → loadClientCreds must reach the injected 1Password reader.
+    // The placeholder reader proves that route without invoking a real `op`
+    // binary or touching live credentials.
     let reached = false;
-    mock.module("../src/lib/secrets.js", () => ({
-      readLinearOAuthCreds: () => {
-        reached = true;
-        return {
-          clientId: { value: "fake-1p-client-id", redacted: "<redacted>" },
-          clientSecret: { value: "fake-1p-secret", redacted: "<redacted>" },
-          webhookUrl: { value: "", redacted: "<redacted>" },
-          webhookSecret: { value: "", redacted: "<redacted>" },
-          devAppToken: { value: "fake-app-token", redacted: "<redacted>" },
-          devUserToken: { value: "fake-user-token", redacted: "<redacted>" },
-          redirectUrl: { value: "https://app.unsigned.gg/oauth/linear/callback", redacted: "<redacted>" },
-        };
-      },
-    }));
+    const creds = loadClientCreds(() => {
+      reached = true;
+      return {
+        clientId: { value: "fake-1p-client-id", redacted: "<redacted>" },
+        clientSecret: { value: "fake-1p-secret", redacted: "<redacted>" },
+        webhookUrl: { value: "", redacted: "<redacted>" },
+        webhookSecret: { value: "", redacted: "<redacted>" },
+        devAppToken: { value: "fake-app-token", redacted: "<redacted>" },
+        devUserToken: { value: "fake-user-token", redacted: "<redacted>" },
+        redirectUrl: {
+          value: "https://app.unsigned.gg/oauth/linear/callback",
+          redacted: "<redacted>",
+        },
+      };
+    });
 
-    try {
-      const creds = loadClientCreds();
-      expect(reached).toBe(true);
-      expect(creds.source).toBe("1password");
-      expect(creds.clientId).toBe("fake-1p-client-id");
-      // dev tokens are carried through on the 1P path (local CLI mode).
-      expect(creds.devAppToken).not.toBeNull();
-    } finally {
-      mock.restore();
-    }
+    expect(reached).toBe(true);
+    expect(creds.source).toBe("1password");
+    expect(creds.clientId).toBe("fake-1p-client-id");
+    // dev tokens are carried through on the 1P path (local CLI mode).
+    expect(creds.devAppToken).not.toBeNull();
   });
+
 });

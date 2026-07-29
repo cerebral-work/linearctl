@@ -89,9 +89,10 @@ export function scheduleRole(
       if (timer) clearTimeout(timer);
     },
     async drain(timeoutMs = 10_000): Promise<void> {
-      const deadline = Date.now() + timeoutMs;
-      while (inFlight && Date.now() < deadline) {
+      const deadlineMonotonicMs = performance.now() + timeoutMs;
+      while (inFlight && performance.now() < deadlineMonotonicMs) {
         await new Promise((r) => setTimeout(r, 50));
+
       }
     },
     get ran() {
