@@ -1,0 +1,62 @@
+{{- /*
+NetworkPolicy (PR #120, chart 0.2.0).
+
+Egress-only. The operator is NOT addressable from outside its pod — zero
+ingress (no Service, no Ingress, no policy permitting inbound). Egress is
+restricted to:
+  - DNS (kube-dns in kube-system on UDP/TCP 53)
+  - HTTPS to api.cloudflare.com (the CF Queue pull/ack API)
+  - the LLM gateway in the llm namespace on port 4000
+
+This is deny-by-default + explicit allow: anything not matched here is blocked.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-netpol
+  labels:
+    app.kubernetes.io/name: linearctl
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: linearctl
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  # Zero ingress — no pod may reach the operator.
+  ingress: []
+  egress:
+    # DNS — kube-dns in kube-system.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTPS to Cloudflare (the CF Queue pull/ack API). egress to an IP needs a
+    # CIDR; 0.0.0.0/0 on port 443 is the practical allow for the API edge.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    # LLM gateway — the in-cluster LiteLLM proxy in the llm namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.llmNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.llmPort }}
+{{- end }}

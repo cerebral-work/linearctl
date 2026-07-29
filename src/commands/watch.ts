@@ -34,6 +34,7 @@ import {
 import {
   DEFAULT_OPERATOR_SOCKET,
   makeControlClient,
+  type ControlClient,
 } from "../lib/control-socket.js";
 
 export interface WatchOptions {
@@ -57,6 +58,9 @@ async function readPayload(path: string): Promise<string> {
   return await readFile(path, "utf8");
 }
 
+/** Injectable client factory for deterministic delegation tests. */
+export type ControlClientFactory = (socketPath: string) => ControlClient;
+
 /**
  * Try to delegate the event to the `linearctl operator` daemon over its Unix
  * control socket. Returns the loop result on success, or `null` if the daemon
@@ -66,10 +70,11 @@ async function readPayload(path: string): Promise<string> {
 export async function tryDelegate(
   rawPayload: string,
   socketPath: string,
+  clientFactory: ControlClientFactory = makeControlClient,
 ): Promise<EventLoopResult | null> {
-  let client;
+  let client: ControlClient;
   try {
-    client = makeControlClient(socketPath);
+    client = clientFactory(socketPath);
   } catch {
     return null;
   }
