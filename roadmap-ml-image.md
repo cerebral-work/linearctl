@@ -7,6 +7,94 @@
 > teams; 64 active issues assigned to 5 thematic milestones. 17 completed/canceled
 > issues tracked as precedent.
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Firecracker microVM Image Supply Chain | `7904195e-3734-4de6-854b-5954384020e2` | 2026-10-15 | 6 | 0% (0/6) |
+| GPU Substrate & Inference Runtime | `459804d1-992b-4a18-bb59-6c7e9a679861` | 2026-10-31 | 19 | 0% (0/19) |
+| Image Build Foundation & Supply Chain Security | `31a6fccc-761c-415e-a6dd-dd08ea84012f` | 2026-09-30 | 23 | 9% (2/23) |
+| Fable Continuity Ensemble & Distillation Lane | `65c00b8f-3f3d-4e63-884f-f2ab724406a1` | 2026-11-30 | 8 | 0% (0/8) |
+| Model Cache, CI Runners & GPU Cabinet | `ddce444c-0f99-4f51-9f74-fc315f8d5bc8` | 2027-03-31 | 5 | 0% (0/5) |
+
+```
+ML Image — 5 milestone(s)
+
+  Image Build Foundation & Supply Chain Security  (due 2026-09-30)  [██░░░░░░░░░░░░░░░░░░] 9%  2/23
+    OPS-897  [Triage]  [unsigned-paas] cosign-sign app images — cerebral-voicenotes trips verify (CER-1442 mirror)
+    OPS-892  [Triage]  reverie release: SBOM + signature + provenance + advisory scan (CER-1366 mirror)
+    OPS-889  [Triage]  ml-images: build-litellm.yaml never publishes -rN revision tags (CER-1537 mirror)
+    OPS-810  [Done]  image-build: BuildKit cache export 413s through Cloudflare — route in-cluster or gate cache  @ctodie
+    OPS-806  [Triage]  S7 — multi-project registry + isolation guard
+    OPS-781  [Triage]  Provision cosign signing key + wire to Helm-publish/build pipelines (unblocks verify-image-signatures ramp)
+    OPS-780  [Triage]  Kyverno ramp wave 2: restrict-image-registries + require-networkpolicy Audit→Deny
+    OPS-761  [Triage]  SEC H8: unmanaged write-scoped Harbor push credential (ml-images-harbor-push)
+    OPS-757  [Triage]  SEC H4: unsigned/public-registry images run unchecked (verify Audit + harbor-only)
+    OPS-691  [Done]  Cygnus: rootless BuildKit broken fleet-wide — user.max_user_namespaces=0 on all nodes  @ctodie
+    OPS-637  [Backlog]  Bake CI tooling (gettext/envsubst, cosign) into a custom ARC runner image
+    OPS-626  [Triage]  Harbor push path from workstation: tailscale-operator ingress dead-ends on Cilium kernel-DNAT reply path
+    OPS-612  [Backlog]  cosign signing coverage for non-paas image pipelines
+    OPS-548  [Duplicate]  Kyverno verify-image-signatures references missing secret kyverno/cosign-public-key — policy inert, PolicyViolation noise on every Harbor image
+    OPS-531  [Triage]  Kyverno PolicyException for ci-builds BuildKit pods (apparmor/seccomp) before enforce ramp
+    OPS-498  [Triage]  paas runbook guards: ArgoCD op-patch revision trap + IfNotPresent re-pointed-tag trap  @ctodie
+    OPS-460  [Triage]  ml-images expansion: execute phases 1-4 (foundation, supply chain, base tiers, GPU family)
+    OPS-446  [Triage]  ml-images-pull secret is hand-applied per-namespace — make it declarative (ESO) + seed kyverno cosign key
+    OPS-440  [Triage]  CI: verify-image-signatures policy test consistently red — blocks all kyverno-policies PRs
+    OPS-341  [Backlog]  Kyverno verify-image-signatures is a dead policy — wire cosign signing or retire it
+    OPS-300  [Backlog]  Kyverno policy import: native VAP PSS + verifyImages/mutateDigest + generate default-deny NP + chainsaw CI
+    OPS-266  [Backlog]  No image signing / SBOM anywhere in the supply chain
+    OPS-120  [Backlog]  Harbor secret: split general (1Password) from S3 (terraform-sourced) — drop S3 out of 1P
+
+  Firecracker microVM Image Supply Chain  (due 2026-10-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/6
+    OPS-834  [In Progress]  Holistic engineer-VM access: persistent workspace + correct image + designed SSH path (darius-vm, supersedes patchwork)  @ctodie
+    OPS-833  [Triage]  engineer-vm image: mount /dev/pts in /init + enlarge rootfs.ext4 (darius-vm findings)
+    OPS-589  [Triage]  Converge engineer Firecracker microVMs onto fcsm on a dedicated Cygnus hoplite pool
+    OPS-586  [Triage]  Live engineer Firecracker VMs on Cygnus have zero git provenance (imperative apply, ad-hoc images) — converge onto fcsm
+    OPS-550  [Backlog]  Firecracker microVMs: remove hostNetwork to lift the 1-VM-per-node cap (tap0 collision) — fix proven live
+    OPS-539  [Backlog]  Firecracker VM namespaces: podAntiAffinity missing + defaults to same-namespace, so tenant microVMs collide on tap0
+
+  GPU Substrate & Inference Runtime  (due 2026-10-31)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/19
+    OPS-896  [Triage]  Deploy unsigned-paas dev cluster VKE Terraform apply (CER-941 mirror)
+    OPS-895  [Triage]  Deploy external embedder service BGE-large on Triton GPU pool (CER-943 mirror)
+    OPS-893  [Triage]  TEI GPU embedder service on gpubox/3090 + bench REST-embedder backend (CER-1274 mirror)
+    OPS-623  [Triage]  llm.unsigned.gg gateway down — LiteLLM proxy 401s all keys (LiteLLM_VerificationToken does not exist) despite healthy DB  @ctodie
+    OPS-538  [Backlog]  apiserver-egress NetworkPolicy pattern breaks on Cygnus bare metal — needs CiliumNetworkPolicy or endpoint-explicit rules before Phase 3
+    OPS-535  [Triage]  Docs: supersede Hetzner substrate ADR + give GPU/inference a home in the Cygnus plan
+    OPS-458  [Backlog]  llm endpoint: admin/control plane was internet-exposed (master key + UI) — edge-deny applied, residual hardening
+    OPS-397  [Backlog]  Crusoe verification: managed per-token routing row (ADR addendum) + D5 sidecar bench entry
+    OPS-348  [Todo]  GCP burst-GPU satellite: file GPU quota now + Talos-on-GCE scaffold + egress cost model (ADR D4)
+    OPS-298  [Backlog]  GPU pool autoscaling + queueing: KEDA ScaledObject + Kueue flavors/cohort/priority
+    OPS-297  [Backlog]  NVIDIA inference deploy: DynamoGraphDeployment + warm model-cache + SLA/queue-depth autoscaling
+    OPS-295  [Backlog]  Spike: Rust LLM gateway on pingora
+    OPS-287  [Backlog]  Evaluate agentgateway as the MCP/A2A data plane in front of Dynamo-Triton
+    OPS-285  [Backlog]  GPU sharing: evaluate NVIDIA KAI-Scheduler alongside KEDA/Kueue/MIG
+    OPS-159  [Backlog]  GPU enablement: gpu-operator pin + gpu-pool + triton + inference-cache
+    OPS-78  [Backlog]  Track B: baremetal/Talos profile scaffold (deploymentTarget=baremetal)
+    OPS-29  [Backlog]  W4-A: Deploy NVIDIA Triton + sample inference model  @ctodie
+    OPS-30  [Backlog]  W4-B: Deploy TensorFlow Serving fallback  @ctodie
+    OPS-40  [Backlog]  Deploy KEDA, Kueue, GPU Operator, and inference cache  @ctodie
+
+  Fable Continuity Ensemble & Distillation Lane  (due 2026-11-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/8
+    OPS-894  [Triage]  Fine-tune/quantize lane: Unsloth Core + llm-compressor (TOD-995 mirror)
+    OPS-235  [Backlog]  F4 — Cutover + re-measure (Triton-Fable behind the router + style classifier gate)  @ctodie
+    OPS-234  [Backlog]  F3 — Owned-weights distill (ENDGAME): corpus to QLoRA to Triton  @ctodie
+    OPS-233  [Backlog]  F2 — Prompted ensemble: the bridge (rules router + exemplar bank)  @ctodie
+    OPS-198  [Backlog]  F4 — cutover + re-measure with the owned-weights voice provider  @ctodie
+    OPS-197  [Backlog]  F3 — owned-weights distill (the endgame), on the gpu-pool  @ctodie
+    OPS-195  [Backlog]  F1 — stand up the two-engine §4 eval harness + persona prompt  @ctodie
+    OPS-193  [Backlog]  Fable continuity ensemble — reproduce Fable to a measured bar (epic)  @ctodie
+
+  Model Cache, CI Runners & GPU Cabinet  (due 2027-03-31)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/5
+    OPS-891  [Triage]  Self-hosted CI runner with prewarmed fastembed bge-large cache (CER-1131 mirror)
+    OPS-890  [Triage]  CI runners missing fastembed BGE model cache (CER-1113 mirror)
+    OPS-836  [Triage]  fastembed ARC runner evicted: ephemeral-storage exceeds 16Gi limit (embedding model cache)  @ctodie
+    OPS-552  [Backlog]  GPU cabinet build: 48× HGX B200 (3-rack air, IB NDR, Ceph, SUNK) — colo cage, ~$3.3M CapEx  @ctodie
+    OPS-639  [Triage]  CI runners: bake fastembed BGE model cache into reverie self-hosted runners (+ runner IaC gap)
+```
+
+*Last 7 days: 3 issue(s) touched, 2 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project state
 
 | Metric | Value |

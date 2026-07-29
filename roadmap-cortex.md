@@ -4,6 +4,56 @@
 > text-scoped search across all teams. 58 issues analyzed; 42 active issues assigned
 > to 5 thematic milestones. 16 completed/canceled issues tracked as precedent.
 
+## Live Linear State (auto-rendered 2026-07-29 14:31 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M5: Hardening, Docs & Infrastructure Hygiene | `874fb888-ac63-436e-973b-3eab933744af` | 2026-11-30 | 11 | 0% (0/11) |
+| M4: Memory & Retrieval Overhaul | `1cc5cef1-422f-4001-80f8-e8aeca92a034` | 2026-10-15 | 1 | 0% (0/1) |
+| M3: Audit Substrate & Revenant Sensing | `ed6e28c9-6146-4f78-a815-2a334a00b7eb` | 2026-09-30 | 2 | 0% (0/2) |
+| M2: Guard + Blackwall Orchestration | `01bda899-853c-458d-bcb8-8d208824bee2` | 2026-09-30 | 4 | 0% (0/4) |
+| M1: Mesh CLI Consolidation & Stable Contract | `7dc65dac-350a-4410-95ae-fa59c0743416` | 2026-08-15 | 5 | 0% (0/5) |
+
+```
+Cortex — 5 milestone(s)
+
+  M1: Mesh CLI Consolidation & Stable Contract  (due 2026-08-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/5
+    CER-1490  [Backlog]  cortex: coord passthrough is dead post-mesh-strip — status/peers subcommands error
+    CER-1416  [Backlog]  Retire the agent-coordination mesh (coord + mesh-control) from reverie — umbrella
+    CER-1392  [Backlog]  cortex.mesh/v1 — stable `cortex --json` mesh-sensing contract (peers/health/locks façade over coord)  @ctodie
+    CER-1006  [Backlog]  Tier 5.6: Extract `reverie-cortex` from `reveried`  @ctodie
+    CER-587  [Backlog]  chore: merge reverie-status-tui into cortex (formerly meshctl)  @ctodie
+
+  M3: Audit Substrate & Revenant Sensing  (due 2026-09-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    CER-1514  [Backlog]  P2.6 Dream mutation ledger
+    CER-1398  [Backlog]  Fix follow-up defects surfaced in PR #803 review
+
+  M2: Guard + Blackwall Orchestration  (due 2026-09-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    CER-1685  [In Progress]  Cortex ↔ Blackwall integration: multi-project dispatch consumer spec  @ctodie
+    CER-1226  [Backlog]  Coord mesh: typed atomic-ops + per-object monotonic LWW + fractional ranks for ordered queues  @ctodie
+    CER-1210  [Backlog]  [aoe-adapter spike] T5: stand up aoe on the bastion as the A1 drop-in runtime  @ctodie
+    CER-1084  [In Progress]  Scaffold reverie-guard crate with hook-contract CLI in shadow mode  @ctodie
+
+  M4: Memory & Retrieval Overhaul  (due 2026-10-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    CER-1225  [Backlog]  Typed semantic layer over lcm_turns + lazy Arrow/S3 materialization + content-keyed query cache  @aria
+
+  M5: Hardening, Docs & Infrastructure Hygiene  (due 2026-11-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/11
+    CER-1563  [Backlog]  cortex: finish 2die4 → cerebral.work migration (Pages domain, domains, © notice, CLAUDE.md commit)  @ctodie
+    CER-1484  [Backlog]  release-please leaves Cargo.lock stale on every release merge (workspace version bump not mirrored)  @ctodie
+    CER-1284  [Backlog]  Tooling to scaffold the docs-first RFC workflow (doc-branch + draft PR + Linear mirror; stack/land helpers; pre-push check)  @ctodie
+    CER-1270  [Backlog]  install-reverie.sh leaves reveried DOWN when an auxiliary binary (e.g. reverie-tracee) is held open — exits 0 without restarting the daemon  @ctodie
+    CER-1223  [Backlog]  cortex drift: daemon-runtime shows null transiently right after a reveried restart  @ctodie
+    CER-1222  [Backlog]  [docs] site keep-current — meshctl→cortex + version sweep across the site  @ctodie
+    CER-1221  [Backlog]  [docs] Editorial layout — style &lt;pre&gt;/&lt;code&gt; blocks  @ltodie
+    CER-1218  [Backlog]  [docs] cerebral.work — reverie + cortex product/usability docs (living page)  @ltodie
+    CER-1190  [Todo]  Consolidate duplicated fmt-subscriber tracing init across reverie-bench/eventmanager/tracee (+ tracee Cargo normalization)  @ctodie
+    CER-1174  [Backlog]  metrics: COORD_ROLES vocab is stale — reveried_coord_sessions gauge is role-blind  @ctodie
+    CER-124  [Backlog]  Identify and evaluate first 3 venture bets  @ctodie
+```
+
+*Last 7 days: 14 issue(s) touched, 6 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project state
 
 | Metric | Value |

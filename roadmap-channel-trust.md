@@ -11,6 +11,35 @@ policy alone.
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:33 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Phase 2: Authenticated Peer Wakeups | `06c4ff58-7fe2-4ba7-8958-41a134aa3fe2` | 2026-01-15 | 1 | 0% (0/1) |
+| Phase 0: Foundation Gates | `0c148ca7-889b-4d0e-b2be-6e613d5760f4` | 2025-09-15 | 1 | 0% (0/1) |
+| Phase 1: Secret-Exfil Structural Unreachability | `a6feec55-69d1-4456-820f-f4734644e0f1` | 2025-11-15 | 2 | 0% (0/2) |
+| Phase 3: Trust-Tier Governance | `dd11bab4-395b-4380-9b56-fd2cf9604fd4` | 2026-03-15 | 1 | 0% (0/1) |
+
+```
+Channel-Trust Injection Hardening — 4 milestone(s)
+
+  Phase 0: Foundation Gates  (due 2025-09-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    SEC-20  [Backlog]  Harden Foundation Gates integration test — verify PreToolUse + send-keys gates together
+
+  Phase 1: Secret-Exfil Structural Unreachability  (due 2025-11-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    SEC-53  [Backlog]  feat(channel-trust): capability graph audit — enumerate all secret→sink paths
+    SEC-52  [Backlog]  feat(channel-trust): type-system enforcement — make secret→exfil path unrepresentable
+
+  Phase 2: Authenticated Peer Wakeups  (due 2026-01-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    SEC-21  [Backlog]  Capability-token protocol spike — PoC signed scoped wakeup token
+
+  Phase 3: Trust-Tier Governance  (due 2026-03-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    SEC-22  [Backlog]  Audit implicit trust-tier assumptions across agent + mesh codebase
+```
+
+*Last 7 days: 2 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestone 1 — Phase 0: Foundation Gates (target 2025-09-15)
 
 The hardening floor: enforce attribution and blast-radius gates on the two

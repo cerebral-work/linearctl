@@ -5,7 +5,7 @@
 > Source: `linearctl search --project gaze-upon --state all --json`.
 > Milestones created and issues assigned via `linearctl milestone create` + `update --stdin --apply`.
 
-## Live Linear State (auto-rendered 2026-07-28 11:11 UTC)
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
 
 | Milestone | Linear ID | Target Date | Issues | Progress |
 |----------|-----------|------------|--------|----------|
@@ -34,8 +34,8 @@ gaze-upon — 4 milestone(s)
     OPS-882  [Triage]  Feature Doc: Dogfood Harness (OMP + glm-5.2-fast max thinking)
 ```
 
-*Last 7 days: 0 opened, 0 closed.*
-*Rendered by `.github/workflows/gaze-upon-velocity.yml` on schedule + dispatch.*
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
 
 ## What gaze-upon Is
 

@@ -44,11 +44,16 @@ DIGEST_JSON="$($CTL digest --project "$PROJECT" --since 7d --json 2>&1 || echo '
 MILESTONES_JSON="$($CTL milestone --project "$PROJECT" --json 2>&1 || echo '{}')"
 
 # ── Parse digest for counts ───────────────────────────────────────────────
+# digest --json emits { total, since, groups: [{ type, count, items }] } —
+# "touched" is the total, "completed" is the completed-type group's count.
 
-read -r ISSUES_OPENED ISSUES_CLOSED <<< "$(echo "$DIGEST_JSON" | node -e "
+read -r ISSUES_TOUCHED ISSUES_COMPLETED <<< "$(echo "$DIGEST_JSON" | node -e "
 const d = require('fs').readFileSync(0,'utf8');
-try { const j = JSON.parse(d); console.log(j.openedCount || 0, j.closedCount || 0); }
-catch { console.log(0, 0); }
+try {
+  const j = JSON.parse(d);
+  const done = (j.groups || []).find((g) => g.type === 'completed');
+  console.log(j.total || 0, done ? done.count : 0);
+} catch { console.log(0, 0); }
 " 2>/dev/null || echo "0 0")"
 
 # ── Parse milestones for summary table ────────────────────────────────────
@@ -84,8 +89,8 @@ ${MILESTONE_TABLE}
 ${ROADMAP_RAW}
 \`\`\`
 
-*Last 7 days: ${ISSUES_OPENED} opened, ${ISSUES_CLOSED} closed.*
-*Rendered by \`.github/workflows/gaze-upon-velocity.yml\` on schedule + dispatch.*"
+*Last 7 days: ${ISSUES_TOUCHED} issue(s) touched, ${ISSUES_COMPLETED} completed.*
+*Rendered by \`.github/scripts/render-roadmap.sh\` (corpus auto-render, schedule + dispatch).*"
 
 # ── Splice into the roadmap file ──────────────────────────────────────────
 
@@ -94,27 +99,31 @@ if [ ! -f "$ROADMAP_FILE" ]; then
   exit 1
 fi
 
-# Use awk to splice: everything before "## Live Linear State",
-# then the new section, then everything from the next "## " heading onward.
-# If there's no existing "## Live Linear State" header, insert before the
-# first "## " heading.
+# Use awk to splice: replace the existing "## Live Linear State" section
+# (header through the line before the next "## " heading). If the file has
+# no such section yet, insert it before the FIRST "## " heading so every
+# manifest file self-seeds on first render. A section that is the last
+# heading in the file is replaced through EOF.
 
 awk -v section="$NEW_SECTION" '
-  BEGIN { in_section = 0; done = 0 }
-  /^## Live Linear State/ { in_section = 1; next }
-  /^## / && in_section {
-    in_section = 0
-    done = 1
-    print section
-    print ""
+  BEGIN { in_section = 0; placed = 0 }
+  /^## Live Linear State/ {
+    in_section = 1
+    if (!placed) { placed = 1; print section }
+    next
+  }
+  /^## / {
+    if (in_section) { in_section = 0; print ""; print; next }
+    if (!placed) { placed = 1; print section; print "" }
     print
     next
   }
   !in_section { print }
   END {
-    if (!done) {
-      # No existing section found — the file was printed as-is.
-      # The caller should handle this, but we exit 0 to avoid red-X.
+    if (!placed) {
+      # No "## " heading anywhere — append the section at EOF.
+      print ""
+      print section
     }
   }
 ' "$ROADMAP_FILE" > "${ROADMAP_FILE}.tmp" && mv "${ROADMAP_FILE}.tmp" "$ROADMAP_FILE"

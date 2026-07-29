@@ -3,6 +3,50 @@
 > **Generated:** 2026-07-22 · **Source:** Linear (cerebral-work workspace)
 > **Scope:** Identity & Access project + cross-project identity-adjacent issues from Identity & Realms, Cloudflare Zero Trust adoption, Big Board — Security, and the SEC team.
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Zero Trust Network Access | `22e93de2-1cb0-4b13-8f03-dca578e63027` | 2026-09-15 | 6 | 83% (5/6) |
+| Secret Exfiltration & Agent Auth | `10723f05-53fb-4157-8729-c8ce991b00c2` | 2026-10-15 | 2 | 0% (0/2) |
+| Endpoint & Application Hardening | `f0b0586b-b54b-43f3-a8d6-cc005ae8edf3` | 2026-08-30 | 2 | 0% (0/2) |
+| Identity Provider & SSO Foundation | `a27f547a-19e6-42fb-b609-da93fd04a5ea` | 2026-08-15 | 10 | 90% (9/10) |
+
+```
+Identity & Access — 4 milestone(s)
+
+  Identity Provider & SSO Foundation  (due 2026-08-15)  [██████████████████░░] 90%  9/10
+    SEC-45  [Done]  [tracking] SSO 3 â CF Access: swap docs.cerebral.work policies to Keycloak IdP groups (OPS-403)
+    SEC-44  [Done]  [tracking] Keycloak cerebral realm: pact clients + google-public IdP (OPS-335)
+    SEC-43  [Done]  [tracking] docs: fold 2026-07-02 keycloak learnings into runbooks (OPS-331)
+    SEC-42  [Backlog]  [tracking] unsigned-paas realm: Google Workspace brokering (OPS-264 remaining half) (OPS-330)
+    SEC-41  [Done]  [tracking] cerebral: first Google login e2e + promote operator to cerebral-admins (OPS-329)
+    SEC-40  [Done]  [tracking] GCP: authorize Keycloak broker redirect URI on the cerebral OAuth client (OPS-328)
+    SEC-39  [Done]  [tracking] cerebral: delete temp bootstrap admin after ops-admin verification (OPS-327)
+    SEC-38  [Done]  [tracking] keycloak-config-cli can prune operators/board/pact-users â silent lockout risk (OPS-541)
+    SEC-37  [Done]  [tracking] Google Workspace â Keycloak directory/login integration (OIDC brokering primary) (OPS-264)
+    SEC-36  [Done]  [tracking] Keycloak config-as-code via terraform-provider-keycloak (OPS-243)
+
+  Endpoint & Application Hardening  (due 2026-08-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    SEC-55  [Backlog]  feat(identity): rate-limiting + brute-force protection on auth endpoints
+    SEC-54  [Backlog]  feat(identity): HSTS + CSP enforcement on all public-facing endpoints
+
+  Zero Trust Network Access  (due 2026-09-15)  [█████████████████░░░] 83%  5/6
+    SEC-51  [Done]  [tracking] Investigate 530/1033 edgeâtunnel routing before Phase 2 cutover (OPS-392)
+    SEC-50  [Done]  [tracking] Phase 2 GATE: Advanced Certificate Manager for *.dev.unsigned.gg edge cert (OPS-390)
+    SEC-49  [Backlog]  [tracking] Phase 6: retire Tailscale (LAST, after WARP proven) (OPS-389)
+    SEC-48  [Done]  [tracking] DECISION: app-sso coexist-by-tier vs CF Access replaces it (OPS-388)
+    SEC-47  [Done]  [tracking] Phase 1: cloudflared Tunnel as additive ingress path (non-destructive) (OPS-387)
+    SEC-46  [Done]  [tracking] Phase 0 (BLOCKER): provision Cloudflare Zero Trust org â team domain + plan (OPS-386)
+
+  Secret Exfiltration & Agent Auth  (due 2026-10-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    SEC-57  [Backlog]  feat(identity): trust-tier lattice — encode the tier function as authoritative
+    SEC-56  [Backlog]  feat(identity): capability-token protocol design — signed scoped wakeup tokens
+```
+
+*Last 7 days: 4 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 The Identity & Access program spans the full authentication and authorization surface across the

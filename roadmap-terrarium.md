@@ -5,6 +5,150 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:31 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Soma Reflex & Trust Ledger | `664a7af2-f985-4a1f-8448-6856ae41f881` | 2026-10-31 | 11 | 36% (4/11) |
+| Lab Platform Evolution | `82e73f20-114e-4594-ac40-80a7377e7d67` | 2026-11-30 | 23 | 9% (2/23) |
+| Estate Security & Auth Hardening | `da93e50c-f888-407d-9592-df3f8decf2b8` | 2026-12-15 | 12 | 0% (0/12) |
+| Repo Adoption Wave | `8c80089d-e97c-4978-941a-3a64fc475065` | 2026-09-30 | 38 | 0% (0/38) |
+| Terrarium Core & Standards Adoption | `7b44a78f-c33f-4dcf-ba1e-1e38d228770c` | 2026-08-15 | 33 | 42% (14/33) |
+
+```
+Terrarium — 5 milestone(s)
+
+  Terrarium Core & Standards Adoption  (due 2026-08-15)  [████████░░░░░░░░░░░░] 42%  14/33
+    RD-204  [Backlog]  Terrarium: linearctl distribution via bun install + homebrew tap
+    RD-202  [Backlog]  Terrarium: node registry auto-validation + CANON.md freshness gate
+    RD-198  [Backlog]  Retire PIPELINE.md §10.1 company-description stage workaround
+    RD-194  [Done]  os: land scaffold PRs #1–#3 (standards adoption, CI workflows, reflex daemon v0)
+    RD-151  [Backlog]  terrarium: wire the rust CI path (cargo-nextest + confirm clippy in .prototools)
+    RD-140  [Done]  terrarium: templates ship no NODE.md / lineage stub (relates RD-8)  @ctodie
+    RD-139  [Done]  terrarium: make the ['template'] CI-exclusion explicit  @ctodie
+    RD-138  [Backlog]  terrarium: land infra-eng + research-fanout into .claude/workflows/
+    RD-137  [Backlog]  terrarium: reconcile antagonist review-gate lens count (spec 6 vs code 5)
+    RD-126  [Backlog]  alchemy CI credential — automate brands/bbs deploys + fold in Linear release tracking
+    RD-69  [Done]  dealbook: dealbook.cerebral.work — entity pitch/reference/data ingestion pipeline (Access: marketing + C-suite)  @ctodie
+    RD-67  [Done]  Audit alchemy nodes for the dead `alchemy deploy` script form  @ctodie
+    RD-66  [Done]  scripts/antagonist-prep.sh — deterministic review-surface materialization  @ctodie
+    RD-65  [Done]  Add moon dependsOn/inputs edges where node CI correctness spans nodes  @ctodie
+    RD-63  [Done]  Somnium — persistent project agents + live preview per node (brand-developer surface for terrarium)  @ctodie
+    RD-57  [Backlog]  Activate throughline on dreams (stretch, n=3 proof)
+    RD-38  [Backlog]  Fixture-based policy self-test for critpath — salvage from closed terrarium-ctl PR #12
+    RD-37  [Backlog]  Git-hooks install mechanism — salvage from closed terrarium-ctl PR #12
+    RD-23  [Backlog]  tag-webapp CI flake: 4 concurrent `pnpm install` runs race native postinstalls (uv_cwd ENOENT)
+    RD-21  [Backlog]  tanzaku node seed — ambient protocol canon: Marc ratification + naming
+    RD-20  [Backlog]  Adopt terrarium standards — reverie-slack-app  @ctodie
+    RD-19  [Backlog]  Adopt terrarium standards — revenant  @ctodie
+    RD-18  [Backlog]  Adopt terrarium standards — unsigned-paas  @ctodie
+    RD-17  [In Progress]  Adopt terrarium standards — reverie  @ctodie
+    RD-16  [Done]  Release workflow red on main — wire release-please to a GitHub App token (operator: create App + secrets)  @ctodie
+    RD-15  [Done]  Python node-kind CI provisioning: install ruff + pytest, add wsref pyproject + tests, re-gate wsref  @ctodie
+    RD-14  [Backlog]  Wire lefthook install path — proto can't manage it; git hooks currently skipped on fresh bootstrap  @ctodie
+    RD-13  [Done]  RD-7 follow-up: moon 2.x task-model port (moon ci not yet green) + CI-gate enforcement on main  @ctodie
+    RD-11  [Done]  Enforced-guardrail pass: merge-gate + ci-gate + secret-guard + locks + permissions  @ctodie
+    RD-10  [Backlog]  Wire lifecycle orchestration (ideation/execution/validation modular drivers)  @ctodie
+    RD-9  [Done]  Port/adopt critpath + the lineage convention (coherence machine)  @ctodie
+    RD-8  [Backlog]  Author spin-lead + eject workflows into .claude/workflows  @ctodie
+    RD-7  [Done]  Scaffold the machine: moon + CI + githooks + .claude (settings/hooks/permissions incl. grep) + node templates  @ctodie
+
+  Repo Adoption Wave  (due 2026-09-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/38
+    RD-125  [Backlog]  adopt: cerebral-work/pgt
+    RD-124  [Backlog]  adopt: cerebral-work/enterprise-genie
+    RD-123  [Backlog]  adopt: cerebral-work/linear-github-sync
+    RD-122  [Backlog]  adopt: cerebral-work/very-good-document-imposer
+    RD-121  [Backlog]  adopt: cerebral-work/calc
+    RD-120  [Backlog]  adopt: cerebral-work/cicatrix
+    RD-119  [Backlog]  adopt: cerebral-work/cortex
+    RD-118  [Backlog]  adopt: cerebral-work/aiml-history
+    RD-117  [Backlog]  adopt: cerebral-work/files-portal
+    RD-116  [Backlog]  adopt: cerebral-work/cerebral-voicenotes
+    RD-115  [Backlog]  adopt: cerebral-work/somnium
+    RD-114  [Backlog]  adopt: cerebral-work/honeypot.vip
+    RD-113  [Backlog]  adopt: cerebral-work/mcp-honeypot
+    RD-112  [Backlog]  adopt: cerebral-work/dealroom
+    RD-111  [Backlog]  adopt: cerebral-work/cf-pwa-template
+    RD-110  [Backlog]  adopt: cerebral-work/blanklabel
+    RD-109  [Backlog]  adopt: cerebral-work/linearctl
+    RD-108  [Backlog]  adopt: cerebral-work/cerebral-design
+    RD-107  [Backlog]  adopt: cerebral-work/flashed-web
+    RD-106  [Backlog]  adopt: cerebral-work/pact
+    RD-105  [Backlog]  adopt: cerebral-work/gaze-works
+    RD-104  [Backlog]  adopt: cerebral-work/site
+    RD-103  [Backlog]  adopt: unsigned-gg/kokoro-tts
+    RD-102  [Backlog]  adopt: unsigned-gg/ghost-blog
+    RD-101  [Backlog]  adopt: unsigned-gg/uri-snapshot
+    RD-100  [Backlog]  adopt: unsigned-gg/nahbro.dev
+    RD-99  [Backlog]  adopt: unsigned-gg/reach
+    RD-98  [Backlog]  adopt: unsigned-gg/bench
+    RD-97  [Backlog]  adopt: unsigned-gg/mission-control
+    RD-96  [Backlog]  adopt: unsigned-gg/agent-jury
+    RD-95  [Backlog]  adopt: unsigned-gg/juarez
+    RD-94  [Backlog]  adopt: unsigned-gg/pgt
+    RD-93  [Backlog]  adopt: unsigned-gg/blackwall
+    RD-92  [Backlog]  adopt: unsigned-gg/overflow
+    RD-91  [Backlog]  adopt: unsigned-gg/escapement
+    RD-90  [Backlog]  adopt: unsigned-gg/dc
+    RD-89  [Backlog]  adopt: unsigned-gg/unsigned-gg
+    RD-12  [Backlog]  Onboarding node + external-node adoption rollout (reverie/revenant/unsigned-paas)  @ctodie
+
+  Soma Reflex & Trust Ledger  (due 2026-10-31)  [███████░░░░░░░░░░░░░] 36%  4/11
+    RD-197  [Backlog]  soma: policy as a signed append-only store (the T5 half of the separate-signer line)
+    RD-196  [Backlog]  soma: WebAuthn sign-off proof verification in reflex (RD-131 implementation)
+    RD-136  [Backlog]  soma: reflex RFC — position vs OAP / MCP authz (Phase 8)
+    RD-135  [Backlog]  soma: memory tiers on engram (Phase 3)
+    RD-134  [Backlog]  soma: the promotion mechanic + trust ledger (Phase 4)
+    RD-133  [Backlog]  soma/comms pilot — draft-only (Phase 2)
+    RD-132  [Done]  soma: incident definition for auto-demotion  @ctodie
+    RD-131  [Done]  soma: sign-off authentication design  @ctodie
+    RD-130  [Done]  soma: reflex daemon v0 (Phase 1)  @ctodie
+    RD-129  [Done]  soma: reflex enforcement threat model  @ctodie
+    RD-128  [Backlog]  soma: Marc/Laura naming ratification consult
+
+  Lab Platform Evolution  (due 2026-11-30)  [██░░░░░░░░░░░░░░░░░░] 9%  2/23
+    RD-56  [Backlog]  lab a11y/perf ratchets (stretch)
+    RD-54  [Backlog]  Playwright runtime tier-invariant test
+    RD-53  [Backlog]  lab realm + estate brand-lint
+    RD-52  [Backlog]  Extract @cerebral/realms
+    RD-51  [Backlog]  D1 migration discipline
+    RD-50  [Backlog]  BOARD_KV snapshot history
+    RD-49  [Backlog]  lab D1 nightly backup to R2
+    RD-46  [Backlog]  lab bearer-API hardening
+    RD-42  [Backlog]  Grill authoring-habit switch to lab write API
+    RD-41  [Backlog]  lab-ingest deploy-copy parity check
+    RD-36  [Backlog]  lab v3 — deal tier
+    RD-35  [Backlog]  lab v3 — grill answering from Slack
+    RD-34  [Backlog]  lab v3 — scheduled D1 -> R2 export
+    RD-33  [Backlog]  lab v3 — attachments via R2
+    RD-32  [Backlog]  lab v3 — offline read-only shell
+    RD-31  [Backlog]  lab v2 — docket unification
+    RD-30  [Backlog]  lab v2 — design pass
+    RD-29  [Backlog]  lab v2 — revision diffs
+    RD-28  [Backlog]  lab v2 — full-text search
+    RD-27  [Backlog]  lab v2 — Linear snapshot refresh cron
+    RD-26  [Backlog]  lab v2 — grill authoring v0: parse-as-grill toggle on /new
+    RD-25  [Done]  lab v1.2 — write API (bearer/session) + shared grill parser
+    RD-24  [Done]  lab v1.1 — nightly plans-dir ingestion
+
+  Estate Security & Auth Hardening  (due 2026-12-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/12
+    RD-203  [Backlog]  Terrarium: blast-radius assessment tooling for node changes
+    RD-127  [Backlog]  Coherence swarm — cross-repo spec/code/Linear auditor  @ctodie
+    RD-70  [Backlog]  dealbook hardening: in-worker JWT verify, service-token custody, Workspace-group gate  @ctodie
+    RD-64  [Backlog]  Vendored-token stale-check CI gate (DESIGN-SURFACES §3.2)
+    RD-55  [Backlog]  Deploy-workflow unification (composite Action, answer 2b)
+    RD-48  [Backlog]  Dual-door revocation regression tests
+    RD-47  [Backlog]  CF Access /ops retire
+    RD-45  [Backlog]  OTP cross-connection throttle
+    RD-44  [Backlog]  OIDC revocation-lag fix
+    RD-43  [Backlog]  Estate secrets → Cloudflare Secrets Store (KMS-backed, answer 3c)
+    RD-40  [Backlog]  Gate-failure alerting across all three auth doors
+    RD-39  [Backlog]  Post-merge landing verification (phantom-merge guard)
+```
+
+*Last 7 days: 58 issue(s) touched, 14 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestone Timeline
 
 | # | Milestone | Target | Progress | Done/Total |

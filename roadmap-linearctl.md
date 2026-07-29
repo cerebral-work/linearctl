@@ -1,6 +1,6 @@
 # linearctl — Roadmap
 
-> Auto-generated 2026-07-25 from spec.md §12 + repo state.
+> Updated 2026-07-29 from spec.md §12 + repo state (previous: 2026-07-25).
 > Source of truth: `docs/spec.md` (product/design contract), `PUNCH-LIST.md`
 > (Linear backlog snapshot).
 
@@ -11,7 +11,7 @@ flowchart LR
   M0["M0 ✓ scaffold"] --> M1["M1 ✓ read cmds"]
   M1 --> M2["M2 ✓ write+batch"]
   M2 --> M3["M3 ✓ workflows+agent-adjacent"]
-  M3 --> M4["M4 🔲 native agent"]
+  M3 --> M4["M4 ◐ native agent (core landed)"]
 ```
 
 ### M0 — Scaffold ✅
@@ -34,20 +34,24 @@ against live data.
 contract), `--limit` bounded pull, Loop recipe catalog, dev loop scripts,
 CONTRIBUTING.md, full core test coverage (301 tests).
 
-### M4 — Native agent 🔲 (operator-gated)
-OAuth `actor=app` (CER-1148), `watch` daemon (CER-1149), maintainer-agent
-facility (CER-1188). TUI (CER-1550) competes for this slot. Standup Slack
-send (T12) shipped — PR #104, `--slack --apply` (CER-1730).
+### M4 — Native agent ◐ (core landed 2026-07-28/29)
+OAuth `actor=app` shipped (CER-1148 ✓, PR #112 — `linearctl auth` 4-verb
+tree, live app-actor mint verified). `watch` loop driver + `operator` daemon
+shipped (CER-1149 ✓ closed 2026-07-29 — `watch --once --payload` full-loop
+fallback, CF Queue consumer + Unix-socket delegation, 10s-SLA thought-first
+ordering). Maintainer-agent facility phase 1 shipped (CER-1188 ✓ closed
+2026-07-28 — role catalog + scheduler + intake-triage + grooming +
+guardrails). Milestone update command shipped (CER-1759 ✓, PR #119).
+TUI first slice landed (CER-1550, ADR-0008 Ink — Triage pane + TTY gate,
+PR via Track 2). Remaining: watch daemon delegate-to-operator branch,
+TUI panes 2-5, notarization.
 
-## Deferred tickets (4 open in Linear)
+## Deferred tickets (open in Linear)
 
 | ID | Pri | Title | Assignee | Blocker |
 |---|---|---|---|---|
-| CER-1148 | P4 | `feat(agent)`: OAuth `actor=app` scaffolding | ctodie | M4 prerequisite |
-| CER-1149 | P4 | `feat(agent)`: `linearctl watch` — AgentSessionEvent daemon | ctodie | loop driver + watch CLI shipped (full-loop fallback); daemon follow-up |
 | CER-1150 | P4 | `chore(release)`: macOS notarization / codesign | ctodie | Apple Developer Program enrollment |
-| CER-1188 | P4 | `feat(agent)`: maintainer-agent facility (phased) | ctodie | M4; depends on CER-1148 + CER-1149 |
-| CER-1550 | P0 | `feat(tui)`: full-screen keyboard-driven dashboard over `core/*` | unassigned | scope decision needed |
+| CER-1550 | P0 | `feat(tui)`: full-screen dashboard — first slice (Triage pane) landed; panes 2-5 open | unassigned | — |
 
 ## Shipped this session (2026-07-24/25, PRs #89-#97 + direct)
 
@@ -89,14 +93,14 @@ send (T12) shipped — PR #104, `--slack --apply` (CER-1730).
 | operator (healthz, delegate, shutdown, queue poll/ack, SIGTERM subprocess) | operator.test.ts | 11 |
 | + remaining test files | | 301 total |
 
-## Repo metrics
+## Repo metrics (2026-07-29)
 
-| Tests | 301 pass, 0 fail (654 expects) |
-| Expect calls | 654 |
-| Test files | 45 |
-| Core modules | 25 |
-| Commands | 28 |
+| Tests | 407 (405 pass; 2 tui spawn tests are sandbox-env-only failures, green in CI) |
+| Expect calls | 886 |
+| Test files | 50 |
+| Core modules | 28 |
+| Commands | 28+ (incl. watch, operator, handoff, tui) |
 | Typecheck | clean |
-| Version | 0.7.0 |
+| Version | 0.7.0 + unreleased (watch/operator/handoff/milestone-update on main) |
 | Runtime | bun 1.3.14 |
 | Distribution | mise (SLSA-attested single binary) |

@@ -7,6 +7,46 @@
 - **Assignee:** ctodie (all issues)
 - **Generated:** 2026-07-22
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Corpus Migration, Cloud Landing & Observability | `6b1abb23-1be1-4ad3-8ad6-2c52955d2b0c` | 2026-09-23 | 3 | 0% (0/3) |
+| In-Cluster Deploy & Namespace Hardening | `daeba53d-ca3c-4bf0-83be-00147e5cc042` | 2026-08-26 | 4 | 0% (0/4) |
+| Storage & Image Substrate | `68a6bbd8-c695-4a93-bd14-0dc814370362` | 2026-08-12 | 5 | 40% (2/5) |
+| Auth Gates & Tenant Isolation | `c65c9d32-24c3-411e-9aa2-8c611c5b3a73` | 2026-09-09 | 4 | 0% (0/4) |
+
+```
+reverie-cloud platform prereqs — 4 milestone(s)
+
+  Storage & Image Substrate  (due 2026-08-12)  [████████░░░░░░░░░░░░] 40%  2/5
+    OPS-281  [Backlog]  Productionize the reveried image build (CI + cosign + ESO secrets + kaniko Dockerfile egress)  @ctodie
+    OPS-190  [Backlog]  reverie-pg restore drill + backup verification before corpus migration  @ctodie
+    OPS-188  [Done]  GPU substrate activation spec — resolve host fork + size for BGE embedder AND Fable-distill (gpu-pool/Triton/Kueue)  @ctodie
+    OPS-180  [In Progress]  Dedicated reverie-pg CNPG cluster with pgvector + ESO + verify-full TLS  @ctodie
+    OPS-179  [Done]  Harbor `reverie` project + robots + reveried image build via kaniko  @ctodie
+
+  In-Cluster Deploy & Namespace Hardening  (due 2026-08-26)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    OPS-282  [Backlog]  GitOps the reverie cloud deploy + merge PR #765 (eliminate R0 hand-applied state)  @ctodie
+    OPS-183  [Backlog]  Valkey coord HA chart (Sentinel topology) — platform substrate for adr-013  @ctodie
+    OPS-182  [Backlog]  Production reveried deploy (dogfood) — Harbor image, hardened Helm, /health green in `reverie` ns  @ctodie
+    OPS-181  [Backlog]  Shared `reverie` namespace chart — ns, PSA labels, NetworkPolicy, ResourceQuota, ESO wiring  @ctodie
+
+  Auth Gates & Tenant Isolation  (due 2026-09-09)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    OPS-187  [Backlog]  Tenant template extraction + provision Patrick / Krishna / JIT Pal namespaces  @ctodie
+    OPS-186  [Backlog]  L4 auth gates live — OIDC wiring, per-caller rate limits, public-endpoint hardening (HARD gate for tenants)  @ctodie
+    OPS-185  [Backlog]  Operator tenant namespace (dogfood) — per-tenant ns/netpol/quota reference implementation  @ctodie
+    OPS-184  [Backlog]  Keycloak `reveried` OIDC client (kcadm in dev + codified in realm import)  @ctodie
+
+  Corpus Migration, Cloud Landing & Observability  (due 2026-09-23)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    OPS-280  [Backlog]  Stand up GCP landing zone + GCP Secret Manager for cerebral.work (ESO-consumed)  @ctodie
+    OPS-192  [Backlog]  Reverie observability hardening — alert rules, runbook, game-day drill  @ctodie
+    OPS-191  [In Progress]  Operator corpus migration: laptop engram.db → cloud reverie-pg + client cutover (freeze-window, one-way)  @ctodie
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestones
 
 Four thematic milestones sequence the reverie-cloud platform prerequisites. Each

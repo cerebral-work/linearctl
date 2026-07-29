@@ -4,6 +4,56 @@
 > 5 milestones created in Linear; 23 issues assigned (20 original + 3 filed during
 > roadmap generation). Project progress: ~6%. Team RD.
 
+## Live Linear State (auto-rendered 2026-07-29 14:32 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4: Multiplexer MVP & Architectural Foundation | `43ab5f23-5c27-4893-88e1-81d6c3c38e4d` | 2027-01-31 | 7 | 0% (0/7) |
+| M1: Conformance Foundation & Contract Integrity | `c45f9e2e-7f48-494b-93df-5f46f17cbc04` | 2026-08-31 | 2 | 0% (0/2) |
+| M3: Conformance Gate Closure & Release Readiness | `5d366b17-e7a9-45ba-a95b-8c3ba29a2aee` | 2026-11-30 | 4 | 0% (0/4) |
+| M2: Terminal Rendering & Input Fidelity | `cb550a40-b21e-4edd-ad85-8e5d8307da9d` | 2026-10-15 | 3 | 0% (0/3) |
+| M5: Advanced Capabilities & Ecosystem | `01e107e9-69bd-4598-8ea5-fca7797cba24` | 2027-04-30 | 7 | 0% (0/7) |
+
+```
+Overflow — 5 milestone(s)
+
+  M1: Conformance Foundation & Contract Integrity  (due 2026-08-31)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    RD-143  [Backlog]  Part 3: Golden-frame conformance harness: the regression net, built before the wire is touched
+    RD-142  [Backlog]  Part 2: Contract integrity + panic containment: fix live PGT drift, guard it mechanically, feature-gate the todo!() stubs
+
+  M2: Terminal Rendering & Input Fidelity  (due 2026-10-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    RD-146  [Backlog]  Part 6: v0.1.3-alpha — input fidelity: kitty keyboard protocol done right + input-encoding goldens
+    RD-145  [Backlog]  Part 5: v0.1.2-alpha — full-screen apps render right: ED2/DECSTBM, BCE, normal mouse tracking
+    RD-144  [Backlog]  Part 4: v0.1.1-alpha — themes actually work: default-color pipeline fix + colored underlines
+
+  M3: Conformance Gate Closure & Release Readiness  (due 2026-11-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    RD-199  [Backlog]  Tag and publish v0.1 stable release
+    RD-149  [Backlog]  Part 9: Release truth + Windows confidence: README reality, RELEASING checklist, self-hosted Windows runner
+    RD-148  [Backlog]  Part 8: Domain truth + structural cleanup: unify blocks/history, amend the migration plan, delete dead code, cheap pure-logic suites
+    RD-147  [Backlog]  Part 7: Close the Phase 2 conformance gate: esctest-over-PTY in CI + the long-tail fixes
+
+  M4: Multiplexer MVP & Architectural Foundation  (due 2027-01-31)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/7
+    RD-201  [Backlog]  Wire cross-compile matrix in CI (Linux/macOS/Windows × x86_64/aarch64)
+    RD-200  [Backlog]  Implement pane-to-pane communication (design from RD-177)
+    RD-177  [Backlog]  Design canonical pane-to-pane communication in Overflow mux
+    RD-152  [In Progress]  Bake mingw-w64 + aarch64 cross toolchains into the ci-rust runner image  @ctodie
+    RD-150  [Backlog]  Part 10: v0.2.0-alpha — Phase 3 mux MVP: panes, splits, per-pane PTY
+    RD-73  [Backlog]  Full 6-crate workspace split
+    RD-71  [Backlog]  Phase 3 — Mux (herdr): session/pane management
+
+  M5: Advanced Capabilities & Ecosystem  (due 2027-04-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/7
+    RD-79  [Backlog]  PGT codegen: wire .pgt files to codegen
+    RD-78  [Backlog]  K8s integration via kube crate
+    RD-77  [Backlog]  Phase 10 — Somnium: project agents
+    RD-76  [Backlog]  Phase 9 — Reverie memory: session snapshots
+    RD-75  [Backlog]  Phase 8 — Attention router: priority queue
+    RD-74  [Backlog]  Phase 7 — Demon mode: gate classification
+    RD-72  [Backlog]  Phase 6 — Mosh remote: UDP state sync
+```
+
+*Last 7 days: 1 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## What Overflow Is
 
 Overflow is a Rust-native terminal emulator and multiplexer — a from-scratch
