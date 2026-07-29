@@ -8,6 +8,28 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:35 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M2 — Canon drift governance loop | `f7a39b7f-ef10-44b8-94d1-2dbb5a209bf1` | 2026-08-19 | 1 | 0% (0/1) |
+| M1 — Design package scaffold | `69aa66cd-5d2e-4853-9f0c-69cb4f9514ec` | 2026-08-12 | 3 | 0% (0/3) |
+
+```
+design: unsigned — 2 milestone(s)
+
+  M1 — Design package scaffold  (due 2026-08-12)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    BRAND-30  [Backlog]  L1 primitives: unsigned component library (panel, pill, kbd, button, command-bar, focus ring)
+    BRAND-29  [Backlog]  L2 auth shell: extract onboard Keycloak PKCE client for dash consumption
+    BRAND-7  [Backlog]  Scaffold @unsigned/design package (lift cerebral-design tooling shape)
+
+  M2 — Canon drift governance loop  (due 2026-08-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-6  [Backlog]  [chore] weekly canon/mirror drift check — unsigned
+```
+
+*Last 7 days: 1 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project charter
 
 Consolidate the **machinery, not the identity** of the unsigned brand's

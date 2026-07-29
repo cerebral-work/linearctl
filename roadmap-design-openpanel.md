@@ -3,6 +3,39 @@
 > **Linear project:** [design: openpanel](https://linear.app/cerebral-work/project/design-openpanel-0413c272dfbb4b3fb7f3-9d4a75153ce2) · `0413c272-dfbb-4b3f-b7f3-9d4a75153ce2`
 > **State:** Backlog · **Progress:** 0% · **Generated:** 2026-07-22
 
+## Live Linear State (auto-rendered 2026-07-29 14:35 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — CI/Build Infrastructure | `3283fa13-a8b9-4399-a558-514ddefda5f5` | 2026-08-07 | 5 | 60% (3/5) |
+| M3 — Platform Surface & Throughline | `1c48c638-af32-4952-aa5a-b0b41f97375a` | 2026-09-04 | 2 | 50% (1/2) |
+| M2 — Venture Tooling Hardening | `cbec7419-2357-479c-970a-67d8bc6c4b01` | 2026-08-21 | 0 | 0% (0/0) |
+| M1 — Brand Canon & Governance | `1c25e6bd-6a53-449e-a6b0-dacae674a1d2` | 2026-08-14 | 1 | 0% (0/1) |
+
+```
+design: openpanel — 4 milestone(s)
+
+  M4 — CI/Build Infrastructure  (due 2026-08-07)  [████████████░░░░░░░░] 60%  3/5
+    OPS-675  [Done]  CI image builds broken estate-wide: KUBECONFIG_CI_BUILDS targets retired Lyra API  @ctodie
+    OPS-650  [Done]  hermes-agent: re-add harbor-pull ExternalSecret template — P1  @ctodie
+    OPS-532  [Triage]  build-openpanel-backlog-sweep mints no git clone token (anonymous clone of private repo)
+    OPS-530  [Triage]  CI trivy gate cannot pull from Harbor (HARBOR_USERNAME/PASSWORD repo secrets unauthorized)
+    OPS-336  [Done]  platform-pg: pact database + OpenBao seed  @ctodie
+
+  M1 — Brand Canon & Governance  (due 2026-08-14)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-9  [Backlog]  [chore] weekly mirror check — openpanel design project
+
+  M2 — Venture Tooling Hardening  (due 2026-08-21)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/0
+    (no issues)
+
+  M3 — Platform Surface & Throughline  (due 2026-09-04)  [██████████░░░░░░░░░░] 50%  1/2
+    RD-68  [Done]  dreams: /throughline walkthrough — surface the THROUGHLINE/OPEN PANEL corpus (openpanel realm, public+board tiers)  @ctodie
+    RD-22  [Backlog]  dreams — platform naming verdict + re-founding rollout (M2/M3)
+```
+
+*Last 7 days: 4 issue(s) touched, 2 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Scope note
 
 The `--project "design: openpanel"` filter returns 1 issue (BRAND-9, the weekly

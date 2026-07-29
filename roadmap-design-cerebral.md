@@ -6,6 +6,32 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Canon drift governance | `c5dbf2b3-d669-4c2f-8b81-be18d1f4135d` | 2026-08-12 | 1 | 0% (0/1) |
+| Palette migration sweep | `e8a96fb2-511d-48bb-ad78-f00058a10634` | 2026-08-05 | 3 | 33% (1/3) |
+| Brand identity foundation | `ff3277db-c9bf-4000-96e8-5fc7fef03062` | 2026-07-08 | 1 | 100% (1/1) |
+
+```
+design: cerebral — 3 milestone(s)
+
+  Brand identity foundation  (due 2026-07-08)  [████████████████████] 100%  1/1
+    BRAND-5  [Done]  Decide: cerebral.work landing — editorial identity vs living-terminal  @ctodie
+
+  Palette migration sweep  (due 2026-08-05)  [███████░░░░░░░░░░░░░] 33%  1/3
+    BRAND-31  [Backlog]  Audit: zero pre-seed palette values across Cerebral surface
+    BRAND-4  [Backlog]  Migrate files-portal off pre-seed palette onto living-terminal
+    BRAND-3  [Ready]  Migrate voicenotes off pre-seed palette onto living-terminal
+
+  Canon drift governance  (due 2026-08-12)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-2  [Backlog]  [chore] weekly drift check — design-sync --check + mirror hygiene
+```
+
+*Last 7 days: 1 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project charter
 
 The **design: cerebral** project governs the Cerebral brand's design surface —

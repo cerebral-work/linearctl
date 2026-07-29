@@ -7,6 +7,39 @@
 > **Executed in Linear:** 5 milestones created, 6 issues assigned. Rendered
 > via `linearctl roadmap --project 'engineer-vm ssh-wake autoscaler'`.
 
+## Live Linear State (auto-rendered 2026-07-29 14:33 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — fcsm Snapshot/Resume Backend | `5dfd5b38-9515-43ae-a7b4-d608416b58f6` | 2026-09-16 | 1 | 0% (0/1) |
+| M5 — Generalization & OSS Extraction | `04864a6a-8f2d-4644-ad8b-9e3a9ce3b979` | 2026-09-30 | 2 | 0% (0/2) |
+| M3 — Hardening & Observability | `8411a6ac-1117-4c5f-aacb-0e0aa72b413d` | 2026-09-02 | 1 | 0% (0/1) |
+| M2 — Fleet Rollout & Onboarding | `4808fcbf-693b-4948-a574-48b612dfe393` | 2026-08-19 | 1 | 0% (0/1) |
+| M1 — MVP & Accept-and-Hold Proxy | `fdb16872-8d2c-4663-b618-e5f54ee41dd0` | 2026-08-05 | 1 | 100% (1/1) |
+
+```
+engineer-vm ssh-wake autoscaler — 5 milestone(s)
+
+  M1 — MVP & Accept-and-Hold Proxy  (due 2026-08-05)  [████████████████████] 100%  1/1
+    OPS-670  [Done]  engineer-vm-waker P1: accept-and-hold SSH proxy + scale controller MVP  @ctodie
+
+  M2 — Fleet Rollout & Onboarding  (due 2026-08-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-671  [Triage]  engineer-vm-waker P2: fleet rollout + opt-in defaults + onboarding docs
+
+  M3 — Hardening & Observability  (due 2026-09-02)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-672  [Triage]  engineer-vm-waker P3: activity probe, HA decision, metrics
+
+  M4 — fcsm Snapshot/Resume Backend  (due 2026-09-16)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    OPS-673  [Triage]  engineer-vm-waker P4: fcsm snapshot/resume wake backend
+
+  M5 — Generalization & OSS Extraction  (due 2026-09-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    OPS-821  [Canceled]  waker: seed unsigned-gg/waker — generalize accept-and-hold waker to STS+Deployment scale-to-zero
+    OPS-819  [Triage]  waker: seed unsigned-gg/waker — generalize accept-and-hold waker to STS+Deployment scale-to-zero
+```
+
+*Last 7 days: 2 issue(s) touched, 1 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## What This Is
 
 An accept-and-hold TCP wake proxy + idle reaper that scales engineer VMs to

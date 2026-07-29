@@ -6,6 +6,38 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M0 — Infrastructure stabilization | `1a5e54af-bc05-43f2-a56e-49d213aa339a` | 2026-07-13 | 1 | 100% (1/1) |
+| M3 — Mirror & sync discipline | `e1c8c0a1-9d27-47b1-82d5-22a85a27b544` | 2026-09-02 | 1 | 0% (0/1) |
+| M1 — Ownership & role definition | `7588a692-f6ac-4f84-93f5-d569af5b1b9a` | 2026-08-05 | 1 | 0% (0/1) |
+| M4 — Drift detection & response | `74b4f628-afb4-4c9b-b77b-bda375f93e93` | 2026-09-23 | 1 | 0% (0/1) |
+| M2 — Canon-change flow | `2dae715a-3e3f-4079-ac3d-f1fa80166d20` | 2026-08-19 | 1 | 0% (0/1) |
+
+```
+design: governance — 5 milestone(s)
+
+  M0 — Infrastructure stabilization  (due 2026-07-13)  [████████████████████] 100%  1/1
+    BRAND-28  [Ready]  Forgejo org npm registry publish broken — 0.7.2/0.7.3/0.8.0 missing, publish tokens dead
+
+  M1 — Ownership & role definition  (due 2026-08-05)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-10  [In Progress]  Draft the design co-ownership & maintenance spec (cerebral-internal first)  @ctodie
+
+  M2 — Canon-change flow  (due 2026-08-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-32  [Backlog]  Canon-change flow: decision tree + runbook per authoring mode
+
+  M3 — Mirror & sync discipline  (due 2026-09-02)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-33  [Backlog]  Mirror & sync discipline: source-of-truth table per brand
+
+  M4 — Drift detection & response  (due 2026-09-23)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/1
+    BRAND-34  [Backlog]  Drift detection & response: automated signal + weekly chore loop
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Project charter
 
 Plan and build the system for co-owning and maintaining design work across

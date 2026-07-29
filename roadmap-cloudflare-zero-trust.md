@@ -6,6 +6,38 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:34 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Device Posture & Legacy Decommission | `468b77c8-2fff-43df-94fd-2c3c702f854c` | 2026-09-15 | 2 | 0% (0/2) |
+| Identity & Access Policy | `819337ab-0bc2-4c68-89e0-66c006b64b43` | 2026-07-01 | 1 | 100% (1/1) |
+| Tunnel Ingress & Edge Hardening | `6f9701a9-1af6-46f4-b21a-0da388020c3d` | 2026-06-15 | 3 | 100% (3/3) |
+| Foundation & Org Provisioning | `21e891d9-4954-4c0d-9372-3da1e5c52074` | 2026-05-15 | 2 | 100% (2/2) |
+
+```
+Cloudflare Zero Trust adoption — 4 milestone(s)
+
+  Foundation & Org Provisioning  (due 2026-05-15)  [████████████████████] 100%  2/2
+    OPS-388  [Done]  DECISION: app-sso coexist-by-tier vs CF Access replaces it
+    OPS-386  [Done]  Phase 0 (BLOCKER): provision Cloudflare Zero Trust org — team domain + plan
+
+  Tunnel Ingress & Edge Hardening  (due 2026-06-15)  [████████████████████] 100%  3/3
+    OPS-392  [Done]  Investigate 530/1033 edge→tunnel routing before Phase 2 cutover
+    OPS-390  [Done]  Phase 2 GATE: Advanced Certificate Manager for *.dev.unsigned.gg edge cert
+    OPS-387  [Done]  Phase 1: cloudflared Tunnel as additive ingress path (non-destructive)  @ctodie
+
+  Identity & Access Policy  (due 2026-07-01)  [████████████████████] 100%  1/1
+    OPS-403  [Done]  SSO 3 — CF Access: swap docs.cerebral.work (+ dreams legacy app) policies to Keycloak IdP groups  @ctodie
+
+  Device Posture & Legacy Decommission  (due 2026-09-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    OPS-898  [Triage]  Phase 4-5: Cloudflare WARP device posture rollout and fleet validation
+    OPS-389  [Backlog]  Phase 6: retire Tailscale (LAST, after WARP proven)
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 ```mermaid

@@ -6,6 +6,40 @@
 
 ---
 
+## Live Linear State (auto-rendered 2026-07-29 14:35 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Design QA & Ratification | `b78b4be2-6baf-4300-89e5-edf5731e7b8d` | 2026-09-19 | 3 | 0% (0/3) |
+| Composite Component Styling | `4d4f5775-bef3-423b-9f1a-8f0c09847945` | 2026-09-05 | 2 | 0% (0/2) |
+| Design Token Foundation | `67a0a382-6e51-4948-8306-2b76ee98c838` | 2026-08-22 | 3 | 0% (0/3) |
+| Design-to-App Pipeline | `cfba9240-c675-4ffc-9667-7cbf1af1a2b0` | 2026-08-08 | 2 | 0% (0/2) |
+
+```
+design: rina — 4 milestone(s)
+
+  Design-to-App Pipeline  (due 2026-08-08)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    BRAND-35  [Backlog]  Verify ds-pullback → R2 → app ingestion loop end-to-end
+    BRAND-8  [Backlog]  [chore] weekly ds-pullback drift check — rina
+
+  Design Token Foundation  (due 2026-08-22)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    BRAND-38  [Backlog]  Token consumption audit — every component using registered rina tokens
+    BRAND-37  [Backlog]  Align shadcn theme config to rina tokens
+    BRAND-36  [Backlog]  Define full rina token set in tokens.css
+
+  Composite Component Styling  (due 2026-09-05)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/2
+    BRAND-40  [Backlog]  Migrate textarea.tsx off shadcn tokens to stone palette
+    BRAND-39  [Backlog]  Restore missing .rina-* composite CSS classes — Buy/Sell/Price/Condition/Deposit
+
+  Design QA & Ratification  (due 2026-09-19)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    BRAND-43  [Backlog]  Design system documentation — rina token + composite class usage guide
+    BRAND-42  [Backlog]  Marc ratification gate — design system sign-off
+    BRAND-41  [Backlog]  Full visual audit across all rina composite components on prod
+```
+
+*Last 7 days: 1 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Milestones
 
 ### M1 — Design-to-App Pipeline · target 2026-08-08

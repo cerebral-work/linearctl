@@ -4,6 +4,37 @@
 > Generated: 2026-07-22 via `linearctl roadmap`
 > Team: BIZ · 7 issues (6 Done, 1 Canceled) · Project progress: 100%
 
+## Live Linear State (auto-rendered 2026-07-29 14:31 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| Research & Documentation Sweep | `4fd035b5-90d4-4c7e-a3de-55f95cfa81a1` | 2026-07-15 | 3 | 33% (1/3) |
+| Parser & Resolver Correctness | `53f84a47-efb9-47f6-923b-81864885395b` | 2026-07-12 | 4 | 75% (3/4) |
+| Tooling Foundation & Packaging | `9c714567-02a1-4717-96fd-6361dc834160` | 2026-07-05 | 3 | 67% (2/3) |
+
+```
+OPEN PANEL — 3 milestone(s)
+
+  Tooling Foundation & Packaging  (due 2026-07-05)  [█████████████░░░░░░░] 67%  2/3
+    BIZ-44  [Backlog]  landgrab: give _scan an overall wall-clock deadline (per-future timeout is misleading)
+    BIZ-4  [Done]  Package critpath and wsref (pyproject + console entry + --version)  @richie
+    BIZ-2  [Done]  Add unit tests for the Python tools (critpath / landgrab / wsref)  @richie
+
+  Parser & Resolver Correctness  (due 2026-07-12)  [███████████████░░░░░] 75%  3/4
+    BIZ-43  [Backlog]  critpath: ignore lineage blocks inside fenced code — phantom DANGLING edges from LINEAGE.md examples
+    BIZ-7  [Done]  critpath: `;`-separated multi-refs and parenthetical annotations dangle — parser vs authoring convention  @richie
+    BIZ-6  [Done]  critpath: resolve_ref never resolves ../-style refs — NODE.md conforms_to dangles repo-wide  @richie
+    BIZ-3  [Done]  wsref: handle truncated / multi-frame unframe edge cases  @richie
+
+  Research & Documentation Sweep  (due 2026-07-15)  [███████░░░░░░░░░░░░░] 33%  1/3
+    BIZ-45  [Backlog]  Resolve LICENSE file contradiction — landgrab/pyproject claims MIT but no LICENSE exists
+    BIZ-5  [Done]  Research-pass backlog — remaining findings to triage  @richie
+    BIZ-1  [Canceled]  Docs site polish: favicon, og:image, meta description, sidebar labels
+```
+
+*Last 7 days: 0 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 OPEN PANEL is the workspace validation toolchain for the openpanel monorepo —

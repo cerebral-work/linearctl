@@ -11,6 +11,45 @@
 > (not "Done") — they are unstarted, not complete. Move them to "Todo" or "Backlog" for
 > accurate progress tracking.
 
+## Live Linear State (auto-rendered 2026-07-29 14:31 UTC)
+
+| Milestone | Linear ID | Target Date | Issues | Progress |
+|----------|-----------|------------|--------|----------|
+| M4 — Cloud-Served Bridge & Ambient Recall (GATED) | `20bdf421-ec2f-4386-8f9f-314f00b78898` | 2026-11-30 | 3 | 0% (0/3) |
+| M3 — Agent-AFK Port: Strong-Idea Clean-Room (TS→Rust) | `a7d17024-57aa-401c-951e-27cf3f873041` | 2026-09-15 | 4 | 100% (4/4) |
+| M2 — Corpus Hardening & Contract Versioning | `bafee59e-8074-4eef-8a8d-b245ad06c7da` | 2026-08-15 | 4 | 0% (0/4) |
+| M1 — Foundation: Bug-Memory Store & Reverie Bridge | `632e8643-b8c2-4a51-978e-f6e8f4af4a3e` | 2026-06-30 | 4 | 100% (4/4) |
+
+```
+Cicatrix — 4 milestone(s)
+
+  M1 — Foundation: Bug-Memory Store & Reverie Bridge  (due 2026-06-30)  [████████████████████] 100%  4/4
+    CER-1397  [Done]  cicatrix: falsification-gated projection pipeline — empirical evidence floor + two-tier corpus (THE poison-the-well gate)  @aria
+    CER-1375  [Done]  Phase 1 — wire the ReverieBridge (record/query + --as-of git-ancestry)  @ctodie
+    CER-1374  [Done]  Phase 0 — cicatrix bridge prep (markdown parser + projection builder, UNBLOCKED)  @ctodie
+    CER-1368  [Done]  Track the cicatrix→reverie bridge seam (untracked cross-repo coupling)
+
+  M2 — Corpus Hardening & Contract Versioning  (due 2026-08-15)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/4
+    CER-1709  [Backlog]  cicatrix: wire the inert guard-main-push hook into .claude/settings.json
+    CER-1626  [Backlog]  cicatrix: `cicatrix` authoring/query skill + upstream 96-bug corpus as bug_md robustness fixture  @ctodie
+    CER-1379  [Backlog]  cicatrix: wbrown janus-datalog propagation-bug docs as a regression-pattern reference  @ctodie
+    CER-1367  [Backlog]  Version the reverie coord/bugs contract before cicatrix builds its bridge  @ctodie
+
+  M3 — Agent-AFK Port: Strong-Idea Clean-Room (TS→Rust)  (due 2026-09-15)  [████████████████████] 100%  4/4
+    CER-1396  [Ready]  cicatrix: model-tier abstraction for LLM review/diagnose calls (cheap drift vs capable root-cause)
+    CER-1395  [Ready]  cicatrix: append-only verdict ledger — audit receipt of review + commit-gate decisions
+    CER-1394  [Ready]  cicatrix: diagnose-style auto-authoring — parallel root-cause forking → auto-populate BugFact
+    CER-1393  [Ready]  Epic — cicatrix ← agent-afk: port the strong ideas (clean-room TS→Rust)
+
+  M4 — Cloud-Served Bridge & Ambient Recall (GATED)  (due 2026-11-30)  [░░░░░░░░░░░░░░░░░░░░] 0%  0/3
+    CER-1383  [Backlog]  cicatrix query: touches_known_bug fires one /search per changed file — needs a reverie batch endpoint  @ctodie
+    CER-1376  [Backlog]  Phase 2+3 — cluster-served bridge & revenant consumption (GATED, future)  @ctodie
+    CER-1373  [Backlog]  Epic — cicatrix → reverie bug-fact bridge (Leg A)  @ctodie
+```
+
+*Last 7 days: 1 issue(s) touched, 0 completed.*
+*Rendered by `.github/scripts/render-roadmap.sh` (corpus auto-render, schedule + dispatch).*
+
 ## Overview
 
 cicatrix is an independent **regression-memory + convention-drift** framework with
