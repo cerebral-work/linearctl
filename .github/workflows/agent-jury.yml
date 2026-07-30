@@ -1,0 +1,322 @@
+name: Agent Jury (GLM-5.2)
+
+# Agent jury: automated code review on every PR using GLM-5.2 via the LiteLLM
+# gateway. Posts a structured review comment + stamps a label
+# (agent-jury-approved / agent-jury-needs-changes / agent-jury-changes-requested).
+#
+# This is the CI counterpart to the manual .claude/agents/code-critic (Sonnet,
+# invoked by feature-coordinator). The agent jury runs automatically on every PR
+# open + push, giving every change a first-pass review before a human looks at it.
+#
+# Model: glm-5.2 (served via LiteLLM gateway). Override via AGENT_JURY_MODEL env.
+# Gateway: tailnet http://llm/v1 (reachable from self-hosted ARC runners). For
+# GitHub-hosted runners, set AGENT_JURY_API_URL + AGENT_JURY_API_KEY secrets.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: agent-jury-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: GLM-5.2 code review
+    runs-on: ${{ vars.AGENT_JURY_RUNNER || 'reverie' }}  # ARC runner; set AGENT_JURY_RUNNER var to 'self-hosted' or 'ubuntu-latest' per-repo
+    timeout-minutes: 10
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Need full history for diff context
+
+      - name: Gather PR diff + context
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE=$(gh pr view "$PR_NUMBER" --json title -q .title)
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body | head -100)
+
+          # Get the diff (unified, with 3 lines context)
+          DIFF=$(git diff origin/${{ github.base_ref }}...HEAD --unified=3 2>/dev/null || git diff ${{ github.event.pull_request.base.sha }}...HEAD --unified=3)
+
+          # Truncate diff to ~12k chars (token budget for the review prompt)
+          DIFF_TRUNCATED=$(echo "$DIFF" | head -c 12000)
+          DIFF_LINES=$(echo "$DIFF" | wc -l)
+
+          # Files changed summary
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD 2>/dev/null || echo "unknown")
+
+          # Export as multi-line outputs
+          {
+            echo "number=$PR_NUMBER"
+            echo "title<<EOF"
+            echo "$PR_TITLE"
+            echo "EOF"
+            echo "body<<EOF"
+            echo "$PR_BODY"
+            echo "EOF"
+            echo "files<<EOF"
+            echo "$FILES_CHANGED"
+            echo "EOF"
+            echo "diff_lines=$DIFF_LINES"
+          } >> "$GITHUB_OUTPUT"
+
+          # Save diff to file for the review step (avoids env var size limits)
+          echo "$DIFF_TRUNCATED" > /tmp/pr-diff.txt
+
+      - name: Run GLM-5.2 review
+        id: review
+        env:
+          # LiteLLM gateway on the tailnet (ARC runners have access).
+          # For GitHub-hosted runners, set these as repo secrets instead.
+          LITELLM_URL: "${{ vars.AGENT_JURY_API_URL || 'http://llm/v1' }}"
+          LITELLM_KEY: "${{ secrets.AGENT_JURY_API_KEY || '' }}"
+          AGENT_JURY_MODEL: "${{ vars.AGENT_JURY_MODEL || 'glm-5.2' }}"
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          PR_BODY: ${{ steps.pr.outputs.body }}
+          FILES_CHANGED: ${{ steps.pr.outputs.files }}
+        run: |
+          set -euo pipefail
+
+          DIFF=$(cat /tmp/pr-diff.txt)
+
+          # Build the review prompt
+          # Detect primary language from file extensions in the diff
+          PRIMARY_LANG="unknown"
+          if echo "$FILES_CHANGED" | grep -qE '\.rs$'; then
+            PRIMARY_LANG="Rust"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(go|go\.mod)$'; then
+            PRIMARY_LANG="Go"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(py|pyproject\.toml)$'; then
+            PRIMARY_LANG="Python"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(ts|tsx|js|jsx)$'; then
+            PRIMARY_LANG="TypeScript/JavaScript"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(tf|hcl)$'; then
+            PRIMARY_LANG="Terraform/HCL"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(yaml|yml)$'; then
+            PRIMARY_LANG="YAML (Helm/CI/Config)"
+          elif echo "$FILES_CHANGED" | grep -qE '\.(sh|bash)$'; then
+            PRIMARY_LANG="Shell"
+          fi
+
+          # Build the review prompt — language-aware, project-agnostic
+          REVIEW_PROMPT="You are an expert ${PRIMARY_LANG} code reviewer.
+          Review the following PR diff for correctness, security, and adherence to best practices.
+
+          ## PR #${PR_NUMBER}: ${PR_TITLE}
+
+          ### Files changed:
+          \`\`\`
+          ${FILES_CHANGED}
+          \`\`\`
+
+          ### Diff:
+          \`\`\`diff
+          ${DIFF}
+          \`\`\`
+
+          ## Review criteria
+          1. **Correctness**: Logic errors, off-by-one, unwrap/expect on untrusted input, panic paths
+          2. **Security**: Unsafe code, secrets, injection, path traversal, resource exhaustion
+          3. **Conventions**: Language-appropriate error handling, logging, test coverage
+          4. **Performance**: Avoidable allocations, unnecessary copies, lock scope
+          5. **API contract**: Breaking changes, missing migrations, backwards compat
+
+          ## Language-specific notes
+          - Rust: serde defaults, anyhow/thiserror, tracing, lifetimes
+          - Go: context propagation, goroutine leaks, error wrapping (errors.Join/fs.Err)
+          - Python: type hints, structlog/logging, exceptions not swallowed
+          - TypeScript/JS: null safety, async/await, no any/types, React hooks deps
+          - Terraform: state safety, variable validation, no hardcoded secrets
+          - YAML: schema validity, no trailing content, correct indentation
+          - Shell: set -euo pipefail, quoting, no unquoted vars in paths
+
+          ## Output format (STRICT JSON)
+          Respond with ONLY a JSON object, no markdown fences:
+          {
+            \"verdict\": \"approved\" | \"needs-changes\" | \"changes-requested\",
+            \"confidence\": \"high\" | \"medium\" | \"low\",
+            \"findings\": [
+              {
+                \"severity\": \"blocker\" | \"warning\" | \"nit\",
+                \"file\": \"path/to/file\",
+                \"line\": <approximate line number or null>,
+                \"issue\": \"description of the problem\",
+                \"suggestion\": \"how to fix it\"
+              }
+            ],
+            \"summary\": \"one-paragraph overall assessment\"
+          }
+
+          If the diff is trivial (dependabot, formatting, docs), return verdict=approved with an empty findings array."
+
+          # Call the LiteLLM gateway (OpenAI-compatible API)
+          AUTH_HEADER=""
+          if [ -n "$LITELLM_KEY" ]; then
+            AUTH_HEADER="-H \"Authorization: Bearer $LITELLM_KEY\""
+          fi
+
+          RESPONSE=$(eval curl -sf -m 120 -X POST "\"$LITELLM_URL/chat/completions\"" \
+            -H "\"Content-Type: application/json\"" \
+            $AUTH_HEADER \
+            -d "$(jq -nc \
+              --arg model "$AGENT_JURY_MODEL" \
+              --arg prompt "$REVIEW_PROMPT" \
+              '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3, max_tokens: 2000}')" \
+            2>&1) || {
+              echo "review_failed=true" >> "$GITHUB_OUTPUT"
+              echo "GLM-5.2 review request failed: $RESPONSE" >&2
+              exit 0  # Don't fail the workflow — review is advisory
+            }
+
+          # Extract the content from the OpenAI-format response
+          CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+          if [ -z "$CONTENT" ]; then
+            echo "review_failed=true" >> "$GITHUB_OUTPUT"
+            echo "GLM-5.2 returned empty content" >&2
+            exit 0
+          fi
+
+          # Save raw content for debugging
+          echo "$CONTENT" > /tmp/jury-raw.txt
+
+          # Try to parse as JSON (strip markdown fences if present)
+          CLEAN=$(echo "$CONTENT" | sed 's/^```json//; s/^```//; s/```$//' | jq '.' 2>/dev/null)
+
+          if [ -z "$CLEAN" ]; then
+            echo "review_failed=true" >> "$GITHUB_OUTPUT"
+            echo "GLM-5.2 response was not valid JSON: $CONTENT" >&2
+            exit 0
+          fi
+
+          VERDICT=$(echo "$CLEAN" | jq -r '.verdict // "needs-changes"')
+          CONFIDENCE=$(echo "$CLEAN" | jq -r '.confidence // "low"')
+          SUMMARY=$(echo "$CLEAN" | jq -r '.summary // "No summary provided"')
+          FINDINGS_COUNT=$(echo "$CLEAN" | jq '.findings | length')
+
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "confidence=$CONFIDENCE" >> "$GITHUB_OUTPUT"
+          echo "findings_count=$FINDINGS_COUNT" >> "$GITHUB_OUTPUT"
+          echo "$CLEAN" > /tmp/jury-parsed.json
+
+      - name: Post review comment + stamp label
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          CONFIDENCE: ${{ steps.review.outputs.confidence }}
+          FINDINGS_COUNT: ${{ steps.review.outputs.findings_count }}
+          REVIEW_FAILED: ${{ steps.review.outputs.review_failed }}
+          MODEL: ${{ vars.AGENT_JURY_MODEL || 'glm-5.2' }}
+        run: |
+          set -euo pipefail
+
+          # Remove any previous agent-jury labels
+          gh pr edit "$PR_NUMBER" --remove-label "agent-jury-approved" 2>/dev/null || true
+          gh pr edit "$PR_NUMBER" --remove-label "agent-jury-needs-changes" 2>/dev/null || true
+          gh pr edit "$PR_NUMBER" --remove-label "agent-jury-changes-requested" 2>/dev/null || true
+
+          if [ "$REVIEW_FAILED" = "true" ]; then
+            LABEL="agent-jury-needs-changes"
+            BODY="## 🤖 Agent Jury — Review Failed
+
+            The GLM-5.2 review could not complete (gateway error or invalid response).
+            Manual review required.
+
+            | Field | Value |
+            |---|---|
+            | Model | \`${MODEL}\` |
+            | Status | ⚠️ failed |
+            "
+            gh pr edit "$PR_NUMBER" --add-label "$LABEL" 2>/dev/null || true
+            gh pr comment "$PR_NUMBER" --body "$BODY" 2>/dev/null || true
+            exit 0
+          fi
+
+          # Build the review body from the parsed JSON
+          JURY_JSON=$(cat /tmp/jury-parsed.json)
+
+          # Map verdict to label + emoji
+          case "$VERDICT" in
+            approved)         LABEL="agent-jury-approved"; EMOJI="✅" ;;
+            needs-changes)    LABEL="agent-jury-needs-changes"; EMOJI="⚠️" ;;
+            changes-requested) LABEL="agent-jury-changes-requested"; EMOJI="🔴" ;;
+            *)                LABEL="agent-jury-needs-changes"; EMOJI="⚠️" ;;
+          esac
+
+          # Format findings as markdown table
+          FINDINGS_MD=$(echo "$JURY_JSON" | jq -r '
+            .findings // [] |
+            if length == 0 then
+              "_No findings — the diff looks clean._"
+            else
+              "| Severity | File | Line | Issue | Suggestion |\n|---|---|---|---|---|\n" +
+              ([.[] | "| \(.severity // "?") | \(.file // "?") | \(.line // "—") | \(.issue // "") | \(.suggestion // "") |"] | join("\n"))
+            end
+          ')
+
+          SUMMARY=$(echo "$JURY_JSON" | jq -r '.summary // "No summary provided"')
+
+          BODY="## 🤖 Agent Jury — ${EMOJI} ${VERDICT}
+
+          | Field | Value |
+          |---|---|
+          | Model | \`${MODEL}\` |
+          | Verdict | **${VERDICT}** |
+          | Confidence | ${CONFIDENCE} |
+          | Findings | ${FINDINGS_COUNT} |
+
+          ### Summary
+          ${SUMMARY}
+
+          ### Findings
+          ${FINDINGS_MD}
+
+          ---
+          _Automated review by GLM-5.2 via LiteLLM gateway. This is advisory — a human reviewer makes the final call._
+          "
+
+          # Post the comment
+          gh pr comment "$PR_NUMBER" --body "$BODY" 2>/dev/null || true
+
+          # Stamp the label
+          gh pr edit "$PR_NUMBER" --add-label "$LABEL" 2>/dev/null || true
+          echo "Agent jury verdict: $VERDICT (label: $LABEL)"
+
+      - name: Auto-merge on approval (if not gated)
+        if: steps.review.outputs.verdict == 'approved' && steps.review.outputs.review_failed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          # Only auto-merge if ALL required checks pass (CI Gate green).
+          # Check the PR's mergeable state and review decision.
+          MERGEABLE=$(gh pr view "$PR_NUMBER" --json mergeable --jq '.mergeable')
+          MERGE_STATE_STATUS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '.mergeable_state // "unknown"')
+
+          echo "PR mergeable: $MERGEABLE, merge_state: $MERGE_STATE_STATUS"
+
+          # mergeable_state "clean" = all checks pass, no conflicts, reviews satisfied.
+          # "behind" = needs rebase. "blocked" = reviews/checks failing. "dirty" = conflicts.
+          if [ "$MERGE_STATE_STATUS" = "clean" ]; then
+            echo "All checks pass — auto-merging (squash)..."
+            gh pr merge "$PR_NUMBER" --squash --delete-branch 2>&1 || {
+              echo "Auto-merge failed (may be blocked by branch protection or missing reviews). Skipping."
+            }
+          else
+            echo "Merge state is '$MERGE_STATE_STATUS' — not auto-merging. PR requires manual review or CI to pass."
+          fi
