@@ -2,6 +2,8 @@
 import { Command } from "commander";
 import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
+import { mineCmd } from "./commands/mine.js";
+import { initiativeCmd } from "./commands/initiative.js";
 import { file } from "./commands/file.js";
 import { triage } from "./commands/triage.js";
 import { milestone, milestoneDelete, milestoneCreate, milestoneUpdate, milestoneGap } from "./commands/milestone.js";
@@ -59,6 +61,21 @@ program
   .option("--project <ref>", "restrict to a project (id or name)")
   .option("--json", "emit JSON")
   .action((opts) => digest(opts));
+
+program
+  .command("mine")
+  .description('"What am I doing": the viewer\'s issues grouped by state, active first.')
+  .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
+  .option("--all", "include completed and canceled issues")
+  .option("--json", "emit JSON")
+  .action((opts) => mineCmd(opts));
+
+program
+  .command("initiative")
+  .description("Initiative rollup: projects and mean progress per initiative.")
+  .option("--all", "include completed initiatives")
+  .option("--json", "emit JSON")
+  .action((opts) => initiativeCmd(opts));
 
 program
   .command("file")
