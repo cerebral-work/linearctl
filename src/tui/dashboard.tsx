@@ -1,19 +1,28 @@
 /**
  * Dashboard shell for `linearctl tui` (CER-1550).
  *
- * Renders the tab bar (`1`–`5`) and routes to the active pane. First slice:
- * only `2` (Triage) is live; the others are "not yet implemented" placeholders
- * (`docs/features/tui.md:60-68`, first-slice scope). Handles `1`–`5` pane
+ * Renders the tab bar (`1`–`5`) and routes to the active pane. All 5 panes
+ * are live: Digest, Triage, Milestone, Xref, Stale. Handles `1`–`5` pane
  * switching + global `q` quit.
  */
 
 import { Box, Text, useApp, useInput } from "ink";
 import { useState } from "react";
-import type { TriageItem } from "../core/grooming.js";
+import type { TriageItem, DigestResult, StaleResult } from "../core/grooming.js";
+import type { MilestoneResult } from "../core/milestones.js";
+import type { XrefResult } from "../core/xref.js";
 import { TriagePane } from "./panes/triage.js";
+import { DigestPane } from "./panes/digest.js";
+import { MilestonePane } from "./panes/milestone.js";
+import { XrefPane } from "./panes/xref.js";
+import { StalePane } from "./panes/stale.js";
 
 export interface DashboardProps {
   items: TriageItem[];
+  digestResult: DigestResult;
+  milestoneResult: MilestoneResult;
+  xrefResult: XrefResult;
+  staleResult: StaleResult;
   team?: string[];
 }
 
@@ -39,27 +48,16 @@ function TabBar({ activeIndex }: { activeIndex: number }): React.ReactElement {
   );
 }
 
-function NotImplemented({ name }: { name: string }): React.ReactElement {
-  return (
-    <Box paddingX={1}>
-      <Text color="yellow">
-        {name} pane — not yet implemented (first slice: Triage only).
-      </Text>
-    </Box>
-  );
-}
-
 /**
  * The dashboard: tab bar + active pane. `1`–`5` switch panes, `q` quits.
- * Only the Triage pane is live; the `j`/`k` navigation for the cursor lives in
- * the pane itself (it owns the cursor state for its list).
+ * Each pane owns its own cursor state and `j`/`k` navigation.
  *
- * Both Dashboard and TriagePane register `useInput` handlers. Ink calls every
+ * Both Dashboard and each pane register `useInput` handlers. Ink calls every
  * `useInput` callback for each keystroke — the Dashboard handles pane-switch
- * digits + `q`, the TriagePane handles `j`/`k`/`q` for its cursor. Non-matching
- * keys are ignored by each handler.
+ * digits + `q`, the active pane handles `j`/`k`/`q` for its cursor.
+ * Non-matching keys are ignored by each handler.
  */
-export function Dashboard({ items, team }: DashboardProps): React.ReactElement {
+export function Dashboard({ items, digestResult, milestoneResult, xrefResult, staleResult, team }: DashboardProps): React.ReactElement {
   const { exit } = useApp();
   const [activePane, setActivePane] = useState<number>(1); // default: Triage
 
@@ -87,11 +85,11 @@ export function Dashboard({ items, team }: DashboardProps): React.ReactElement {
       <TabBar activeIndex={activePane} />
 
       <Box flexDirection="column" flexGrow={1}>
-        {activePane === 0 && <NotImplemented name="Digest" />}
+        {activePane === 0 && <DigestPane result={digestResult} />}
         {activePane === 1 && <TriagePane items={items} />}
-        {activePane === 2 && <NotImplemented name="Milestone" />}
-        {activePane === 3 && <NotImplemented name="Xref" />}
-        {activePane === 4 && <NotImplemented name="Stale" />}
+        {activePane === 2 && <MilestonePane data={milestoneResult} />}
+        {activePane === 3 && <XrefPane result={xrefResult} />}
+        {activePane === 4 && <StalePane result={staleResult} />}
       </Box>
     </Box>
   );
