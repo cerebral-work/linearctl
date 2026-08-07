@@ -1,7 +1,7 @@
 import { resolveProject, UUID_RE } from "../core/projects.js";
 import { makeClient } from "../client.js";
 import { createIssue, addRelations } from "../core/issues.js";
-import { readStdin } from "../lib/io.js";
+import { readStdin, readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 import { isInteractive } from "../lib/interactive.js";
 import { promptText, promptTeamKey, promptOptionalText } from "../lib/prompts.js";
@@ -108,7 +108,7 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
     return;
   }
 
-  let description = opts.desc === "-" ? await readStdin() : opts.desc;
+  let description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
   let team = opts.team;
 
   if (isInteractive(opts.json) && (!title || !team)) {

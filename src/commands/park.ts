@@ -1,6 +1,6 @@
 import { makeClient } from "../client.js";
 import { createIssue } from "../core/issues.js";
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 import { withSpinner } from "../lib/spinner.js";
 import { buildStoryDescription } from "../lib/story.js";
@@ -27,7 +27,7 @@ export async function park(title: string, opts: ParkOptions): Promise<void> {
   if (!opts.team) throw new Error("park needs --team <key> (e.g. CER).");
   const client = makeClient();
 
-  const acceptRaw = opts.accept === "-" ? await readStdin() : opts.accept;
+  const acceptRaw = opts.accept === "-" ? await readStdinFor("--accept -") : opts.accept;
   const description = buildStoryDescription({
     title,
     persona: opts.persona,

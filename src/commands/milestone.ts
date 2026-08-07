@@ -1,7 +1,7 @@
 import { makeClient } from "../client.js";
 import { milestones, deleteMilestone, createMilestone, updateMilestone } from "../core/milestones.js";
 import { milestoneGaps } from "../core/milestone-gaps.js";
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 
 export interface MilestoneOptions {
@@ -45,7 +45,7 @@ export async function milestoneCreate(
   opts: MilestoneCreateOptions,
 ): Promise<void> {
   const client = makeClient();
-  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+  const description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
 
   const ms = await createMilestone(client, {
     name,
@@ -96,7 +96,7 @@ export async function milestoneUpdate(
   opts: MilestoneUpdateOptions,
 ): Promise<void> {
   const client = makeClient();
-  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+  const description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
 
   const res = await updateMilestone(
     client,

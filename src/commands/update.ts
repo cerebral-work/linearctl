@@ -1,7 +1,7 @@
 import { makeClient } from "../client.js";
 import { updateIssue, closeIssue, addRelations } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
-import { readStdin } from "../lib/io.js";
+import { readStdin, readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 import { isInteractive } from "../lib/interactive.js";
 import { promptText, promptSelect, promptConfirm, promptIssuePick } from "../lib/prompts.js";
@@ -52,7 +52,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
 
   // `--desc -` reads stdin — resolve BEFORE the interactive trigger so a piped
   // body doesn't race the wizard's TTY check.
-  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+  const description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
 
   const hasMutation =
     opts.state !== undefined ||

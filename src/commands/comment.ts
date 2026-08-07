@@ -1,6 +1,6 @@
 import { makeClient } from "../client.js";
 import { createComment } from "../core/issues.js";
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
 
 export interface CommentOptions {
@@ -18,7 +18,7 @@ export interface CommentOptions {
 export async function comment(id: string, opts: CommentOptions): Promise<void> {
   let body: string;
   if (opts.body === "-") {
-    body = await readStdin();
+    body = await readStdinFor("--body -");
   } else if (opts.body) {
     body = opts.body;
   } else {
