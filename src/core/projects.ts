@@ -82,11 +82,17 @@ export async function listProjects(
   client: LinearClient,
   teamKey?: string,
 ): Promise<ProjectSummary[]> {
-  const connection = teamKey
-    ? await (await resolveTeamByKey(client, teamKey)).projects()
-    : await client.projects();
+  let connection = teamKey
+    ? await (await resolveTeamByKey(client, teamKey)).projects({ first: 50 })
+    : await client.projects({ first: 50 });
 
-  return connection.nodes.map((p) => ({
+  const all = [...connection.nodes];
+  while (connection.pageInfo.hasNextPage) {
+    connection = await connection.fetchNext();
+    all.push(...connection.nodes);
+  }
+
+  return all.map((p) => ({
     id: p.id,
     name: p.name,
     url: p.url,
