@@ -7,6 +7,7 @@ import {
   collectIssuesFlat,
   projectClause,
   scopedTeams,
+  TERMINAL_STATE_TYPES,
   type FlatIssueNode,
 } from "./issues-query.js";
 
@@ -48,6 +49,7 @@ const STATE_TYPE_ALIASES: Record<string, string> = {
   completed: "completed",
   canceled: "canceled",
   cancelled: "canceled",
+  duplicate: "duplicate",
 };
 
 /**
@@ -77,7 +79,7 @@ export function buildSearchFilter(
   } else {
     const state = opts.state?.toLowerCase();
     if (!state) {
-      and.push({ state: { type: { nin: ["completed", "canceled"] } } });
+      and.push({ state: { type: { nin: TERMINAL_STATE_TYPES } } });
     } else if (state !== "all") {
       const type = STATE_TYPE_ALIASES[state];
       and.push(

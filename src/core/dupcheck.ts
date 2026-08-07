@@ -1,6 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 import { scoreCandidates } from "../lib/similarity.js";
-import { collectIssuesFlat, projectClause, scopedTeams } from "./issues-query.js";
+import { collectIssuesFlat, projectClause, scopedTeams, TERMINAL_STATE_TYPES } from "./issues-query.js";
 
 export interface DupcheckOptions {
   teamKeys?: string[];
@@ -39,7 +39,7 @@ export async function dupcheck(
   const issues = await collectIssuesFlat(client, {
     ...(teams ? { team: { key: { in: teams } } } : {}),
     and: [
-      { state: { type: { nin: ["completed", "canceled"] } } },
+      { state: { type: { nin: TERMINAL_STATE_TYPES } } },
       ...projectClause(opts.project),
     ],
   });

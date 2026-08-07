@@ -1,7 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
-import { collectIssuesFlat, type FlatIssueNode } from "./issues-query.js";
+import { collectIssuesFlat, TERMINAL_STATE_TYPES, type FlatIssueNode } from "./issues-query.js";
 import { UUID_RE } from "./projects.js";
 
 const CYCLE_RESOLVE_QUERY = /* GraphQL */ `
@@ -198,7 +198,7 @@ export async function cycleReview(
   const done = issues.filter((i) => i.state?.type === "completed");
   const inProgress = issues.filter((i) => i.state?.type === "started");
   const unstarted = issues.filter(
-    (i) => !["completed", "canceled", "started"].includes(i.state?.type ?? ""),
+    (i) => ![...TERMINAL_STATE_TYPES, "started"].includes(i.state?.type ?? ""),
   );
 
   const now = opts.now ?? new Date();
@@ -235,7 +235,7 @@ export async function cycleReview(
     );
     const nodes = cres.data?.cycle?.uncompletedIssuesUponClose.nodes ?? [];
     const stillOpen = nodes
-      .filter((n) => !["completed", "canceled"].includes(n.state?.type ?? ""))
+      .filter((n) => !TERMINAL_STATE_TYPES.includes(n.state?.type ?? ""))
       .map((n) => n.identifier);
     carryOver = {
       fromCycle: carrySource.number,

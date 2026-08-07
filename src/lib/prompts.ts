@@ -1,7 +1,7 @@
 import { input, select, confirm, search } from "@inquirer/prompts";
 import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
-import { collectIssuesFlat, scopedTeams, type FlatIssueNode } from "../core/issues-query.js";
+import { collectIssuesFlat, scopedTeams, TERMINAL_STATE_TYPES, type FlatIssueNode } from "../core/issues-query.js";
 
 /**
  * Thin wrappers over @inquirer/prompts so commands never import the prompt
@@ -87,7 +87,7 @@ export async function promptIssuePick(
     client,
     {
       ...(teams ? { team: { key: { in: teams } } } : {}),
-      and: [{ state: { type: { nin: ["completed", "canceled"] } } }],
+      and: [{ state: { type: { nin: TERMINAL_STATE_TYPES } } }],
     },
     LinearDocument.PaginationOrderBy.UpdatedAt,
     200,

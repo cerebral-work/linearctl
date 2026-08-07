@@ -3,7 +3,7 @@ import { LinearDocument } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
 import { batchUpdateIssues } from "./batch.js";
-import { collectIssuesFlat, projectClause, scopedTeams } from "./issues-query.js";
+import { collectIssuesFlat, projectClause, scopedTeams, TERMINAL_STATE_TYPES } from "./issues-query.js";
 
 export interface TriageItem {
   identifier: string;
@@ -32,7 +32,7 @@ export async function triage(
   const issues = await collectIssuesFlat(client, {
     ...(teams ? { team: { key: { in: teams } } } : {}),
     and: [
-      { state: { type: { nin: ["completed", "canceled"] } } },
+      { state: { type: { nin: TERMINAL_STATE_TYPES } } },
       ...projectClause(project),
       {
         or: [
@@ -86,7 +86,7 @@ export interface DigestResult {
 }
 
 // Workflow-state types in the order a digest should read.
-const STATE_ORDER = ["completed", "started", "unstarted", "triage", "backlog", "canceled"];
+const STATE_ORDER = ["completed", "started", "unstarted", "triage", "backlog", "canceled", "duplicate"];
 
 /**
  * "What have we been up to": issues updated since `since`, grouped by
@@ -176,7 +176,7 @@ export async function stale(
     {
       ...(teams ? { team: { key: { in: teams } } } : {}),
       and: [
-        { state: { type: { nin: ["completed", "canceled"] } } },
+        { state: { type: { nin: TERMINAL_STATE_TYPES } } },
         { updatedAt: { lte: opts.warnCutoff } },
         ...projectClause(opts.project),
       ],

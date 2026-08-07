@@ -6,9 +6,15 @@ const clauses = (f: ReturnType<typeof buildSearchFilter>) =>
   (f as { and?: Record<string, unknown>[] }).and ?? [];
 
 describe("buildSearchFilter", () => {
-  test("default scope excludes completed/canceled", () => {
+  test("default scope excludes completed/canceled/duplicate", () => {
     expect(clauses(buildSearchFilter({}))).toContainEqual({
-      state: { type: { nin: ["completed", "canceled"] } },
+      state: { type: { nin: ["completed", "canceled", "duplicate"] } },
+    });
+  });
+
+  test("--state duplicate maps to the duplicate type (CER-1930 sweep leak)", () => {
+    expect(clauses(buildSearchFilter({ state: "duplicate" }))).toContainEqual({
+      state: { type: { eq: "duplicate" } },
     });
   });
 

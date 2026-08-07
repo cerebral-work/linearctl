@@ -94,6 +94,14 @@ export async function collectIssuesFlat(
   return limit === undefined ? all : all.slice(0, limit);
 }
 
+/**
+ * Workflow-state types that mean an issue is closed. Linear has a fourth
+ * terminal type, `duplicate`, beyond completed/canceled — a sweep that
+ * filters only the first two keeps listing duplicate-closed issues as open
+ * (CER-1930 kept surfacing in stale/triage sweeps after being closed).
+ */
+export const TERMINAL_STATE_TYPES = ["completed", "canceled", "duplicate"];
+
 /** True when team keys actually narrow the query (not empty / not `all`). */
 export function scopedTeams(teamKeys?: string[]): string[] | undefined {
   if (!teamKeys || teamKeys.length === 0 || teamKeys.includes("all")) return undefined;

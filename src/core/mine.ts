@@ -1,5 +1,5 @@
 import type { LinearClient } from "@linear/sdk";
-import { collectIssuesFlat, scopedTeams, type FlatIssueNode } from "./issues-query.js";
+import { collectIssuesFlat, scopedTeams, TERMINAL_STATE_TYPES, type FlatIssueNode } from "./issues-query.js";
 
 export interface MineItem {
   identifier: string;
@@ -22,7 +22,7 @@ export interface MineResult {
 
 // Active-first: what am I doing → what needs a decision → what's queued.
 // completed/canceled only appear under --all.
-const MINE_ORDER = ["started", "triage", "unstarted", "backlog", "completed", "canceled"];
+const MINE_ORDER = ["started", "triage", "unstarted", "backlog", "completed", "canceled", "duplicate"];
 
 /** Priority sort key: 1=Urgent first, 0=None last. */
 function priorityKey(p: number): number {
@@ -75,7 +75,7 @@ export async function mine(
   const nodes = await collectIssuesFlat(client, {
     assignee: { isMe: { eq: true } },
     ...(teams ? { team: { key: { in: teams } } } : {}),
-    ...(all ? {} : { state: { type: { nin: ["completed", "canceled"] } } }),
+    ...(all ? {} : { state: { type: { nin: TERMINAL_STATE_TYPES } } }),
   });
   return groupMine(nodes);
 }
