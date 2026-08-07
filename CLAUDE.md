@@ -37,8 +37,10 @@ commit a key; `*.env` is git-ignored.
 - **Conventional Commits** (release-please drives versioning): `feat:`, `fix:`,
   `feat!:` / `BREAKING CHANGE` (pre-1.0 → minor bump), `chore:`, `docs:`, `ci:`.
 - **Signed commits always.** Never `--no-gpg-sign`.
-- **PRs only** — no direct push to `main`. **Squash-merge** PRs (rebase-merge
-  lands unsigned). release-please's own Release PRs: squash-merge too.
+- **PRs only** — no direct push to `main`. **Merge-commit** PRs (`gh pr merge
+  --merge`) per the estate merge-style SOP (2026-08-06: never squash; API
+  rebase-merge lands unsigned — rebase locally + fast-forward if linear history
+  is wanted). release-please's own Release PRs: merge-commit too.
 - **Linear is the tracker**, not GitHub Issues. Tickets live in `docs/spec.md`'s
   ticket table until the project files them itself via `linearctl file` (the dogfooding
   loop) — do **not** hand-file linearctl tickets into Linear.
