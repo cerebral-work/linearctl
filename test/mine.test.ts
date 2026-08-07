@@ -74,7 +74,7 @@ describe("mine — grouping and ordering", () => {
     await mine(stubClient([], capture));
     expect(capture.filter).toEqual({
       assignee: { isMe: { eq: true } },
-      state: { type: { nin: ["completed", "canceled"] } },
+      state: { type: { nin: ["completed", "canceled", "duplicate"] } },
     });
   });
 
