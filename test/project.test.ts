@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LinearClient } from "@linear/sdk";
-import { updateProject } from "../src/core/projects.js";
+import { updateProject, resolveProject } from "../src/core/projects.js";
 
 /** Type guard: does the record have this key? */
 function has<K extends string>(obj: Record<string, unknown>, key: K): obj is Record<K, unknown> & Record<string, unknown> {
@@ -128,5 +128,85 @@ describe("updateProject — CER-1687", () => {
     await expect(
       updateProject(client, "proj-uuid-1234", { name: "x" }),
     ).rejects.toThrow(/did not succeed/);
+  });
+});
+
+function stubResolveClient(opts: {
+  projectId?: string;
+  projectName?: string;
+  projectSlugId?: string;
+}): { client: LinearClient; projectCalls: string[]; projectsCalls: { count: number } } {
+  const project = {
+    id: opts.projectId ?? "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    name: opts.projectName ?? "linearctl",
+    url: "https://linear.app/x/P/linearctl",
+    slugId: opts.projectSlugId ?? "abc123def",
+  };
+  const counter = { count: 0 };
+  const projectCalls: string[] = [];
+
+  const client = {
+    project: (id: string) => {
+      projectCalls.push(id);
+      return Promise.resolve(project);
+    },
+    projects: () => {
+      counter.count++;
+      return Promise.resolve({ nodes: [project], pageInfo: { hasNextPage: false, endCursor: null } });
+    },
+  } as unknown as LinearClient;
+
+  return { client, projectCalls, projectsCalls: counter };
+}
+describe("resolveProject — CER-1734", () => {
+  test("passes a UUID directly to client.project() without filtering", async () => {
+    const uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    const { client, projectCalls, projectsCalls } = stubResolveClient({ projectId: uuid });
+
+    const result = await resolveProject(client, uuid);
+
+    expect(projectCalls).toEqual([uuid]);
+    expect(projectsCalls.count).toBe(0);
+    expect(result.id).toBe(uuid);
+  });
+
+  test("resolves a project name (case-insensitive) via projects() filter", async () => {
+    const { client, projectCalls, projectsCalls } = stubResolveClient({ projectName: "linearctl" });
+
+    const result = await resolveProject(client, "LinearCtl");
+
+    expect(projectCalls).toEqual([]);
+    expect(projectsCalls.count).toBe(1);
+    expect(result.name).toBe("linearctl");
+  });
+
+  test("resolves a slug id via projects() filter", async () => {
+    const { client, projectsCalls } = stubResolveClient({ projectSlugId: "abc123def" });
+
+    const result = await resolveProject(client, "abc123def");
+
+    expect(projectsCalls.count).toBe(1);
+    expect(result.slugId).toBe("abc123def");
+  });
+
+  test("throws when no project matches the ref", async () => {
+    const client = {
+      projects: () => Promise.resolve({ nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+    } as unknown as LinearClient;
+
+    await expect(
+      resolveProject(client, "nonexistent-project"),
+    ).rejects.toThrow(/no project matching/);
+  });
+
+  test("UUID regex does not match short strings or non-UUID refs", async () => {
+    const { client, projectsCalls } = stubResolveClient({});
+
+    // These are NOT UUIDs — should go through the projects() filter path.
+    await resolveProject(client, "linearctl");
+    await resolveProject(client, "abc123");
+    await resolveProject(client, "proj-uuid-1234");
+
+    expect(projectsCalls.count).toBe(3);
   });
 });
