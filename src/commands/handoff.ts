@@ -1,4 +1,4 @@
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 import { isStyled, pc } from "../lib/style.js";
 import {
@@ -62,7 +62,7 @@ export async function handoffCreate(opts: HandoffCreateOptions): Promise<void> {
 
   let body: string | undefined;
   if (opts.body === "-") {
-    body = await readStdin();
+    body = await readStdinFor("--body -");
   } else if (opts.body) {
     body = opts.body;
   }

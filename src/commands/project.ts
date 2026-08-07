@@ -1,6 +1,6 @@
 import { makeClient } from "../client.js";
 import { createProject, listProjects, updateProject } from "../core/projects.js";
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 
 export interface ProjectCreateOptions {
@@ -20,7 +20,7 @@ export async function projectCreate(
   opts: ProjectCreateOptions,
 ): Promise<void> {
   const client = makeClient();
-  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+  const description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
 
   const project = await createProject(client, {
     name,
@@ -89,7 +89,7 @@ export async function projectUpdate(
   opts: ProjectUpdateOptions,
 ): Promise<void> {
   const client = makeClient();
-  const description = opts.desc === "-" ? await readStdin() : opts.desc;
+  const description = opts.desc === "-" ? await readStdinFor("--desc -") : opts.desc;
 
   const project = await updateProject(client, ref, {
     state: opts.state,

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { makeClient } from "../client.js";
 import { getProjectOverview, setProjectOverview } from "../core/projects.js";
-import { readStdin } from "../lib/io.js";
+import { readStdinFor } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 import { listDocuments, createDocument, updateDocument } from "../core/documents.js";
 
@@ -47,7 +47,7 @@ export interface DocSetOverviewOptions {
 export async function docSetOverview(opts: DocSetOverviewOptions): Promise<void> {
   const client = makeClient();
   const content =
-    opts.file === "-" ? await readStdin() : await readFile(opts.file, "utf8");
+    opts.file === "-" ? await readStdinFor("--file -") : await readFile(opts.file, "utf8");
 
   const overview = await setProjectOverview(client, opts.project, content);
 
@@ -95,7 +95,7 @@ export interface DocCreateOptions {
 export async function docCreate(title: string, opts: DocCreateOptions): Promise<void> {
   if (!opts.content) throw new Error("doc create needs --content <md> ('-' reads stdin).");
   const client = makeClient();
-  const content = opts.content === "-" ? await readStdin() : opts.content;
+  const content = opts.content === "-" ? await readStdinFor("--content -") : opts.content;
   const doc = await createDocument(client, {
     title,
     content,
@@ -119,7 +119,7 @@ export interface DocUpdateOptions {
 /** `linearctl doc update <id|slug> [--content <md|->] [--title]`. */
 export async function docUpdate(ref: string, opts: DocUpdateOptions): Promise<void> {
   const client = makeClient();
-  const content = opts.content === "-" ? await readStdin() : opts.content;
+  const content = opts.content === "-" ? await readStdinFor("--content -") : opts.content;
   const doc = await updateDocument(client, ref, { content, title: opts.title });
   if (opts.json) {
     printJson(doc);
