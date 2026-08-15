@@ -257,6 +257,18 @@ jobs:
           echo "findings_count=$FINDINGS_COUNT" >> "$GITHUB_OUTPUT"
           echo "$CLEAN" > /tmp/jury-parsed.json
 
+      # Converts `review_failed` into a check state instead of discarding it.
+      # Without this the review job exits 0 on a gateway failure (advisory by
+      # design), the job goes green, and the error tier collapses into the fail
+      # tier. Measured on the sibling agentic PR before this step existed.
+      - name: Fail when the review was not delivered
+        if: steps.review.outputs.review_failed == 'true'
+        env:
+          FAILURE_REASON: ${{ steps.review.outputs.failure_reason }}
+        run: |
+          echo "::error::The GLM-5.2 review did not complete (${FAILURE_REASON:-reason not captured}) — no verdict was delivered. This is a reviewer/gateway failure, NOT a finding against the diff."
+          exit 1
+
       - name: Post review comment + stamp label
         if: always()
         env:
