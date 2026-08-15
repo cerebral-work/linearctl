@@ -26,7 +26,14 @@ concurrency:
 
 jobs:
   review:
-    name: GLM-5.2 code review
+    # TIER 2 of 3 — "error": did the reviewer RUN, not whether the diff is good.
+    # Renamed off "GLM-5.2 code review" because code-review.yml in this repo
+    # declares a job by that exact name — the two produced indistinguishable
+    # checks. Ported from paas#2141.
+    name: Agent Jury delivered
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+      review_failed: ${{ steps.review.outputs.review_failed }}
     runs-on: ${{ vars.AGENT_JURY_RUNNER || 'reverie' }}  # ARC runner; set AGENT_JURY_RUNNER var to 'self-hosted' or 'ubuntu-latest' per-repo
     timeout-minutes: 10
     if: github.event.pull_request.draft == false
@@ -35,6 +42,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Need full history for diff context
+
+      # The reverie ARC runner image ships curl but not gh, and every step below
+      # drives the GitHub API through gh — without this the job dies at the first
+      # `gh pr view` with exit 127. Ported from cerebral-work/cortex#44.
+      - name: Install gh CLI if missing
+        env:
+          GH_CLI_VERSION: "2.76.1"
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            echo "gh already present: $(gh --version | head -1)"
+            exit 0
+          fi
+          curl -sfL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv "/tmp/gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" "$RUNNER_TEMP/bin/gh"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/gh" --version | head -1
 
       - name: Gather PR diff + context
         id: pr
@@ -49,7 +76,14 @@ jobs:
           DIFF=$(git diff origin/${{ github.base_ref }}...HEAD --unified=3 2>/dev/null || git diff ${{ github.event.pull_request.base.sha }}...HEAD --unified=3)
 
           # Truncate diff to ~12k chars (token budget for the review prompt)
-          DIFF_TRUNCATED=$(echo "$DIFF" | head -c 12000)
+          DIFF_BYTES=$(printf '%s' "$DIFF" | wc -c)
+          DIFF_BUDGET=60000
+          DIFF_TRUNCATED=$(printf '%s' "$DIFF" | head -c "$DIFF_BUDGET")
+          if [ "$DIFF_BYTES" -gt "$DIFF_BUDGET" ]; then
+            DIFF_NOTE="TRUNCATED — first ${DIFF_BUDGET} of ${DIFF_BYTES} bytes."
+          else
+            DIFF_NOTE="complete — ${DIFF_BYTES} bytes."
+          fi
           DIFF_LINES=$(echo "$DIFF" | wc -l)
 
           # Files changed summary
@@ -166,18 +200,31 @@ jobs:
             AUTH_HEADER="-H \"Authorization: Bearer $LITELLM_KEY\""
           fi
 
-          RESPONSE=$(eval curl -sf -m 120 -X POST "\"$LITELLM_URL/chat/completions\"" \
-            -H "\"Content-Type: application/json\"" \
-            $AUTH_HEADER \
-            -d "$(jq -nc \
-              --arg model "$AGENT_JURY_MODEL" \
-              --arg prompt "$REVIEW_PROMPT" \
-              '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3, max_tokens: 2000}')" \
-            2>&1) || {
-              echo "review_failed=true" >> "$GITHUB_OUTPUT"
-              echo "GLM-5.2 review request failed: $RESPONSE" >&2
-              exit 0  # Don't fail the workflow — review is advisory
-            }
+          # `-s` not `-sf`, and no `eval`. With -f curl printed nothing on an HTTP
+          # error, so the log read "review request failed: " with no status or
+          # body. `eval` additionally put $LITELLM_KEY through a shell eval; the
+          # array form never re-parses it.
+          REQUEST_BODY=$(jq -nc \
+            --arg model "$AGENT_JURY_MODEL" \
+            --arg prompt "$REVIEW_PROMPT" \
+            '{model: $model, messages: [{role: "user", content: $prompt}], temperature: 0.3, max_tokens: 2000}')
+          CURL_ARGS=(-s -m 120 -X POST -H "Content-Type: application/json")
+          if [ -n "${LITELLM_KEY:-}" ]; then
+            CURL_ARGS+=(-H "Authorization: Bearer $LITELLM_KEY")
+          fi
+          CURL_ARGS+=(-d "$REQUEST_BODY")
+
+          HTTP_CODE=$(curl "${CURL_ARGS[@]}" \
+            -o /tmp/glm-response.json -w '%{http_code}' \
+            "$LITELLM_URL/chat/completions" 2>/dev/null) || HTTP_CODE="000"
+          RESPONSE=$(cat /tmp/glm-response.json 2>/dev/null || true)
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "review_failed=true" >> "$GITHUB_OUTPUT"
+            echo "failure_reason=HTTP ${HTTP_CODE}" >> "$GITHUB_OUTPUT"
+            echo "GLM review request failed: HTTP ${HTTP_CODE} (000 = transport failure). Model: ${AGENT_JURY_MODEL}. URL: ${LITELLM_URL}. Body: $(head -c 500 /tmp/glm-response.json 2>/dev/null)" >&2
+            exit 0
+          fi
 
           # Extract the content from the OpenAI-format response
           CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
@@ -295,8 +342,12 @@ jobs:
           gh pr edit "$PR_NUMBER" --add-label "$LABEL" 2>/dev/null || true
           echo "Agent jury verdict: $VERDICT (label: $LABEL)"
 
+      # Opt-in only. This step was inert ONLY because gh was missing from the
+      # runner image — unlike agentic, this repo's runner label is valid, so the
+      # job does get picked up. The install step above therefore arms this unless
+      # it is gated here. Estate doctrine is operator-lands-every-merge.
       - name: Auto-merge on approval (if not gated)
-        if: steps.review.outputs.verdict == 'approved' && steps.review.outputs.review_failed != 'true'
+        if: vars.AGENT_JURY_AUTOMERGE == 'true' && steps.review.outputs.verdict == 'approved' && steps.review.outputs.review_failed != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
@@ -320,3 +371,25 @@ jobs:
           else
             echo "Merge state is '$MERGE_STATE_STATUS' — not auto-merging. PR requires manual review or CI to pass."
           fi
+
+  verdict:
+    # TIER 1 and 3 — pass/fail. `skipped` on error is structural: GitHub skips a
+    # `needs:` dependant when its parent fails, so this cannot be green on a
+    # review that never ran.
+    #
+    #   tier   | Agent Jury delivered | Agent Jury verdict
+    #   pass   | success              | success
+    #   fail   | success              | failure
+    #   error  | failure              | skipped
+    name: Agent Jury verdict
+    needs: review
+    runs-on: ${{ vars.AGENT_JURY_RUNNER || 'reverie' }}
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless the jury approved
+        if: needs.review.outputs.verdict != 'approved'
+        env:
+          VERDICT: ${{ needs.review.outputs.verdict }}
+        run: |
+          echo "Jury verdict: ${VERDICT:-<none>} (only 'approved' passes)" >&2
+          exit 1
