@@ -28,3 +28,15 @@ jobs:
   jury:
     uses: cerebral-work/.github/.github/workflows/agent-jury.yml@v1
     secrets: inherit
+    with:
+      # MUST be `reverie`, not the `self-hosted` default. The cerebral-work
+      # `self-hosted` scale set has no egress to the LLM gateway: its base
+      # NetworkPolicy allows DNS, public 443 with RFC1918 EXCLUDED,
+      # traefik:8443 and apiserver:6443 — and the gateway is a ClusterIP on
+      # :4000 inside 10.0.0.0/8. Jobs there fail HTTP 000, not 401, because
+      # they never reach it.
+      #
+      # arc-runners/reverie has the matching egress+ingress pair and works.
+      # Remove this override once cerebral-work-runners ships the same policy
+      # (chart 0.1.5 lacks what unsigned-gg-runners 0.2.8 has).
+      runner: reverie
