@@ -51,29 +51,33 @@ write that bumps a funnel ticket's `updatedAt` can trigger a soma re-examine.
 
 - **linearctl operator:** contained — `soma-ingest` tickets are read-only to
   it entirely (guardrail deny).
-- **terrarium:** the one **unverified** collision path. Whether attaching an
-  `issueReference` to a Release bumps the referenced issue's `updatedAt` is
-  unknown (the empirical test is specced in the terrarium writer-inventory
-  doc §4). **Accepted resolution (this split's ruling):** skip the test;
-  terrarium implements the containment unconditionally — filter
-  `soma-ingest`-labeled identifiers out of `issueReferences` before
-  `releaseSync` (one label read per referenced issue, once per release).
-  Cheaper than the coordination, correct regardless of the answer.
-  Implementation: terrarium PR #208 (open, behind terrarium's ladder —
-  antagonist authorizes, operator merges). The filter is **fail-closed**: an
-  identifier whose labels cannot be read (not found, or query error) is
-  dropped along with `soma-ingest` hits, on the reasoning that a missed
-  release-note reference is cheap while a wrong one perturbs another writer's
-  idempotency; both drop classes are step-log-reported (no silent
-  truncation). Two limits, recorded as stated by the terrarium lane:
-  (1) verification is stub-driven only — logic proven offline, NOT against
-  the live Linear API (that needs the operator-gated `LINEAR_API_KEY`); the
-  first real post-merge release is the driven run. "Implemented" here does
-  not mean "proven in production." (2) The underlying question — whether a
-  Release↔Issue association bumps `updatedAt` — remains **unanswered**, not
-  resolved; the containment removes terrarium from the blast radius either
-  way. The 3-step empirical test (inventory doc §4) remains available if
-  soma ever needs the answer for its own dedup reasoning.
+- **terrarium: MEASURED SAFE (2026-08-16).** `releaseSync`'s
+  `issueReferences` does **not** bump the referenced issue's `updatedAt`.
+  Evidence (terrarium lane, spot-verified independently by this lane via
+  `linearctl show`): the v1.1.0 release sync succeeded 2026-08-14T18:29:01Z
+  with 63 issue references; five sampled referenced issues across three
+  workflow states and two teams (CER-1842, CER-1843, BIZ-46, BIZ-58, BIZ-88)
+  all retain `updatedAt` values 9–22 days OLDER than the sync. Had the
+  association bumped `updatedAt`, all five would carry the sync timestamp.
+  - *History, kept for honesty:* an earlier revision of this section ratified
+    a containment filter (terrarium PR #208) on the premise that this
+    question was unverifiable read-only. That premise was **false** — the
+    read half was always reachable (`linearctl show` exposes `updatedAt` for
+    completed issues); only a write-path scratch test was ever gated, and it
+    proved unnecessary. The terrarium lane supplied the premise, self-
+    reported the error, HELD #208 rather than merging it, and measured the
+    answer.
+  - **Resolution (re-taken on the measured premise): the containment filter
+    is WITHDRAWN.** Terrarium's own review found #208 ships two real defects
+    (a malformed identifier failing GraphQL validation for its whole 50-item
+    batch, silently dropping up to 49 valid references; an unguarded
+    transport exception aborting release recording across 8 production
+    pipelines). Adding known defects to a production path to defend a
+    measured-absent risk is a bad trade. Residual, stated plainly: the
+    measurement is of Linear's *current* behavior — if `releaseSync`
+    semantics ever change, this section and the containment question reopen.
+    This re-decision supersedes a ratified item and is surfaced in the
+    program plan for the operator's interview packet.
 
 ## 4. Collision rule — defense in depth
 
@@ -91,6 +95,6 @@ doctrine).
 | Operator deny on `soma-ingest` | `src/core/guardrails.ts` deny labels (checkpoint + batch partition) | merged (PR #136) |
 | Operator write caps | HOLD switch + mutation budget + rate-limit preflight | merged (PR #136) |
 | Queue forgery defense | HMAC envelopes (consumer verify) | merged (PR #137); receiver-side signing pending in `unsigned/gg` |
-| Terrarium `issueReferences` filter | `linear-release-sync.py` fail-closed label filter | **pending** — terrarium PR #208 open, awaiting their ladder (antagonist → operator merge); flips to merged on their ping with the merge SHA; "proven in production" only after the first driven release run |
+| Terrarium `issueReferences` filter | — | **WITHDRAWN** (§3): risk measured absent 2026-08-16; PR #208 held, not merged. Reopens only if `releaseSync` semantics change. |
 | soma-side rules | funnel contract invariants (state-only transitions, no description round-trip) | live, contract-tested |
 | Attribution resolution | `whoami` under both API keys | **pending** (operator-gated) |
