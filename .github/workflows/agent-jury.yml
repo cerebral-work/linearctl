@@ -9,7 +9,7 @@ name: Agent Jury
 # across two filename families, so a fix landed in one repo reached none of the
 # others. That is exactly what this indirection removes.
 #
-# The gateway credential comes from `secrets: inherit`:
+# The gateway credential is passed explicitly (see the secrets: block):
 #   public repos  — the org-level AGENT_JURY_API_KEY resolves.
 #   private repos — it does NOT (GitHub Free plan), so those keep a repo-level
 #                   secret until the ARC runners carry the key themselves.
@@ -27,7 +27,15 @@ jobs:
   # names with it, giving `jury / GLM-5.2 code review`.
   jury:
     uses: cerebral-work/.github/.github/workflows/agent-jury.yml@v1
-    secrets: inherit
+    secrets:
+      # NOT `secrets: inherit`. The canonical workflow lives in the
+      # cerebral-work org, and `inherit` DOES NOT CROSS ORGANIZATIONS — a
+      # cross-org caller silently receives an EMPTY secret and the gateway
+      # answers 401 "No api key passed in". Measured 2026-08-16: cerebral-work
+      # callers got the key, unsigned-gg callers got nothing, same workflow.
+      #
+      # Explicit passing works in both directions, so every caller uses it.
+      AGENT_JURY_API_KEY: ${{ secrets.AGENT_JURY_API_KEY }}
     with:
       # MUST be `reverie`, not the `self-hosted` default. The cerebral-work
       # `self-hosted` scale set has no egress to the LLM gateway: its base
