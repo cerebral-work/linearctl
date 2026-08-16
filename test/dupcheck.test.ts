@@ -18,6 +18,7 @@ function flatIssue(
     updatedAt: "2026-07-24T10:00:00.000Z",
     state: { name: "In Progress", type: "started" },
     assignee: null,
+    labels: { nodes: [] },
   };
 }
 

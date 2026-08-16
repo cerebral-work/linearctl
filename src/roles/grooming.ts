@@ -18,6 +18,8 @@ import { makeOAuthClient } from "../client.js";
 import { stale as getStale, applyStaleLabel } from "../core/grooming.js";
 import { getRole, assertRoleMayAct } from "../core/role-catalog.js";
 import type { RoleRunResult } from "../core/role-catalog.js";
+import { partitionDeniedTargets } from "../core/guardrails.js";
+import { MutationBudget } from "../core/containment.js";
 import { sinceToDate } from "../lib/time.js";
 
 const DEFAULT_TEAM = process.env.LINEARCTL_AGENT_TEAM ?? "CER";
@@ -55,15 +57,47 @@ export async function runGrooming(token: string): Promise<RoleRunResult> {
     return { summary: `grooming: no stale issues (>${DEFAULT_STALE_WARN} warn threshold)` };
   }
 
+  // Multi-writer partition: issues carrying a deny label belong to another
+  // automated writer — read-only here, dropped LOUDLY. (applyStaleLabel
+  // re-partitions at the write as a backstop; this early pass exists so the
+  // mutation budget is spent on labelable issues only.)
+  const { allowed, denied } = partitionDeniedTargets(result.items);
+  if (denied.length) {
+    console.error(
+      `role[grooming]: ${denied.length} issue(s) skipped — deny-labeled (other writer): ` +
+        denied.slice(0, 8).map((i) => i.identifier).join(", ") +
+        (denied.length > 8 ? ", …" : ""),
+    );
+  }
+  if (allowed.length === 0) {
+    return { summary: `grooming: ${result.items.length} stale issue(s), all deny-labeled — nothing to do` };
+  }
+
+  // Mutation budget (OPS-1214): cap writes per run; truncation is narrated,
+  // never silent. Dry-run previews the same capped slice the apply would take,
+  // so the log tells the truth about what an apply run WOULD do.
+  const budget = new MutationBudget();
+  const granted = APPLY ? budget.trySpend(allowed.length) : Math.min(allowed.length, budget.total);
+  const batch = allowed.slice(0, granted);
+  if (granted < allowed.length) {
+    console.error(
+      `role[grooming]: mutation budget ${budget.total}/run — ` +
+        `${allowed.length - granted} of ${allowed.length} candidate(s) deferred to a later run`,
+    );
+  }
+  if (batch.length === 0) {
+    return { summary: `grooming: mutation budget exhausted — 0 of ${allowed.length} candidate(s) processed` };
+  }
+
   // Single D2 checkpoint — the role asserts its own label action BEFORE applying.
   // The role's guardrail set is ["comment", "label"]; this is in-set, so it
   // proceeds unless the gated set (merge/release/external) blocks it (it won't
   // for "label", but the gate is the policy that would catch a misconfigured role).
   const role = getRole("grooming");
-  const proposed = { kind: "label" as const, target: STALE_LABEL, detail: `apply to ${result.items.length} stale issue(s)` };
+  const proposed = { kind: "label" as const, target: STALE_LABEL, detail: `apply to ${batch.length} stale issue(s)` };
   assertRoleMayAct(role, proposed);
 
-  const labelResult = await applyStaleLabel(client, result.items, STALE_LABEL, APPLY);
+  const labelResult = await applyStaleLabel(client, batch, STALE_LABEL, APPLY);
 
   const summary = formatGrooming(
     result.warn,

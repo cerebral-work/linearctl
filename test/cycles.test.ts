@@ -210,6 +210,7 @@ describe("bucket", () => {
       updatedAt: "2026-07-24T10:00:00.000Z",
       state: { name: "In Progress", type: "started" },
       assignee: null,
+      labels: { nodes: [] },
     };
     expect(issue.estimate).toBe(5);
   });
@@ -225,6 +226,7 @@ describe("bucket", () => {
       updatedAt: "2026-07-24T10:00:00.000Z",
       state: { name: "Todo", type: "unstarted" },
       assignee: null,
+      labels: { nodes: [] },
     };
     // bucket uses `i.estimate ?? 0` — null → 0
     expect(issue.estimate ?? 0).toBe(0);

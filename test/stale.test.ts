@@ -22,6 +22,7 @@ function flatIssue(
     updatedAt,
     state: { name: stateType === "started" ? "In Progress" : "Todo", type: stateType },
     assignee: null,
+    labels: { nodes: [] },
   };
 }
 

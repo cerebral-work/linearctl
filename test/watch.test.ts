@@ -58,6 +58,8 @@ interface StubIssue {
   state?: { id: string; name: string; type: string };
   teamId: string;
   stateId?: string;
+  /** Label names on the issue (deny-partition tests). Default: none. */
+  labels?: string[];
 }
 
 /** A record of every `createAgentActivity` call, in order (for ordering tests). */
@@ -126,6 +128,7 @@ function stubClient(opts: {
         return issue.state?.id;
       },
       state: Promise.resolve(issue.state ? { ...issue.state } : undefined),
+      labels: async () => ({ nodes: (issue.labels ?? []).map((name) => ({ name })) }),
       team: Promise.resolve({
         id: issue.teamId,
         states: async () => ({ nodes: states.slice() }),
@@ -202,6 +205,23 @@ describe("moveToStartedIfDelegated", () => {
     const res = await moveToStartedIfDelegated(stub.client, event);
     expect(res).toBe("state-inprogress"); // lowest position
     expect(stub.movedTo).toBe("state-inprogress");
+  });
+
+  test("skips the state move on a deny-labeled issue (multi-writer partition)", async () => {
+    const event = createdEvent();
+    const stub = stubClient({
+      issue: {
+        id: "issue-uuid-1",
+        delegateId: "agent-user-uuid",
+        state: { id: "state-triage", name: "Triage", type: "triage" },
+        teamId: "team-1",
+        labels: ["bug", "soma-ingest"],
+      },
+      states: [{ id: "state-inprogress", name: "In Progress", type: "started", position: 10 }],
+    });
+    const res = await moveToStartedIfDelegated(stub.client, event);
+    expect(res).toBe(null);
+    expect(stub.movedTo).toBeUndefined(); // no issue.update happened
   });
 
   test("is a no-op (null) when the issue is already started", async () => {
@@ -323,6 +343,7 @@ describe("driveLoop", () => {
           return "state-triage";
         },
         state: Promise.resolve({ id: "state-triage", name: "Triage", type: "triage" }),
+        labels: async () => ({ nodes: [] }),
         team: Promise.resolve({
           id: "team-1",
           states: async () => ({

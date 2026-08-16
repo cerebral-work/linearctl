@@ -52,11 +52,16 @@ export function isExhausted(info: RateLimitInfo): boolean {
 
 const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 
-/** Probe the org quota with a minimal viewer query; parse headers off the raw response. */
-export async function fetchRateLimit(apiKey: string): Promise<RateLimitInfo> {
+/**
+ * Probe the org quota with a minimal viewer query; parse headers off the raw
+ * response. `auth` is the full Authorization header value: a personal API key
+ * raw (Linear accepts it bare), or `Bearer <token>` for OAuth actors (the
+ * operator's app-actor token).
+ */
+export async function fetchRateLimit(auth: string): Promise<RateLimitInfo> {
   const res = await fetch(LINEAR_GRAPHQL_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: apiKey },
+    headers: { "Content-Type": "application/json", Authorization: auth },
     body: JSON.stringify({ query: "{ viewer { id } }" }),
   });
   // Even a RATELIMITED 400 carries the headers — that response IS the answer.
