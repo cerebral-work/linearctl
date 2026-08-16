@@ -32,13 +32,19 @@ flows have opposite failure semantics and must not share a queue:
   (`secret/linearctl/cf-queue-consumer`). Producer and consumer tokens are
   distinct.
 - **Signing:** every message on this queue is a v1 HMAC envelope
-  (`src/core/hmac-envelope.ts`): `{v:1, alg:"hmac-sha256", sig, body}` — the
-  producer signs the raw intent JSON at enqueue with the shared intents key
-  (OpenBao `secret/linearctl/intents-hmac`, key distinct from the
-  session-event queue's key); the consumer verifies before parsing. CF Queues
-  tokens scope account-wide, so queue write access alone must not reach the
-  filing path. An unsigned or non-verifying message is a **permanent
-  rejection** (→ DLQ, reason `bad-signature`).
+  (`src/core/hmac-envelope.ts`): `{v:1, alg:"hmac-sha256", ts, sig, body}`
+  with `sig = HMAC-SHA256(key, "v1\n" + audience + "\n" + ts + "\n" + body)`.
+  The audience string is the queue name (`linear-ticket-intents`) — domain
+  separation, so a session-event envelope can never verify here even if the
+  keys were ever shared (they must not be: the intents key lives at OpenBao
+  `secret/linearctl/intents-hmac`, distinct from the session-event key). The
+  MAC-covered `ts` gives a freshness window (default 10 min); replay inside
+  the window is additionally neutralized by dedupKey idempotency (§4.3), so
+  the intents path is replay-safe end to end. The consumer verifies before
+  parsing; CF Queues tokens may scope account-wide, so queue write access
+  alone must not reach the filing path. An unsigned or non-verifying message
+  is a **permanent rejection** (→ DLQ, reason `bad-signature`); a stale one
+  redelivers like any transient failure until retries exhaust.
 
 ## 2. Message schema — `TicketIntent` v1alpha1
 
