@@ -2,8 +2,8 @@
  * Containment set (OPS-1214) — the operational brakes the operator daemon runs
  * behind. Three mechanisms, all mechanical (no LLM, no judgment):
  *
- *   1. **HOLD switch** — a global stop for all Linear writes, honoring the
- *      estate hold-batch-ops SOP. Two forms, either engages the hold:
+ *   1. **HOLD switch** — a global stop for all Linear writes (the mechanical
+ *      handle for an operational write-freeze). Two forms, either engages the hold:
  *      `LINEARCTL_HOLD=1` (env, set at deploy time) or the existence of a hold
  *      file at `LINEARCTL_HOLD_FILE` (default `/etc/linearctl/hold/HOLD` — a
  *      ConfigMap mount in-cluster, so the hold can be flipped without a
@@ -43,7 +43,10 @@ export function checkHold(
   if (env.LINEARCTL_HOLD === "1") {
     return { held: true, reason: "LINEARCTL_HOLD=1" };
   }
-  const holdFile = env.LINEARCTL_HOLD_FILE ?? DEFAULT_HOLD_FILE;
+  // `||` + trim, not `??`: a SET-but-empty LINEARCTL_HOLD_FILE (typical Helm
+  // default-"" plumbing) must fall back to the default path, not silently
+  // disable the file-based hold (existsSync("") is always false).
+  const holdFile = env.LINEARCTL_HOLD_FILE?.trim() || DEFAULT_HOLD_FILE;
   if (fileExists(holdFile)) {
     return { held: true, reason: `hold file present: ${holdFile}` };
   }

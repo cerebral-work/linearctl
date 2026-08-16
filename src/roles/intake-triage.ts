@@ -64,19 +64,32 @@ export async function runIntakeTriage(token: string): Promise<RoleRunResult> {
     // Additive comment — permitted by the role's guardrail set. The role
     // asserts itself before the mutation (single checkpoint:
     // src/core/guardrails.ts), passing the target's LIVE labels so the
-    // dual-writer deny rule (§2b2) can refuse a deny-labeled target — soma
-    // keys idempotency on updatedAt, so even an additive comment on a funnel
-    // ticket perturbs another writer. Budget: this path writes exactly once.
-    const issue = await withRetry(() => client.issue(COMMENT_TARGET));
-    const labels = await withRetry(() => issue.labels());
-    new MutationBudget().spend(1);
-    assertRoleMayAct(getRole("intake-triage"), {
-      kind: "comment",
-      target: COMMENT_TARGET,
-      detail: "post intake-triage summary",
-      targetLabels: labels.nodes.map((l) => l.name),
-    });
-    await createComment(client, COMMENT_TARGET, summary);
+    // multi-writer deny rule can refuse a deny-labeled target (the funnel
+    // keys idempotency on updatedAt — funnel contract §1 — so even an
+    // additive comment perturbs it).
+    //
+    // The comment is the OPTIONAL half of this role; the read-only summary is
+    // the point. A refused/failed comment (budget zero, denied target, fetch
+    // error) degrades to summary-only with a note — it must never turn a
+    // read-only triage pass into a permanently failing run.
+    try {
+      if (new MutationBudget().trySpend(1) === 0) {
+        console.error("role[intake-triage]: mutation budget is 0 — summary-only (comment skipped)");
+      } else {
+        const issue = await withRetry(() => client.issue(COMMENT_TARGET));
+        const labels = await withRetry(() => issue.labels());
+        assertRoleMayAct(getRole("intake-triage"), {
+          kind: "comment",
+          target: COMMENT_TARGET,
+          detail: "post intake-triage summary",
+          targetLabels: labels.nodes.map((l) => l.name),
+        });
+        await createComment(client, COMMENT_TARGET, summary);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`role[intake-triage]: comment on ${COMMENT_TARGET} skipped — ${msg}`);
+    }
   }
 
   // `proposed` is undefined: this slice posts the comment inline (above) when a

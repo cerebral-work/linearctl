@@ -243,6 +243,9 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         tokenAgeSec: Math.max(0, Math.floor((nowMonotonicMs - tokenMintedAtMonotonicMs) / 1000)),
         lastPoll: lastPollAt === null ? null : new Date(lastPollAt).toISOString(),
         queueDepth: lastQueueDepth,
+        // Surfaced so `operator --check` distinguishes a deliberate hold
+        // (ready, idle) from a broken poller (not ready).
+        held: checkHold().held,
       });
       return {
         status: 200,
@@ -320,6 +323,12 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     if (hold.held) {
       if (!wasHeld) console.error(`operator: HOLD engaged (${hold.reason}) — queue polling paused`);
       wasHeld = true;
+      // A held daemon is alive and DELIBERATELY idle — keep the poll
+      // heartbeat fresh so /readyz (the kubelet readiness probe) stays green
+      // for the hold's duration. A hold must read as "held", not as an
+      // outage, and a rollout during a hold must not wedge on readiness.
+      lastPollAt = Date.now();
+      lastPollAtMonotonicMs = performance.now();
       return;
     }
     if (wasHeld) {

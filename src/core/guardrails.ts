@@ -30,18 +30,26 @@ const GATED_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Deny labels — the dual-writer partition (ecosystem plan §2b2, ratified
- * 2026-08-16). An issue carrying any of these labels belongs to ANOTHER
- * automated writer (soma's WorkSource funnel owns `soma-ingest`); this
- * operator treats it as read-only ENTIRELY — soma keys its idempotency on
- * `updatedAt`, so even an additive comment perturbs a production writer.
- * Extendable via `LINEARCTL_DENY_LABELS` (comma-separated; replaces the
- * default set deliberately — the deploy config owns the partition).
+ * Deny labels — the multi-writer partition. An issue carrying any of these
+ * labels is controlled by ANOTHER automated writer: `soma-ingest` marks the
+ * WorkSource funnel's tickets (see docs/funnel-contract.md), and the funnel
+ * keys its idempotency on `updatedAt` (funnel contract §1) — so even an
+ * additive comment perturbs it. Such issues are read-only to this tool's
+ * automated writers ENTIRELY.
+ *
+ * `LINEARCTL_DENY_LABELS` (comma-separated) EXTENDS the built-in set — it can
+ * never remove `soma-ingest`. A partition that a deploy-values typo can
+ * silently drop is not a partition; additions are config, removals are a code
+ * change with review.
  */
+const BUILTIN_DENY_LABELS = ["soma-ingest"] as const;
+
 export function denyLabels(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
-  const raw = env.LINEARCTL_DENY_LABELS;
-  const names = raw === undefined ? ["soma-ingest"] : raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return new Set(names.map((n) => n.toLowerCase()));
+  const extra = (env.LINEARCTL_DENY_LABELS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set([...BUILTIN_DENY_LABELS, ...extra]);
 }
 
 /** A proposed role action. `kind` is checked against the guardrail sets. */
@@ -74,7 +82,7 @@ export function partitionDeniedTargets<T extends { labels: string[] }>(
   const allowed: T[] = [];
   const denied: T[] = [];
   for (const item of items) {
-    (item.labels.some((l) => deny.has(l.toLowerCase())) ? denied : allowed).push(item);
+    (item.labels.some((l) => deny.has(l.trim().toLowerCase())) ? denied : allowed).push(item);
   }
   return { allowed, denied };
 }
@@ -104,11 +112,11 @@ export function assertWithinGuardrails(action: ProposedAction): void {
   }
   if (action.targetLabels) {
     const deny = denyLabels();
-    const hit = action.targetLabels.find((l) => deny.has(l.toLowerCase()));
+    const hit = action.targetLabels.find((l) => deny.has(l.trim().toLowerCase()));
     if (hit !== undefined) {
       throw new GuardrailError(
         action,
-        `target carries deny label "${hit}" — owned by another writer (dual-writer split, §2b2)`,
+        `target carries deny label "${hit}" — owned by another automated writer (multi-writer partition)`,
       );
     }
   }

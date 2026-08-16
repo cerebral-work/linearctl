@@ -3,6 +3,7 @@ import { LinearDocument } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
 import { batchUpdateIssues } from "./batch.js";
+import { partitionDeniedTargets } from "./guardrails.js";
 import { collectIssuesFlat, projectClause, scopedTeams, TERMINAL_STATE_TYPES } from "./issues-query.js";
 
 export interface TriageItem {
@@ -221,6 +222,8 @@ export interface StaleLabelResult {
   applied: boolean;
   count: number;
   identifiers: string[];
+  /** Issues excluded by the multi-writer deny partition (never labeled). */
+  deniedIdentifiers: string[];
 }
 
 /**
@@ -228,6 +231,12 @@ export interface StaleLabelResult {
  * only via `--label` + `--apply`). Uses `addedLabelIds` so existing labels are
  * preserved. `apply: false` is a dry-run — resolves/validates the label but
  * writes nothing. Never closes an issue (close-or-justify is human; RFC §3.2).
+ *
+ * The multi-writer deny partition (`src/core/guardrails.ts`) is enforced HERE,
+ * at the write, not only in callers — so every surface that labels stale
+ * issues (operator role, `linearctl stale --apply`, future callers) excludes
+ * deny-labeled issues by construction. Denied issues are reported in
+ * `deniedIdentifiers`; callers MUST surface them (no silent truncation).
  */
 export async function applyStaleLabel(
   client: LinearClient,
@@ -235,19 +244,20 @@ export async function applyStaleLabel(
   labelName: string,
   apply: boolean,
 ): Promise<StaleLabelResult> {
+  const { allowed, denied } = partitionDeniedTargets(items);
   const labels = await withRetry(() =>
     client.issueLabels({ filter: { name: { eqIgnoreCase: labelName } } }),
   );
   const [labelId] = pickLabelIds(labels.nodes, [labelName]);
-  if (apply) {
+  if (apply && allowed.length > 0) {
     // Batched: one request per chunk of issues instead of one round-trip each.
     const res = await batchUpdateIssues(
       client,
-      items.map((i) => ({ uuid: i.id, ref: i.identifier, input: { addedLabelIds: [labelId] } })),
+      allowed.map((i) => ({ uuid: i.id, ref: i.identifier, input: { addedLabelIds: [labelId] } })),
     );
     if (res.failed.length) {
       throw new Error(
-        `failed to label ${res.failed.length}/${items.length} issue(s): ` +
+        `failed to label ${res.failed.length}/${allowed.length} issue(s): ` +
           res.failed.slice(0, 5).map((f) => f.ref).join(", ") +
           (res.failed.length > 5 ? ", …" : ""),
       );
@@ -257,7 +267,8 @@ export async function applyStaleLabel(
     label: labelName,
     labelId,
     applied: apply,
-    count: items.length,
-    identifiers: items.map((i) => i.identifier),
+    count: allowed.length,
+    identifiers: allowed.map((i) => i.identifier),
+    deniedIdentifiers: denied.map((i) => i.identifier),
   };
 }

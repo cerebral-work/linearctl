@@ -39,6 +39,16 @@ export async function stale(opts: StaleOptions): Promise<void> {
   const labelResult = opts.label
     ? await applyStaleLabel(client, result.items, opts.label, opts.apply === true)
     : undefined;
+  // Deny-labeled issues are excluded from labeling at the core layer
+  // (multi-writer partition) — surface the exclusion, never truncate silently.
+  if (labelResult && labelResult.deniedIdentifiers.length > 0) {
+    process.stderr.write(
+      `${labelResult.deniedIdentifiers.length} issue(s) excluded (deny-labeled, owned by another writer): ` +
+        labelResult.deniedIdentifiers.slice(0, 8).join(", ") +
+        (labelResult.deniedIdentifiers.length > 8 ? ", …" : "") +
+        "\n",
+    );
+  }
 
   if (opts.json) {
     printJson({ ...result, ...(labelResult ? { labelAction: labelResult } : {}) });

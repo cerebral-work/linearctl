@@ -31,9 +31,16 @@ export type PreflightResult = { skip: false } | { skip: true; reason: string };
 export type Preflight = () => Promise<PreflightResult>;
 
 /**
- * The scheduler's built-in gate: the HOLD switch only — synchronous, no
- * network, so bare `scheduleRole` calls stay cheap and test-friendly.
+ * Pass-through gate — the bare-call default. Containment (HOLD + rate limit)
+ * is the DAEMON's concern: the operator wires {@link makeDefaultPreflight}
+ * explicitly. A bare `scheduleRole` carries NO gate — deliberately, so
+ * library/test callers never read live process.env or the filesystem per tick
+ * (a test run during a real operational hold must not fail spuriously), and
+ * so nobody mistakes an implicit default for the quota gate.
  */
+const noPreflight: Preflight = async (): Promise<PreflightResult> => ({ skip: false });
+
+/** HOLD-only gate, shared by makeDefaultPreflight. */
 const holdOnlyPreflight: Preflight = async (): Promise<PreflightResult> => {
   const hold = checkHold();
   return hold.held ? { skip: true, reason: `HOLD engaged (${hold.reason})` } : { skip: false };
@@ -93,10 +100,14 @@ export function scheduleRole(
   intervalMs: number,
   runner: RoleRunner,
   token: TokenProvider,
-  /** Per-tick gate (HOLD + rate limit). Default: {@link makeDefaultPreflight}. */
+  /**
+   * Per-tick gate. Default: NONE (pass-through) — the operator daemon must
+   * wire {@link makeDefaultPreflight} explicitly to get HOLD + rate-limit
+   * gating; a bare call is ungated by design (see {@link noPreflight}).
+   */
   preflight?: Preflight,
 ): RoleSchedulerHandle {
-  const gate = preflight ?? holdOnlyPreflight;
+  const gate = preflight ?? noPreflight;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let stopped = false;
@@ -120,6 +131,10 @@ export function scheduleRole(
     } finally {
       inFlight = false;
     }
+    // stop()/SIGTERM may have landed while the (possibly network-bound)
+    // preflight was in flight — a stopped scheduler must not launch a fresh
+    // run that then races graceful shutdown mid-mutation.
+    if (stopped) return;
     inFlight = true;
     ran = true;
     try {

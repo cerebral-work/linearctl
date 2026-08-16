@@ -30,6 +30,15 @@ describe("checkHold", () => {
     if (state.held) expect(state.reason).toContain(DEFAULT_HOLD_FILE);
   });
 
+  test("a SET-but-empty LINEARCTL_HOLD_FILE falls back to the default path (never disables the file hold)", () => {
+    const probed: string[] = [];
+    checkHold({ LINEARCTL_HOLD_FILE: "" }, (p) => {
+      probed.push(p);
+      return false;
+    });
+    expect(probed).toEqual([DEFAULT_HOLD_FILE]);
+  });
+
   test("LINEARCTL_HOLD_FILE overrides the checked path", () => {
     const probed: string[] = [];
     const state = checkHold({ LINEARCTL_HOLD_FILE: "/tmp/custom-hold" }, (p) => {
@@ -88,10 +97,16 @@ describe("deny labels (dual-writer split §2b2)", () => {
     expect([...denyLabels({})]).toEqual(["soma-ingest"]);
   });
 
-  test("LINEARCTL_DENY_LABELS replaces the set, case-insensitive", () => {
-    const set = denyLabels({ LINEARCTL_DENY_LABELS: "Soma-Ingest, other-writer" });
-    expect(set.has("soma-ingest")).toBe(true);
+  test("LINEARCTL_DENY_LABELS EXTENDS the built-in set (never replaces), case-insensitive", () => {
+    const set = denyLabels({ LINEARCTL_DENY_LABELS: "Other-Writer" });
+    expect(set.has("soma-ingest")).toBe(true); // builtin survives any config
     expect(set.has("other-writer")).toBe(true);
+  });
+
+  test("an EMPTY LINEARCTL_DENY_LABELS cannot remove the built-in partition", () => {
+    for (const raw of ["", "  ", ","]) {
+      expect(denyLabels({ LINEARCTL_DENY_LABELS: raw }).has("soma-ingest")).toBe(true);
+    }
   });
 
   test("assertWithinGuardrails throws on a deny-labeled target", () => {

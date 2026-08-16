@@ -57,8 +57,10 @@ export async function runGrooming(token: string): Promise<RoleRunResult> {
     return { summary: `grooming: no stale issues (>${DEFAULT_STALE_WARN} warn threshold)` };
   }
 
-  // Dual-writer partition (§2b2): issues carrying a deny label (soma-ingest)
-  // belong to another automated writer — read-only here, dropped LOUDLY.
+  // Multi-writer partition: issues carrying a deny label belong to another
+  // automated writer — read-only here, dropped LOUDLY. (applyStaleLabel
+  // re-partitions at the write as a backstop; this early pass exists so the
+  // mutation budget is spent on labelable issues only.)
   const { allowed, denied } = partitionDeniedTargets(result.items);
   if (denied.length) {
     console.error(

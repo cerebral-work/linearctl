@@ -26,6 +26,7 @@
 
 import type { AgentActivity, LinearClient } from "@linear/sdk";
 import { makeOAuthClient } from "../client.js";
+import { denyLabels } from "./guardrails.js";
 import { complete as llmComplete, LLMError, type ChatMessage, type CompleteOptions } from "../lib/llm.js";
 
 /** Workflow-state types that count as "started" (no state move needed). */
@@ -386,6 +387,23 @@ export async function moveToStartedIfDelegated(
   const state = await issue.state;
   if (state && STARTED_TYPES[state.type]) {
     return null; // already started/completed/canceled — leave it
+  }
+
+  // Multi-writer partition: an issue carrying a deny label is controlled by
+  // another automated writer that keys idempotency on `updatedAt` (see
+  // docs/funnel-contract.md §1), so this path performs NO issue mutation on
+  // it — the state move is skipped with a log line. Session activities
+  // (thought/response) still happen upstream: they are session-scoped and
+  // required by the agent protocol's 10s SLA. Checked after the cheap state
+  // early-outs so only issues that would actually be moved pay the fetch.
+  const issueLabels = await issue.labels();
+  const deny = denyLabels();
+  const denyHit = issueLabels.nodes.find((l) => deny.has(l.name.trim().toLowerCase()));
+  if (denyHit) {
+    console.error(
+      `watch: issue ${issue.identifier ?? issueId} carries deny label "${denyHit.name}" — state move skipped (multi-writer partition)`,
+    );
+    return null;
   }
 
   const team = await issue.team;
