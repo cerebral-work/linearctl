@@ -59,8 +59,21 @@ write that bumps a funnel ticket's `updatedAt` can trigger a soma re-examine.
   `soma-ingest`-labeled identifiers out of `issueReferences` before
   `releaseSync` (one label read per referenced issue, once per release).
   Cheaper than the coordination, correct regardless of the answer.
-  Implementation goes through terrarium's own ladder; **not implemented as of
-  2026-08-16** — tracked as a program follow-up.
+  Implementation: terrarium PR #208 (open, behind terrarium's ladder —
+  antagonist authorizes, operator merges). The filter is **fail-closed**: an
+  identifier whose labels cannot be read (not found, or query error) is
+  dropped along with `soma-ingest` hits, on the reasoning that a missed
+  release-note reference is cheap while a wrong one perturbs another writer's
+  idempotency; both drop classes are step-log-reported (no silent
+  truncation). Two limits, recorded as stated by the terrarium lane:
+  (1) verification is stub-driven only — logic proven offline, NOT against
+  the live Linear API (that needs the operator-gated `LINEAR_API_KEY`); the
+  first real post-merge release is the driven run. "Implemented" here does
+  not mean "proven in production." (2) The underlying question — whether a
+  Release↔Issue association bumps `updatedAt` — remains **unanswered**, not
+  resolved; the containment removes terrarium from the blast radius either
+  way. The 3-step empirical test (inventory doc §4) remains available if
+  soma ever needs the answer for its own dedup reasoning.
 
 ## 4. Collision rule — defense in depth
 
@@ -78,6 +91,6 @@ doctrine).
 | Operator deny on `soma-ingest` | `src/core/guardrails.ts` deny labels (checkpoint + batch partition) | merged (PR #136) |
 | Operator write caps | HOLD switch + mutation budget + rate-limit preflight | merged (PR #136) |
 | Queue forgery defense | HMAC envelopes (consumer verify) | merged (PR #137); receiver-side signing pending in `unsigned/gg` |
-| Terrarium `issueReferences` filter | `linear-release-sync.py` label filter | **pending** (terrarium ladder) |
+| Terrarium `issueReferences` filter | `linear-release-sync.py` fail-closed label filter | **pending** — terrarium PR #208 open, awaiting their ladder (antagonist → operator merge); flips to merged on their ping with the merge SHA; "proven in production" only after the first driven release run |
 | soma-side rules | funnel contract invariants (state-only transitions, no description round-trip) | live, contract-tested |
 | Attribution resolution | `whoami` under both API keys | **pending** (operator-gated) |
