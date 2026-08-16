@@ -76,6 +76,29 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.env.cfApiToken.secretKeyRef.name }}
                   key: {{ .Values.env.cfApiToken.secretKeyRef.key }}
+            # 2b. Queue HMAC verification (optional) — when set, the poller
+            # verifies every queue message as a signed envelope (forgery
+            # defense: CF Queues tokens may scope account-wide, so queue
+            # write access alone must not reach the event loop). Rollout
+            # sequencing and the warn/enforce migration mode: see values.yaml.
+            {{- with .Values.env.queueHmacKey }}
+            - name: LINEARCTL_QUEUE_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretKeyRef.name }}
+                  key: {{ .secretKeyRef.key }}
+            {{- end }}
+            {{- with .Values.env.queueHmacKeyPrev }}
+            - name: LINEARCTL_QUEUE_HMAC_KEY_PREV
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretKeyRef.name }}
+                  key: {{ .secretKeyRef.key }}
+            {{- end }}
+            {{- with .Values.env.queueHmacMode }}
+            - name: LINEARCTL_QUEUE_HMAC_MODE
+              value: {{ . | quote }}
+            {{- end }}
             # 3. LLM gateway — in-cluster LiteLLM proxy.
             - name: LLM_BASE_URL
               value: {{ .Values.env.llmBaseUrl.value | quote }}

@@ -85,6 +85,13 @@ Create it via the Cloudflare dashboard or API:
 - Permission: **Queues → Consume** (pull/ack) on `linear-agent-events` only.
 - Do NOT grant account-wide Queues edit, Workers edit, or DNS edit.
 
+> **VERIFY the per-queue scoping actually exists when minting.** As of
+> 2026-08-16 it is unconfirmed whether CF API tokens can scope to a single
+> queue or only to the account-wide Queues permission group. If only
+> account-wide is available, the token can write to every queue in the
+> account — the HMAC envelope (`LINEARCTL_QUEUE_HMAC_KEY`, step 4) is the
+> compensating control and should be treated as REQUIRED, not optional.
+
 Store the token in OpenBao (the cluster's secret store) under the
 `linearctl-cf-queue` key `api-token`; an ExternalSecret renders it into the
 pod env as `CF_API_TOKEN` at runtime. For local CLI/dev, `1Password` via
@@ -115,9 +122,20 @@ them into the shell:
 CF_ACCOUNT_ID=<your-cloudflare-account-id>
 CF_QUEUE_ID=<queue-id-from-step-2>
 CF_API_TOKEN=<token-from-step-3>
+LINEARCTL_QUEUE_HMAC_KEY=<shared signing key>       # optional but see step 3 note
+LINEARCTL_QUEUE_HMAC_KEY_PREV=<old key>             # rotation window only
+LINEARCTL_QUEUE_HMAC_MODE=warn                      # migration only; default enforce
 ```
 
-All three are required. If any is absent, the daemon's `handle.polling` is
+With a key set, queue messages must be v1 HMAC envelopes
+(`{v:1, alg:"hmac-sha256", ts, sig, body}` — see `src/core/hmac-envelope.ts`;
+the receiver signs at enqueue with the same key, audience-bound to the queue
+name). Rollout order and rotation mechanics: `deploy/chart/values.yaml` §2b —
+enabling enforce before the receiver signs REJECTS AND ACKS (destroys) every
+real event. A set-but-empty key refuses startup. `/readyz` reports the
+posture as `hmac: off|warn|enforce`.
+
+All three CF vars are required for polling. If any is absent, the daemon's `handle.polling` is
 `false` and `/readyz` reports `cfEnv: { accountId: false, queueId: false,
 apiToken: false }`.
 
@@ -305,6 +323,11 @@ Deploy target (PR #120 cluster contract):
 | `loadClientCreds: partial env credentials` | only one of `LINEAR_OAUTH_CLIENT_ID`/`_SECRET` set | set BOTH (or neither, to fall back to 1Password for local CLI) |
 | thought never lands | receiver not enqueuing | Step 6 receiver deployed? Step 5 webhook URL correct? |
 | `--check` exits 1, "connect ENOENT" | no daemon listening | `linearctl operator` running? socket path correct? |
+| `queue message REJECTED (unsupported envelope version)` | receiver not signing (or pre-cutover backlog) while operator enforces | wrong rollout order — switch to `LINEARCTL_QUEUE_HMAC_MODE=warn` until the receiver signs; rejected events are already destroyed (acked) |
+| `queue message REJECTED (signature mismatch)` | key desync between receiver + operator | rotation skew — set `LINEARCTL_QUEUE_HMAC_KEY_PREV` during rotation; verify both sides read the same OpenBao property |
+| `queue message REJECTED (sig malformed)` | receiver emitting non-hex/wrong-length sigs | receiver-side encoding bug (e.g. base64 instead of hex) — not a key problem |
+| `queue message REJECTED (stale timestamp)` | messages older than the 10-min freshness window | queue backlog beyond window, or clock skew between receiver + operator |
+| operator exits at startup: "set but EMPTY" | `LINEARCTL_QUEUE_HMAC_KEY` present but empty | present-but-empty secret (ESO sync/rotation failure) — fix the OpenBao property; deliberate unsigned mode = UNSET the var |
 
 ---
 

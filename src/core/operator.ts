@@ -24,6 +24,12 @@
 
 import { loadClientCreds, mintClientCredentialsToken, DEFAULT_BOT_SCOPES } from "./auth.js";
 import { checkHold } from "./containment.js";
+import {
+  verifyEnvelope,
+  AUDIENCE_AGENT_EVENTS,
+  QUEUE_HMAC_KEY_ENV,
+  QUEUE_HMAC_KEY_PREV_ENV,
+} from "./hmac-envelope.js";
 import { runEventLoop, type AgentSessionEvent, type EventLoopResult } from "./watch.js";
 import {
   makeDefaultPreflight,
@@ -115,6 +121,12 @@ export interface OperatorOptions {
   roles?: RoleDescriptor[];
   /** Override the role runners (tests inject stubs; default loads `src/roles/*`). */
   roleRunners?: Record<string, (token: string) => Promise<unknown>>;
+  /**
+   * HMAC config override (tests inject; default reads
+   * LINEARCTL_QUEUE_HMAC_KEY / _KEY_PREV / _MODE from process.env). Resolved
+   * ONCE at startup — the daemon's signing posture cannot flip mid-run.
+   */
+  hmac?: { key?: string; prevKey?: string; mode?: string } | null;
 }
 
 /** An in-memory token cache. The token value never leaves here except to Linear. */
@@ -192,6 +204,41 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   const queueEnv = opts.queueEnv === undefined ? readQueueEnv() : opts.queueEnv;
   const fetchImpl: QueueFetcher = opts.queueFetcher ?? ((url, init) => fetch(url, init));
 
+  // HMAC signing posture — resolved ONCE at startup (never re-read per
+  // message, so the posture cannot silently flip mid-run). A key that is SET
+  // but empty/whitespace is the classic present-but-empty secret-sync
+  // failure: refuse to start rather than silently downgrade to unsigned.
+  const rawHmac =
+    opts.hmac === undefined
+      ? {
+          key: process.env[QUEUE_HMAC_KEY_ENV],
+          prevKey: process.env[QUEUE_HMAC_KEY_PREV_ENV],
+          mode: process.env.LINEARCTL_QUEUE_HMAC_MODE,
+        }
+      : (opts.hmac ?? {});
+  for (const [name, val] of [
+    [QUEUE_HMAC_KEY_ENV, rawHmac.key],
+    [QUEUE_HMAC_KEY_PREV_ENV, rawHmac.prevKey],
+  ] as const) {
+    if (val !== undefined && val.trim() === "") {
+      throw new Error(
+        `operator: ${name} is set but EMPTY — refusing to start. ` +
+          `Fix the secret (present-but-empty is a sync/rotation failure) or unset the variable.`,
+      );
+    }
+  }
+  const hmacKey = rawHmac.key || null;
+  const hmacPrevKey = rawHmac.prevKey || undefined;
+  // Mode: "enforce" (default when a key is set) rejects non-verifying
+  // messages; "warn" processes them with a log line — the MIGRATION mode for
+  // the rollout window where the receiver isn't signing yet (or a queue
+  // backlog predates the cutover). Without a key the posture is "off".
+  const hmacMode: "off" | "warn" | "enforce" = !hmacKey
+    ? "off"
+    : rawHmac.mode === "warn"
+      ? "warn"
+      : "enforce";
+
   // Mint the startup token (rare: 30d lifetime). Held in memory only.
   const tokenCache = makeTokenCache(minter);
   await tokenCache.refreshToken();
@@ -246,6 +293,9 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         // Surfaced so `operator --check` distinguishes a deliberate hold
         // (ready, idle) from a broken poller (not ready).
         held: checkHold().held,
+        // Signing posture, so `operator --check` shows whether the forgery
+        // defense is actually on — a one-shot log line is not auditable.
+        hmac: hmacMode,
       });
       return {
         status: 200,
@@ -312,6 +362,20 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
 
   // Log HOLD engagement once per transition, not once per 2s tick.
   let wasHeld = false;
+
+  // Signing posture is a startup fact, logged at startup — not on the first
+  // message (an idle queue must not hide an unsigned deployment).
+  if (queueEnv) {
+    if (hmacMode === "off") {
+      console.error(
+        `operator: ${QUEUE_HMAC_KEY_ENV} not set — queue messages are NOT signature-verified (legacy mode)`,
+      );
+    } else {
+      console.error(
+        `operator: queue HMAC verification ${hmacMode}${hmacPrevKey ? " (+rotation fallback key)" : ""}`,
+      );
+    }
+  }
 
   async function pollOnce(): Promise<void> {
     if (!queueEnv) return;
@@ -387,9 +451,32 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     for (const msg of messages) {
       inFlight += 1;
       try {
+        // HMAC envelope verification (forgery defense): with a key
+        // configured, every message must be a valid signed envelope —
+        // queue-level write access alone cannot reach the event loop.
+        // Rejects are acked (session-event ack-anyway posture) and logged
+        // with a fixed-set reason only (never key/sig material, never
+        // attacker-controlled text). "warn" is the rollout/migration mode:
+        // non-verifying messages are processed with a log line instead of
+        // destroyed, for the window where the receiver isn't signing yet.
+        let rawBody = msg.body;
+        if (hmacKey) {
+          const verdict = verifyEnvelope(hmacKey, AUDIENCE_AGENT_EVENTS, msg.body, {
+            ...(hmacPrevKey !== undefined ? { prevKey: hmacPrevKey } : {}),
+          });
+          if (verdict.ok) {
+            rawBody = verdict.body;
+          } else if (hmacMode === "warn") {
+            console.error(`operator: queue message UNVERIFIED (${verdict.reason}) — processing (warn mode)`);
+          } else {
+            console.error(`operator: queue message REJECTED (${verdict.reason}); acking`);
+            continue;
+          }
+        }
+
         let event: AgentSessionEvent;
         try {
-          event = JSON.parse(msg.body) as AgentSessionEvent;
+          event = JSON.parse(rawBody) as AgentSessionEvent;
         } catch (err) {
           const m = err instanceof Error ? err.message : String(err);
           console.error(`operator: queue message not valid JSON: ${m}; acking`);
