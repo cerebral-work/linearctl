@@ -68,6 +68,33 @@ env:
     secretKeyRef:
       name: linearctl-cf-queue
       key: api-token
+  # 2b. Queue HMAC verification (optional; omit to run legacy-unsigned — the
+  #     daemon logs the unsigned posture AT STARTUP and /readyz reports
+  #     `hmac: "off"`). Key shared with the webhook receiver, which signs at
+  #     enqueue. A key that resolves EMPTY is a startup error, not a silent
+  #     downgrade.
+  #
+  #     ROLLOUT ORDER (skipping it destroys real events — rejects are acked):
+  #       1. Add `hmac-key` to the `linearctl-cf-queue` secret source FIRST
+  #          (uncommenting here before the k8s Secret has the key =
+  #          CreateContainerConfigError).
+  #       2. Deploy the receiver with signing enabled.
+  #       3. Enable here with `queueHmacMode: "warn"` — unsigned messages are
+  #          still processed, each with an UNVERIFIED log line.
+  #       4. When the logs show zero UNVERIFIED lines, drop queueHmacMode
+  #          (default: enforce).
+  #     KEY ROTATION: put the old key in queueHmacKeyPrev, rotate, then remove
+  #     it — otherwise receiver/operator secret-refresh skew rejects (and
+  #     destroys) every event in the window.
+  # queueHmacKey:
+  #   secretKeyRef:
+  #     name: linearctl-cf-queue
+  #     key: hmac-key
+  # queueHmacKeyPrev:
+  #   secretKeyRef:
+  #     name: linearctl-cf-queue
+  #     key: hmac-key-prev
+  # queueHmacMode: "warn"
   # 3. LLM gateway — the in-cluster LiteLLM proxy (namespace llm, port 4000).
   #    ExternalSecret `linearctl-llm` from OpenBao; base/model are chart values.
   llmBaseUrl:

@@ -22,7 +22,7 @@
  */
 
 import { createServer, connect, type Socket, type Server } from "node:net";
-import { mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -134,7 +134,10 @@ export function startControlServer(
   const socketPath = opts.socketPath ?? DEFAULT_OPERATOR_SOCKET;
 
   try {
-    mkdirSync(dirname(socketPath), { recursive: true });
+    // mode is masked by umask at creation; the explicit chmod below makes the
+    // permission a guarantee, not a umask accident.
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
+    chmodSync(dirname(socketPath), 0o700);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
       return Promise.reject(err);
@@ -180,6 +183,16 @@ export function startControlServer(
 
   server.listen(socketPath, () => {
     server.removeListener("error", reject);
+
+    // The socket is a trust boundary: /delegate feeds the event loop with the
+    // daemon's app-actor token and no HMAC (local access = trusted). That
+    // boundary is only real if the filesystem enforces it — owner-only, not
+    // whatever the umask happened to be (some container images run umask 000).
+    try {
+      chmodSync(socketPath, 0o600);
+    } catch {
+      // best-effort on exotic filesystems; the 0700 parent dir still gates
+    }
 
     let closed = false;
     const close = async (): Promise<void> => {
