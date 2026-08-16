@@ -16,6 +16,9 @@
 import { makeOAuthClient } from "../client.js";
 import { triage as getTriageQueue, stale as getStale } from "../core/grooming.js";
 import { createComment } from "../core/issues.js";
+import { getRole, assertRoleMayAct } from "../core/role-catalog.js";
+import { MutationBudget } from "../core/containment.js";
+import { withRetry } from "../lib/retry.js";
 import { sinceToDate } from "../lib/time.js";
 import type { RoleRunResult } from "../core/role-catalog.js";
 
@@ -58,9 +61,21 @@ export async function runIntakeTriage(token: string): Promise<RoleRunResult> {
   const summary = formatSummary(triageItems, staleResult.warn, staleResult.critical);
 
   if (COMMENT_TARGET) {
-    // Additive comment — permitted by the role's guardrail set. The scheduler
-    // does not gate; the role asserts itself before the mutation (single
-    // checkpoint: src/core/guardrails.ts).
+    // Additive comment — permitted by the role's guardrail set. The role
+    // asserts itself before the mutation (single checkpoint:
+    // src/core/guardrails.ts), passing the target's LIVE labels so the
+    // dual-writer deny rule (§2b2) can refuse a deny-labeled target — soma
+    // keys idempotency on updatedAt, so even an additive comment on a funnel
+    // ticket perturbs another writer. Budget: this path writes exactly once.
+    const issue = await withRetry(() => client.issue(COMMENT_TARGET));
+    const labels = await withRetry(() => issue.labels());
+    new MutationBudget().spend(1);
+    assertRoleMayAct(getRole("intake-triage"), {
+      kind: "comment",
+      target: COMMENT_TARGET,
+      detail: "post intake-triage summary",
+      targetLabels: labels.nodes.map((l) => l.name),
+    });
     await createComment(client, COMMENT_TARGET, summary);
   }
 

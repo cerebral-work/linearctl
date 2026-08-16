@@ -1,0 +1,25 @@
+{{- /*
+HOLD switch ConfigMap (OPS-1214 containment).
+
+Mounted (optional) at /etc/linearctl/hold. The daemon pauses ALL Linear writes
+— role runs, queue polling, /delegate — while a key named HOLD exists here
+(file-existence check, value irrelevant). Ships EMPTY (no hold); engage with:
+
+  kubectl -n <ns> patch configmap <release>-hold --type merge -p '{"data":{"HOLD":"held"}}'
+
+and release by removing the key:
+
+  kubectl -n <ns> patch configmap <release>-hold --type json -p '[{"op":"remove","path":"/data/HOLD"}]'
+
+This is the mechanical handle for the estate hold-batch-ops SOP: no redeploy,
+no ArgoCD sync, takes effect within kubelet's ConfigMap propagation window.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-hold
+  labels:
+    app.kubernetes.io/name: linearctl
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data: {}

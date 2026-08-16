@@ -13,6 +13,7 @@ export interface FlatIssueNode {
   updatedAt: string;
   state: { name: string; type: string } | null;
   assignee: { displayName: string } | null;
+  labels: { nodes: { name: string }[] };
 }
 
 interface FlatIssuesData {
@@ -39,6 +40,11 @@ const FLAT_ISSUES_QUERY = /* GraphQL */ `
         }
         assignee {
           displayName
+        }
+        labels {
+          nodes {
+            name
+          }
         }
       }
       pageInfo {

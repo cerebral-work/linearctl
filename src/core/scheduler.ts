@@ -18,9 +18,54 @@
  */
 
 import type { RoleDescriptor, RoleRunner, RoleRunResult } from "./role-catalog.js";
+import { checkHold } from "./containment.js";
+import { fetchRateLimit, isExhausted } from "./ratelimit.js";
 
 /** Supplies the current app-actor token to a role run (the daemon's cache). */
 export type TokenProvider = () => string;
+
+/** A preflight verdict: run, or skip this tick with a logged reason. */
+export type PreflightResult = { skip: false } | { skip: true; reason: string };
+
+/** Decides per-tick whether a role run may proceed. */
+export type Preflight = () => Promise<PreflightResult>;
+
+/**
+ * The scheduler's built-in gate: the HOLD switch only — synchronous, no
+ * network, so bare `scheduleRole` calls stay cheap and test-friendly.
+ */
+const holdOnlyPreflight: Preflight = async (): Promise<PreflightResult> => {
+  const hold = checkHold();
+  return hold.held ? { skip: true, reason: `HOLD engaged (${hold.reason})` } : { skip: false };
+};
+
+/**
+ * The full operator preflight (OPS-1214 containment): skip the tick when the
+ * HOLD switch is engaged, and skip when Linear reports zero remaining quota on
+ * either rate-limit axis (probe cost: one complexity-1 request). Errors in the
+ * quota probe do NOT skip — an unreachable probe must not stop the cadence
+ * (same posture as `isExhausted`'s unknown-is-not-exhausted rule); the run
+ * itself will surface real API failures. The operator daemon wires this in
+ * explicitly (`src/core/operator.ts`); it is not the bare-call default because
+ * it performs network I/O.
+ */
+export function makeDefaultPreflight(token: TokenProvider): Preflight {
+  return async (): Promise<PreflightResult> => {
+    const hold = await holdOnlyPreflight();
+    if (hold.skip) return hold;
+    try {
+      const info = await fetchRateLimit(`Bearer ${token()}`);
+      if (isExhausted(info)) {
+        const reset = info.requests.resetAt ?? info.complexity.resetAt ?? "unknown";
+        return { skip: true, reason: `Linear rate limit exhausted (resets ${reset})` };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`preflight: rate-limit probe failed (${msg}); proceeding`);
+    }
+    return { skip: false };
+  };
+}
 
 /** A live role-scheduler handle. */
 export interface RoleSchedulerHandle {
@@ -48,13 +93,33 @@ export function scheduleRole(
   intervalMs: number,
   runner: RoleRunner,
   token: TokenProvider,
+  /** Per-tick gate (HOLD + rate limit). Default: {@link makeDefaultPreflight}. */
+  preflight?: Preflight,
 ): RoleSchedulerHandle {
+  const gate = preflight ?? holdOnlyPreflight;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let stopped = false;
   let ran = false;
 
   const fire = async (): Promise<void> => {
+    // inFlight covers the preflight too, so drain() awaits a tick that is
+    // mid-gate. A skipped tick is not a run (`ran` untouched by the skip), and
+    // a preflight error must not stop the cadence (fail-open — the run itself
+    // surfaces real API failures).
+    inFlight = true;
+    try {
+      const verdict = await gate();
+      if (verdict.skip) {
+        console.error(`role[${role.name}]: run skipped — ${verdict.reason}`);
+        return;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`role[${role.name}]: preflight failed: ${msg}; proceeding`);
+    } finally {
+      inFlight = false;
+    }
     inFlight = true;
     ran = true;
     try {

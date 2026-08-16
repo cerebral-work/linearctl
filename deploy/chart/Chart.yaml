@@ -2,7 +2,7 @@ apiVersion: v2
 name: linearctl
 description: linearctl operator daemon — the in-cluster maintainer-agent runtime (CF Queue consumer + Unix-socket control + D4 role scheduler).
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "0.7.0"
 home: https://github.com/cerebral-work/linearctl
 sources:

@@ -109,8 +109,21 @@ spec:
               mountPath: /tmp
             - name: state
               mountPath: /home/nonroot/.local/state/linearctl
+            # HOLD switch (OPS-1214): the daemon checks /etc/linearctl/hold/HOLD
+            # each tick. Flip the hold WITHOUT a redeploy:
+            #   kubectl -n <ns> patch configmap {{ .Release.Name }}-hold \
+            #     --type merge -p '{"data":{"HOLD":"held"}}'   # engage
+            # (remove the key to release). Kubelet propagates ConfigMap updates
+            # to the mount within ~a minute.
+            - name: hold
+              mountPath: /etc/linearctl/hold
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: state
           emptyDir: {}
+        - name: hold
+          configMap:
+            name: {{ .Release.Name }}-hold
+            optional: true

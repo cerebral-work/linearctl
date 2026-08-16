@@ -150,6 +150,8 @@ export interface StaleItem {
   daysStale: number;
   bucket: "warn" | "critical";
   url: string;
+  /** Sorted label names — the deny-label partition (guardrails) reads these. */
+  labels: string[];
 }
 
 export interface StaleResult {
@@ -199,6 +201,7 @@ export async function stale(
       daysStale,
       bucket,
       url: issue.url,
+      labels: issue.labels.nodes.map((l) => l.name).sort(),
     } satisfies StaleItem;
   });
   items.sort((a, b) => b.daysStale - a.daysStale);

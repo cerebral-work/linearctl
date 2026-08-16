@@ -21,6 +21,7 @@ function node(
     updatedAt: "2026-08-04T00:00:00Z",
     state: { name: stateType, type: stateType },
     assignee: { displayName: "me" },
+    labels: { nodes: [] },
   };
 }
 

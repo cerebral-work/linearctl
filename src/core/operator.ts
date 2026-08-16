@@ -23,8 +23,14 @@
  */
 
 import { loadClientCreds, mintClientCredentialsToken, DEFAULT_BOT_SCOPES } from "./auth.js";
+import { checkHold } from "./containment.js";
 import { runEventLoop, type AgentSessionEvent, type EventLoopResult } from "./watch.js";
-import { scheduleRole, type RoleSchedulerHandle, type TokenProvider } from "./scheduler.js";
+import {
+  makeDefaultPreflight,
+  scheduleRole,
+  type RoleSchedulerHandle,
+  type TokenProvider,
+} from "./scheduler.js";
 import { cadenceToMs, type RoleDescriptor, type RoleRunResult } from "./role-catalog.js";
 import {
   startControlServer,
@@ -248,6 +254,16 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
 
     if (req.method === "POST" && req.path === "/delegate") {
       return (async (): Promise<ControlResponse> => {
+        // HOLD switch (OPS-1214): the delegate path runs the event loop, which
+        // writes to Linear (thought/response/state move) — refused while held.
+        const hold = checkHold();
+        if (hold.held) {
+          return {
+            status: 503,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ok: false, error: `operator is HELD — ${hold.reason}` }),
+          };
+        }
         let event: AgentSessionEvent;
         try {
           event = JSON.parse(req.body) as AgentSessionEvent;
@@ -291,8 +307,25 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
   let inFlight = 0;
   let stopRequested = false;
 
+  // Log HOLD engagement once per transition, not once per 2s tick.
+  let wasHeld = false;
+
   async function pollOnce(): Promise<void> {
     if (!queueEnv) return;
+    // HOLD switch (OPS-1214): while held, don't pull at all — messages stay
+    // queued (pull-then-ack would consume them; not pulling preserves them
+    // for after the hold lifts). Event processing writes to Linear, so the
+    // hold binds the whole path.
+    const hold = checkHold();
+    if (hold.held) {
+      if (!wasHeld) console.error(`operator: HOLD engaged (${hold.reason}) — queue polling paused`);
+      wasHeld = true;
+      return;
+    }
+    if (wasHeld) {
+      console.error("operator: HOLD released — queue polling resumed");
+      wasHeld = false;
+    }
     const url =
       `https://api.cloudflare.com/client/v4/accounts/${queueEnv.CF_ACCOUNT_ID}` +
       `/queues/${queueEnv.CF_QUEUE_ID}/messages/pull`;
@@ -433,6 +466,8 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
         cadenceToMs(role.cadence),
         runner as (token: string) => Promise<RoleRunResult>,
         tokenProvider,
+        // Full containment preflight (OPS-1214): HOLD + rate-limit probe.
+        makeDefaultPreflight(tokenProvider),
       );
       roleSchedulers.push(handle);
       console.error(`operator: role "${role.name}" scheduled (${role.cadence})`);
