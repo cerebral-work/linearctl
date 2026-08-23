@@ -1,0 +1,145 @@
+name: Build and publish image
+
+# Dispatch SENDER for the in-cluster linearctl image build + chart publish
+# (CER-1149 / CER-1188). This workflow does NOT build anything: it resolves the
+# pinned SHA + chart version and triggers the receiver in unsigned-gg/
+# unsigned-paas (.github/workflows/build-linearctl-image.yaml), which renders a
+# rootless BuildKit Job from helm/compute/image-build, applies it to ci-builds,
+# waits on it, signs the image, and publishes deploy/chart to Harbor OCI.
+#
+# WHY THIS FILE EXISTS (restored 2026-08-23): it was absent from this repo, so
+# pushes to main triggered NO build. Harbor held exactly one linearctl image
+# tag — git-deac9f1a5406, built 2026-07-29 — and the in-cluster operator ran
+# that image for weeks while main moved 38 files ahead of it. Chart 0.3.0 (the
+# OPS-1214 containment + queue-HMAC rebuild) was never published at all.
+# Absence of this sender is why. Do not delete it again.
+#
+# Its disappearance is consistent with the 2026-07-29 history rewrites, which
+# force-moved main twice; the deployed image's own source commit
+# (deac9f1a5406) is likewise unreachable from main today. Nothing here depends
+# on that commit — this builds whatever main currently is.
+#
+# WHY workflow_dispatch AND NOT repository_dispatch: mirrors the blackwall
+# sender (OPS-1019). `POST /repos/{o}/{r}/dispatches` requires Contents:write,
+# which the unsigned-reverie-arc App does not hold and should not be granted.
+# `POST .../actions/workflows/{file}/dispatches` requires only Actions:write,
+# which it already has. The receiver declares workflow_dispatch with the
+# sha/short_sha/chart_version inputs and resolves either shape via
+# `${DISPATCH_*:-${INPUT_*}}`, so no receiver change is needed.
+#
+# CHART VERSION CONTRACT: the receiver pins EXPECTED_CHART_VERSION and rejects
+# any other value, AND re-verifies it against deploy/chart/Chart.yaml on the
+# built SHA. Both must agree. Bumping deploy/chart/Chart.yaml WITHOUT bumping
+# EXPECTED_CHART_VERSION in unsigned-paas deadlocks this pipeline — no value of
+# chart_version can pass. That is exactly what happened between 0.2.0 and
+# 0.3.0. This sender reads the version from Chart.yaml so the two can only
+# disagree in the receiver.
+#
+# Prerequisite: repo secrets ARC_APP_ID + ARC_APP_PRIVATE_KEY — the
+# unsigned-reverie-arc GitHub App, used to mint an installation token scoped to
+# unsigned-gg/unsigned-paas so this repo can trigger the receiver there.
+# NOTE: cerebral-work/linearctl is a PUBLIC repo. These secrets are not exposed
+# to fork PRs by GitHub, and this workflow does not run on pull_request at all
+# (push-to-main + manual only) — deliberately, so the token is never minted in
+# a context a fork can influence.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "package.json"
+      - "bun.lock"
+      - "bunfig.toml"
+      - "tsconfig.json"
+      - "Dockerfile"
+      - "deploy/chart/**"
+      - ".github/workflows/build-image.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # One linearctl build at a time; queue, don't cancel — cancelling the dispatch
+  # would orphan a still-running in-cluster Job in ci-builds.
+  group: build-linearctl-image
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Trigger in-cluster linearctl build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve SHA + chart version
+        id: params
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          # The receiver re-verifies this against deploy/chart/Chart.yaml on the
+          # built SHA, so read it from the same file rather than hardcoding.
+          chart_version="$(awk '/^version:/{gsub(/["'"'"']/,"",$2); print $2; exit}' deploy/chart/Chart.yaml)"
+          [ -n "${chart_version}" ] || { echo "::error::failed to read version from deploy/chart/Chart.yaml"; exit 1; }
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "short_sha=${short_sha}"
+            echo "chart_version=${chart_version}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Dispatching build of ${GITHUB_SHA} (chart ${chart_version})."
+
+      - name: Mint dispatch token (GitHub App, 1h)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.ARC_APP_ID }}
+          private-key: ${{ secrets.ARC_APP_PRIVATE_KEY }}
+          owner: unsigned-gg
+          repositories: unsigned-paas
+
+      - name: Trigger in-cluster build (workflow_dispatch)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SHA: ${{ steps.params.outputs.sha }}
+          SHORT_SHA: ${{ steps.params.outputs.short_sha }}
+          CHART_VERSION: ${{ steps.params.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          # `ref=main` is the branch the RECEIVER workflow is read from in
+          # unsigned-paas — NOT the linearctl commit being built, which travels
+          # in inputs.sha. Conflating them would silently build the wrong thing.
+          response=$(gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/unsigned-gg/unsigned-paas/actions/workflows/build-linearctl-image.yaml/dispatches \
+            -f ref=main \
+            -f "inputs[sha]=${SHA}" \
+            -f "inputs[short_sha]=${SHORT_SHA}" \
+            -f "inputs[chart_version]=${CHART_VERSION}" 2>&1) || {
+              echo "::error::workflow_dispatch to unsigned-paas failed:"
+              echo "${response}"
+              exit 1
+            }
+          echo "Dispatch sent for linearctl ${SHORT_SHA} (chart ${CHART_VERSION})."
+
+      - name: Summary
+        if: success()
+        env:
+          SHORT_SHA: ${{ steps.params.outputs.short_sha }}
+          CHART_VERSION: ${{ steps.params.outputs.chart_version }}
+        run: |
+          {
+            echo "### linearctl build dispatched"
+            echo ""
+            echo "- Image (once the in-cluster Job completes):"
+            echo "  \`harbor.unsigned.gg/platform/linearctl:git-${SHORT_SHA}\`"
+            echo "- Chart: \`oci://harbor.unsigned.gg/helm-charts/linearctl:${CHART_VERSION}\`"
+            echo ""
+            echo "Build status: the \`Build — linearctl Image\` run on"
+            echo "[unsigned-gg/unsigned-paas/actions](https://github.com/unsigned-gg/unsigned-paas/actions)."
+            echo ""
+            echo "The ArgoCD app still pins its own image tag + chart targetRevision in"
+            echo "unsigned-paas \`gitops/\` — publishing does NOT deploy. That bump is a"
+            echo "separate, operator-gated PR."
+          } >> "${GITHUB_STEP_SUMMARY}"
