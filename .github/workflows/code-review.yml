@@ -4,8 +4,8 @@ name: Code Review (GLM-5.2)
 # gateway. Posts a structured review comment + stamps a label
 # (agent-jury-approved / agent-jury-needs-changes / agent-jury-changes-requested).
 #
-# Per-org runner: reverie-ug for unsigned-gg, reverie for cerebral-work.
-# Both runners carry the baked image with tailnet access to the LiteLLM gateway.
+# Enterprise runner pool: group ent-reverie, label reverie (enterprises/vesperan).
+# Carries the baked image with tailnet access to the LiteLLM gateway.
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ permissions:
 jobs:
   review:
     name: GLM-5.2 code review
-    runs-on: ${{ github.repository_owner == 'cerebral-work' && 'reverie' || 'reverie-ug' }}
+    runs-on: {group: ent-reverie, labels: [reverie]}
     timeout-minutes: 10
     if: github.event.pull_request.draft == false
 
