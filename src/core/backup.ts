@@ -749,6 +749,7 @@ export interface Lookups {
   stateType(id: string | null): string;
   userName(id: string | null): string | null;
   projectName(id: string | null): string | null;
+  milestone(id: string | null): IssueDetail["milestone"];
   labelName(id: string): string;
   issueIdentifier(id: string | null): string | null;
   commentsByIssue: Map<string, Row[]>;
@@ -760,6 +761,7 @@ export function buildLookups(data: Record<string, Row[]>): Lookups {
   const states = by("workflowStates");
   const users = by("users");
   const projects = by("projects");
+  const milestones = by("projectMilestones");
   const labels = by("issueLabels");
   const issues = by("issues");
   const commentsByIssue = new Map<string, Row[]>();
@@ -776,6 +778,10 @@ export function buildLookups(data: Record<string, Row[]>): Lookups {
     stateType: (id) => (id ? String(states.get(id)?.type ?? "") : ""),
     userName: (id) => (id ? ((users.get(id)?.displayName as string | undefined) ?? null) : null),
     projectName: (id) => (id ? ((projects.get(id)?.name as string | undefined) ?? null) : null),
+    milestone: (id) => {
+      const row = id ? milestones.get(id) : undefined;
+      return row ? { id: String(row.id), name: String(row.name), targetDate: (row.targetDate as string | null) ?? null } : null;
+    },
     labelName: (id) => String(labels.get(id)?.name ?? id),
     issueIdentifier: (id) => (id ? ((issues.get(id)?.identifier as string | undefined) ?? null) : null),
     commentsByIssue,
@@ -795,6 +801,7 @@ export function recordToDetail(rec: Row, lk: Lookups): IssueDetail {
     assignee: lk.userName(rec.assigneeId as string | null),
     priority: String(rec.priorityLabel ?? ""),
     project: lk.projectName(rec.projectId as string | null),
+    milestone: lk.milestone(rec.projectMilestoneId as string | null),
     labels: labelIds.map((id) => lk.labelName(id)),
     parent: lk.issueIdentifier(rec.parentId as string | null),
     description: (rec.description as string | null) ?? null,

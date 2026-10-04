@@ -321,8 +321,9 @@ describe("markdown", () => {
     const s = stub({
       pages: {
         ...base(),
-        issues: [[issue("a", { project: { id: "p1" }, parent: { id: "a0" } }), issue("a0")]],
+        issues: [[issue("a", { project: { id: "p1" }, projectMilestone: { id: "m1" }, parent: { id: "a0" } }), issue("a0")]],
         projects: [[{ id: "p1", name: "Proj" }]],
+        projectMilestones: [[{ id: "m1", name: "Launch", targetDate: "2026-10-10" }]],
         comments: [[{ id: "c1", issueId: "a", body: "hello", createdAt: "2026-01-05T00:00:00.000Z", user: { id: "u1" } }]],
       },
     });
@@ -341,6 +342,7 @@ describe("markdown", () => {
       assignee: "Ada",
       priority: "High",
       project: "Proj",
+      milestone: { id: "m1", name: "Launch", targetDate: "2026-10-10" },
       labels: ["bug"],
       parent: "T-a0",
       description: "body a",
