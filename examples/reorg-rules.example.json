@@ -1,0 +1,52 @@
+[
+  {
+    "phase": 1,
+    "op": "create-workspace-label",
+    "match": { "entity": "workspace-label", "where": { "name": "bug" } },
+    "to": { "name": "bug", "color": "#e5484d" },
+    "evidence": "toy: one workspace 'bug' label per duplicated name",
+    "reversible": true,
+    "_comment": "create-workspace-label matches on the workspace-label entity to assert the seed set exists; a from.labelId of null marks creation"
+  },
+  {
+    "phase": 1,
+    "op": "retire-or-delete-label",
+    "match": { "entity": "team-label", "teamKey": "EX", "where": { "name": "bug", "retired": false } },
+    "to": { "retired": true },
+    "evidence": "toy: retire the EX team copy of 'bug' after relabel",
+    "reversible": true
+  },
+  {
+    "phase": 2,
+    "op": "enable-triage",
+    "match": { "entity": "team", "where": { "key": "EX", "triageEnabled": false } },
+    "to": { "triageEnabled": true },
+    "evidence": "toy: every team runs Triage",
+    "reversible": true
+  },
+  {
+    "phase": 2,
+    "op": "archive-state",
+    "match": { "entity": "team-state", "teamKey": "EX", "where": { "name": "Ready", "archived": false } },
+    "to": { "archived": true },
+    "evidence": "toy: Ready emptied first (set-state ops with lower seq), then archived",
+    "reversible": true
+  },
+  {
+    "phase": 3,
+    "op": "archive-initiative",
+    "match": { "entity": "initiative", "where": { "name": "[DUP] example initiative" } },
+    "to": { "archived": true },
+    "evidence": "toy: duplicate initiative archived (reversible)",
+    "reversible": true
+  },
+  {
+    "phase": 6,
+    "op": "delete-team",
+    "match": { "entity": "team", "where": { "key": "OLD", "archived": true } },
+    "to": {},
+    "evidence": "toy: phase-6 gated delete — census shows 0 issues, 0 projects, 0 non-retired labels",
+    "reversible": false,
+    "approval": "deck-item-EXAMPLE"
+  }
+]

@@ -27,6 +27,24 @@ const GATED_KINDS: ReadonlySet<string> = new Set([
   "release",
   "secret-rotate",
   "secret-delete",
+  // reorg op kinds (src/core/reorg.ts) — every reorg write is gated per D2;
+  // irreversible ones additionally need --allow-irreversible + a deck approval
+  "create-workspace-label",
+  "relabel",
+  "retire-or-delete-label",
+  "set-state",
+  "enable-triage",
+  "archive-state",
+  "set-project-status",
+  "set-project-lead",
+  "set-project-target",
+  "add-project-team",
+  "move-project-initiative",
+  "archive-issue",
+  "archive-project",
+  "archive-initiative",
+  "move-issue-team",
+  "delete-team",
 ]);
 
 /**

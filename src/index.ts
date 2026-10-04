@@ -38,6 +38,7 @@ import { docGetOverview, docSetOverview, docList, docCreate, docUpdate } from ".
 import { handoffCreate, handoffList, handoffShow, handoffResolve } from "./commands/handoff.js";
 import { roadmap } from "./commands/roadmap.js";
 import { loopsLint } from "./commands/loops.js";
+import { reorgApply, reorgCensus, reorgPlan, reorgRollback, reorgVerify } from "./commands/reorg.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -637,6 +638,56 @@ program
   .option("--project <ref>", "restrict to a project (id or name)")
   .option("--focus <pane>", "initial pane: triage (first slice)")
   .action((opts) => tui(opts));
+
+// reorg — plan-file-driven workspace reorganization (feat/reorg). One
+// registration block; engine in src/core/reorg.ts, gating via GATED_KINDS.
+const reorgCmd = program
+  .command("reorg")
+  .description("Workspace reorganization: census → plan → apply → verify → rollback (dry-run by default)");
+reorgCmd
+  .command("census")
+  .description("Read-only workspace structure snapshot (teams/labels/states/projects/initiatives)")
+  .option("--team <key...>", "restrict to team key(s)")
+  .option("--limit <n>", "cap teams/projects fetched (smoke path)")
+  .option("--out <file>", "write the census JSON here")
+  .option("--json", "emit JSON to stdout")
+  .action((opts) => reorgCensus(opts));
+reorgCmd
+  .command("plan")
+  .description("Generate a reorg plan JSONL from a rules file + a census file")
+  .requiredOption("--rules <file>", "rules JSON (lives outside the repo)")
+  .requiredOption("--census <file>", "census JSON from `reorg census --out`")
+  .option("--out <file>", "plan output path (default reorg-plan.jsonl)")
+  .action((opts) => reorgPlan(opts));
+reorgCmd
+  .command("apply")
+  .description("Execute a plan file (dry-run default; --apply writes, journaled)")
+  .argument("<plan>", "reorg plan JSONL")
+  .option("--phase <n>", "restrict to one phase")
+  .option("--apply", "write (default is a dry-run preview with the request budget)")
+  .option("--check", "dry-run PLUS a live drift pre-read of every target (no writes)")
+  .option("--resume", "skip ops already journaled ok")
+  .option("--max-ops <n>", "cap ops this run (applied after --resume skips)")
+  .option("--allow-irreversible", "permit reversible:false ops (phase 6, deck-approved)")
+  .option("--backup-record <file>", "backup.verified.json (required with --apply; < 24 h old)")
+  .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
+  .action((plan, opts) => reorgApply(plan, opts));
+reorgCmd
+  .command("verify")
+  .description("Re-check every phase op against the journal + live state; writes a report")
+  .requiredOption("--plan <file>", "reorg plan JSONL")
+  .requiredOption("--phase <n>", "phase to verify")
+  .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
+  .option("--report <file>", "report output path")
+  .option("--json", "emit JSON")
+  .action((opts) => reorgVerify(opts));
+reorgCmd
+  .command("rollback")
+  .description("Apply inverse ops in reverse journal order for a phase")
+  .argument("<journal>", "applied.jsonl from an apply run")
+  .requiredOption("--phase <n>", "phase to roll back")
+  .option("--json", "emit JSON")
+  .action((journal, opts) => reorgRollback(journal, opts));
 
 addExamples(program);
 await configureCli(program)();
