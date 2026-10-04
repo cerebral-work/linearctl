@@ -1,6 +1,6 @@
 import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
-import { listLabels, createLabel, renameLabel } from "../core/labels.js";
+import { listLabelsPaged, createLabel, renameLabel } from "../core/labels.js";
 import { printJson, printTable } from "../lib/output.js";
 import { pc } from "../lib/style.js";
 
@@ -8,14 +8,22 @@ export interface LabelListOptions {
   team?: string[];
   counts?: boolean;
   json?: boolean;
+  limit?: number;
 }
 
-/** `linearctl label list [--team CER] [--counts]` — see docs/features/label.md. */
+/** `linearctl label list [--team CER] [--counts] [--limit N]` — see docs/features/label.md. */
 export async function labelList(opts: LabelListOptions): Promise<void> {
   const client = makeClient();
-  const rows = await listLabels(client, { teamKeys: opts.team, counts: opts.counts });
+  const { labels: rows, partial } = await listLabelsPaged(client, {
+    teamKeys: opts.team,
+    counts: opts.counts,
+    limit: opts.limit,
+  });
   if (opts.json) {
-    printJson(rows);
+    // The documented --json shape is a bare array (docs/features/label.md),
+    // so truncation is flagged on each row rather than by wrapping the array
+    // and breaking every `jq '.[]'` consumer.
+    printJson(partial ? rows.map((r) => ({ ...r, partial: true })) : rows);
     return;
   }
   printTable(
@@ -32,6 +40,11 @@ export async function labelList(opts: LabelListOptions): Promise<void> {
       return value;
     },
   );
+  if (partial) {
+    process.stderr.write(
+      `partial: showing ${rows.length} label(s); more exist — raise or drop --limit for the full list.\n`,
+    );
+  }
 }
 
 export interface LabelWriteOptions {
