@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 /**
  * Role catalog — the typed registry of maintainer-agent roles (CER-1188).
  *
@@ -84,7 +85,7 @@ export function getRole(name: string): RoleDescriptor {
   const role = registry.get(name);
   if (!role) {
     const known = registry.size ? [...registry.keys()].join(", ") : "(none registered)";
-    throw new Error(`unknown role "${name}" — registered: ${known}`);
+    throw usageError(`unknown role "${name}" — registered: ${known}`);
   }
   return role;
 }

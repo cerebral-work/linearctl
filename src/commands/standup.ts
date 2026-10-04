@@ -1,3 +1,4 @@
+import { refusedError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { digest as digestCore, type DigestResult } from "../core/grooming.js";
 import { sinceToDate } from "../lib/time.js";
@@ -59,10 +60,7 @@ export async function standup(opts: StandupOptions): Promise<void> {
 
   if (!webhookUrl) return;
   if (!opts.apply) {
-    process.stderr.write(
-      `[dry-run] would post standup to Slack (${webhookUrl.slice(0, 20)}…). Re-run with --apply to send.\n`,
-    );
-    return;
+    throw refusedError("Dry-run only; standup was not sent.", "Re-run with --apply to send.");
   }
 
   // Slack incoming webhooks: POST a JSON body with a `text` field.
@@ -75,5 +73,5 @@ export async function standup(opts: StandupOptions): Promise<void> {
     const body = await res.text().catch(() => "(no body)");
     throw new Error(`Slack webhook returned ${res.status}: ${body}`);
   }
-  process.stderr.write(`standup posted to Slack.\n`);
+  if (!opts.json) process.stderr.write(`standup posted to Slack.\n`);
 }

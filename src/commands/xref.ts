@@ -1,3 +1,4 @@
+import { cliError, assertBatchSucceeded, type ErrorKind } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { xref as xrefCore, planXrefFixes, type XrefFixAction } from "../core/xref.js";
 import { closeIssue, startIssue, type UpdatedIssue } from "../core/issues.js";
@@ -18,6 +19,7 @@ export interface XrefOptions {
 interface FixOutcome extends XrefFixAction {
   result?: UpdatedIssue;
   error?: string;
+  kind?: ErrorKind;
 }
 
 /**
@@ -115,7 +117,7 @@ export async function xref(opts: XrefOptions): Promise<void> {
           a.action === "close" ? await closeIssue(client, a.ref) : await startIssue(client, a.ref);
         return { ...a, result };
       } catch (err) {
-        return { ...a, error: err instanceof Error ? err.message : String(err) };
+        return { ...a, error: cliError(err).message, kind: cliError(err).kind };
       }
     });
   } else if (opts.apply) {
@@ -125,6 +127,7 @@ export async function xref(opts: XrefOptions): Promise<void> {
 
   if (opts.json) {
     printJson({ applied: Boolean(opts.apply), plan: outcomes });
+    assertBatchSucceeded(outcomes.filter(o => o.error));
     return;
   }
 
@@ -139,4 +142,5 @@ export async function xref(opts: XrefOptions): Promise<void> {
     })),
     ["ref", "action", "reason", "outcome"],
   );
+  assertBatchSucceeded(outcomes.filter(o => o.error));
 }

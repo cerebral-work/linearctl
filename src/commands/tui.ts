@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 /**
  * `linearctl tui` — command wrapper (CER-1550).
  *
@@ -29,8 +30,7 @@ export interface TuiCommandOptions {
  */
 function assertTty(): void {
   if (!process.stdout.isTTY) {
-    console.error('error: tui requires a terminal (stdout is not a TTY).\n  Run in an interactive terminal, not piped/redirected.');
-    process.exit(1);
+    throw usageError("tui requires a terminal (stdout is not a TTY).", "Run linearctl tui in an interactive terminal.");
   }
 }
 

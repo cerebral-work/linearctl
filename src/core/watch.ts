@@ -1,3 +1,4 @@
+import { notFoundError } from "../lib/errors.js";
 /**
  * Agent-session loop driver (CER-1149).
  *
@@ -408,7 +409,7 @@ export async function moveToStartedIfDelegated(
 
   const team = await issue.team;
   if (!team) {
-    throw new Error(`issue ${issueId} has no team; cannot resolve a started state.`);
+    throw notFoundError(`issue ${issueId} has no team; cannot resolve a started state.`);
   }
 
   // Best-practices doc: team.states filtered by type eq "started", pick the
@@ -422,7 +423,7 @@ export async function moveToStartedIfDelegated(
     .sort((a, b) => a.position - b.position)
     .find((s) => s.type === "started");
   if (!started) {
-    throw new Error(`no started workflow state found for issue ${issueId}'s team.`);
+    throw notFoundError(`no started workflow state found for issue ${issueId}'s team.`);
   }
 
   const res = await issue.update({ stateId: started.id });

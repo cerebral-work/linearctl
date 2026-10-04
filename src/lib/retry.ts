@@ -64,10 +64,12 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
   const cap = opts.capMs ?? 30_000;
   const onRetry =
     opts.onRetry ??
-    ((info) =>
+    ((info) => {
+      if (process.argv.includes("--json")) return;
       process.stderr.write(
         `  [retry ${info.attempt}/${retries}] ${info.reason}; waiting ${info.delayMs}ms…\n`,
-      ));
+      );
+    });
 
   let attempt = 0;
   for (;;) {

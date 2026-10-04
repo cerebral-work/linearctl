@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { resolveTeamByKey } from "./teams.js";
@@ -89,7 +90,7 @@ export async function createDocument(
 ): Promise<DocumentInfo> {
   const parents = [params.project, params.issue, params.teamKey].filter(Boolean);
   if (parents.length !== 1) {
-    throw new Error("doc create needs exactly one parent: --project, --issue, or --team.");
+    throw usageError("doc create needs exactly one parent: --project, --issue, or --team.");
   }
   const input: Parameters<LinearClient["createDocument"]>[0] = {
     title: params.title,
@@ -112,7 +113,7 @@ export async function updateDocument(
   changes: { content?: string; title?: string },
 ): Promise<DocumentInfo> {
   if (changes.content === undefined && changes.title === undefined) {
-    throw new Error("doc update needs --content and/or --title.");
+    throw usageError("doc update needs --content and/or --title.");
   }
   const doc = await withRetry(() => client.document(ref));
   const res = await withRetry(() => client.updateDocument(doc.id, changes));

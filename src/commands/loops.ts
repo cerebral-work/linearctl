@@ -1,3 +1,4 @@
+import { notFoundError, usageError } from "../lib/errors.js";
 import { lintAll, recipeDirs, type LintFinding } from "../core/loop-recipes.js";
 import { printJson } from "../lib/output.js";
 import { pc } from "../lib/style.js";
@@ -17,23 +18,16 @@ export interface LoopsLintOptions {
 export async function loopsLint(opts: LoopsLintOptions): Promise<void> {
   const dirs = recipeDirs();
   if (dirs.length === 0) {
-    process.stderr.write(
-      "no loop-recipes directory found (expected .linearctl/loop-recipes/ or ~/.config/linearctl/loop-recipes/).\n",
-    );
-    process.exit(2);
+    throw notFoundError("no loop-recipes directory found (expected .linearctl/loop-recipes/ or ~/.config/linearctl/loop-recipes/).");
   }
 
   const result = lintAll(dirs);
 
+  if (result.recipes.length === 0) throw notFoundError("no recipes found.");
   if (opts.json) {
     printJson(result);
+    if (!result.valid) throw usageError("loop recipes failed validation; inspect findings on stdout.");
     return;
-  }
-
-  // Human output
-  if (result.recipes.length === 0) {
-    process.stdout.write("no recipes found.\n");
-    process.exit(2);
   }
 
   const errors = result.findings.filter((f) => f.severity === "error");
@@ -53,5 +47,5 @@ export async function loopsLint(opts: LoopsLintOptions): Promise<void> {
     process.stdout.write(`${pc.green("✓")} all recipes valid\n`);
   }
 
-  process.exit(errors.length > 0 ? 1 : 0);
+  if (errors.length) throw usageError("loop recipes failed validation; inspect findings on stdout.");
 }

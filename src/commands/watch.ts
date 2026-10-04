@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 /**
  * `linearctl watch` — run the full agent-session loop from a webhook payload (CER-1149).
  *
@@ -95,15 +96,15 @@ export async function tryDelegate(
  */
 export async function watch(opts: WatchOptions): Promise<void> {
   if (!opts.once) {
-    throw new Error("`linearctl watch` currently requires --once (the long-running tail is CER-1149 follow-up).");
+    throw usageError("`linearctl watch` currently requires --once (the long-running tail is CER-1149 follow-up).");
   }
   if (!opts.payload) {
-    throw new Error("`linearctl watch --once` requires --payload <file|-> (read the AgentSessionEvent JSON from a file or stdin).");
+    throw usageError("`linearctl watch --once` requires --payload <file|-> (read the AgentSessionEvent JSON from a file or stdin).");
   }
 
   const raw = await readPayload(opts.payload);
   if (!raw.trim()) {
-    throw new Error("--payload is empty; expected an AgentSessionEvent JSON body.");
+    throw usageError("--payload is empty; expected an AgentSessionEvent JSON body.");
   }
 
   let event: AgentSessionEvent;
@@ -111,7 +112,7 @@ export async function watch(opts: WatchOptions): Promise<void> {
     event = JSON.parse(raw) as AgentSessionEvent;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`--payload is not valid JSON: ${msg}`);
+    throw usageError(`--payload is not valid JSON: ${msg}`);
   }
 
   // Delegate-first: hand the event to the operator daemon if it's running.

@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { commentsByAuthor } from "../core/comments.js";
 import { sinceToDate } from "../lib/time.js";
@@ -18,7 +19,7 @@ export interface CommentsOptions {
  * sweep. Read-only. See CER-1187.
  */
 export async function commentsCmd(opts: CommentsOptions): Promise<void> {
-  if (!opts.author) throw new Error("comments needs --author ('me', an email, or a display name).");
+  if (!opts.author) throw usageError("comments needs --author ('me', an email, or a display name).");
   const client = makeClient();
   const rows = await commentsByAuthor(client, {
     author: opts.author,

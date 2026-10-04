@@ -1,3 +1,4 @@
+import { usageError } from "./errors.js";
 /**
  * Read all of stdin as a trimmed UTF-8 string — backs the `--desc -` convention
  * (read markdown from a pipe / heredoc instead of an argument).
@@ -18,7 +19,7 @@ export async function readStdin(): Promise<string> {
  */
 export function requireBody(flag: string, body: string): string {
   if (body === "") {
-    throw new Error(
+    throw usageError(
       `${flag}: stdin was empty — refusing to write an empty body. ` +
         `Pipe the content (cat body.md | …) or pass it inline.`,
     );

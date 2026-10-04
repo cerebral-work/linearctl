@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { readStdinFor } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 import { isStyled, pc } from "../lib/style.js";
@@ -58,7 +59,7 @@ function statusBadge(status: Handoff["status"]): string {
  */
 export async function handoffCreate(opts: HandoffCreateOptions): Promise<void> {
   const title = opts.title?.trim();
-  if (!title) throw new Error("handoff create needs --title <text>.");
+  if (!title) throw usageError("handoff create needs --title <text>.");
 
   let body: string | undefined;
   if (opts.body === "-") {
@@ -70,7 +71,7 @@ export async function handoffCreate(opts: HandoffCreateOptions): Promise<void> {
   // No body + --skeleton: emit the template and exit (the $EDITOR workflow).
   if (body === undefined) {
     if (!opts.skeleton) {
-      throw new Error("handoff create needs --body <md|-> (or --skeleton to emit the template).");
+      throw usageError("handoff create needs --body <md|-> (or --skeleton to emit the template).");
     }
     process.stdout.write(
       handoffBodySkeleton({ pr: opts.pr, ticket: opts.ticket }),
@@ -78,7 +79,7 @@ export async function handoffCreate(opts: HandoffCreateOptions): Promise<void> {
     return;
   }
 
-  if (!body.trim()) throw new Error("handoff body is empty.");
+  if (!body.trim()) throw usageError("handoff body is empty.");
 
   const created = createHandoff(
     { title, pr: opts.pr, ticket: opts.ticket, body },
@@ -181,10 +182,6 @@ export async function handoffResolve(id: string, opts: HandoffResolveOptions): P
     }
     process.stdout.write(`resolved handoff "${resolved.title}" (${resolved.id})\n`);
   } catch (e) {
-    if (e instanceof HandoffError) {
-      process.stderr.write(`${pc.red("✖")} ${e.message}\n`);
-      process.exit(1);
-    }
     throw e;
   }
 }

@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { cycleReview, type CycleBucket } from "../core/cycles.js";
 import { printJson } from "../lib/output.js";
@@ -24,7 +25,7 @@ const pts = (b: CycleBucket): string =>
  * docs/features/cycle.md (CER-1143).
  */
 export async function cycleCmd(opts: CycleOptions): Promise<void> {
-  if (!opts.team) throw new Error("cycle needs --team <key> (a team with cycles enabled).");
+  if (!opts.team) throw usageError("cycle needs --team <key> (a team with cycles enabled).");
   const client = makeClient();
   const r = await cycleReview(client, {
     teamKey: opts.team,

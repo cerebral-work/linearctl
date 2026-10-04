@@ -1,3 +1,4 @@
+import { cliError } from "../lib/errors.js";
 /**
  * Rate-limit introspection (spec §7 item 7, T18).
  *
@@ -64,6 +65,15 @@ export async function fetchRateLimit(auth: string): Promise<RateLimitInfo> {
     headers: { "Content-Type": "application/json", Authorization: auth },
     body: JSON.stringify({ query: "{ viewer { id } }" }),
   });
-  // Even a RATELIMITED 400 carries the headers — that response IS the answer.
-  return parseRateLimitHeaders((n) => res.headers.get(n));
+  const body = await res.json() as { errors?: Array<{ extensions?: { type?: string; code?: string } }> };
+  if (!res.ok || body.errors?.length) {
+    const error = Object.assign(new Error(`Linear quota probe failed (HTTP ${res.status}).`), { status: res.status, errors: body.errors });
+    const failure = cliError(error);
+    // Exhausted quota is useful data to the scheduler; other failures must not look healthy.
+    if (failure.kind !== "rate_limit") throw failure;
+    const info = parseRateLimitHeaders(n => res.headers.get(n));
+    if (!isExhausted(info)) throw failure;
+    return info;
+  }
+  return parseRateLimitHeaders(n => res.headers.get(n));
 }

@@ -1,3 +1,4 @@
+import { usageError, refusedError } from "../lib/errors.js";
 /**
  * Containment set (OPS-1214) — the operational brakes the operator daemon runs
  * behind. Three mechanisms, all mechanical (no LLM, no judgment):
@@ -59,7 +60,7 @@ export function resolveMutationBudget(env: NodeJS.ProcessEnv = process.env): num
   if (raw === undefined) return DEFAULT_MUTATION_BUDGET;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
-    throw new Error(
+    throw usageError(
       `LINEARCTL_MUTATION_BUDGET must be a non-negative integer, got "${raw}"`,
     );
   }
@@ -99,7 +100,7 @@ export class MutationBudget {
   /** Reserve exactly `count` mutations or throw (single-write path). */
   spend(count: number): void {
     if (count > this.#remaining) {
-      throw new Error(
+      throw refusedError(
         `mutation budget exhausted: wanted ${count}, remaining ${this.#remaining} of ${this.total}`,
       );
     }

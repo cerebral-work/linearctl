@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { listLabels, createLabel, renameLabel } from "../core/labels.js";
 import { printJson, printTable } from "../lib/output.js";
@@ -40,7 +41,7 @@ export interface LabelWriteOptions {
 }
 
 export async function labelCreate(name: string, opts: LabelWriteOptions): Promise<void> {
-  if (!opts.team) throw new Error("label create needs --team <key>.");
+  if (!opts.team) throw usageError("label create needs --team <key>.");
   const client = makeClient();
   const label = await createLabel(client, { teamKey: opts.team, name, color: opts.color });
   if (opts.json) {
@@ -51,7 +52,7 @@ export async function labelCreate(name: string, opts: LabelWriteOptions): Promis
 }
 
 export async function labelRename(from: string, to: string, opts: LabelWriteOptions): Promise<void> {
-  if (!opts.team) throw new Error("label rename needs --team <key>.");
+  if (!opts.team) throw usageError("label rename needs --team <key>.");
   const client = makeClient();
   const label = await renameLabel(client, { teamKey: opts.team, from, to });
   if (opts.json) {

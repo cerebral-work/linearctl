@@ -79,8 +79,8 @@ flowchart LR
 - **Deps:** `@linear/sdk`, `commander`. Dev: `typescript`, `@types/bun`. Minimal.
 - **Output contract:** human table by default; `--json` → structured JSON on
   stdout (logs/errors on stderr) so every command composes with `jq`.
-- **Exit codes:** `0` ok · `1` runtime/auth error · `2` not-yet-implemented (a stub
-  is never mistaken for a silent success).
+- **Exit codes:** `0` ok · `2` usage · `3` auth · `4` not found · `5` rate limited ·
+  `6` refused · `1` other. See [agent contract](agent-facility.md#headless-cli-contract).
 
 ## 5. Authentication & secrets
 
@@ -285,7 +285,7 @@ Surfaced from patterns this codebase already exercises:
 4. **`linearctl release-notes <from>..<to>`** — notes assembled from issues *completed* in a range, grouped by label (feeds `cut-release` / `linear-release`).
 5. **`linearctl standup [--slack <url>]`** — render `digest` as a standup; **operator-gated** Slack send via `--slack --apply` (PR #104, CER-1730). Dry-run unless `--apply`; never auto-posts. *(shipped)*
 6. **`linearctl watch` (daemon)** — the bridge to §10: subscribe to webhooks and react.
-7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `2` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
+7. *(shipped — §6.12)* **`linearctl ratelimit`** — probe the org-level Linear API quota before a batch run: remaining request budget + reset timestamp. Lets a batch agent gate itself on headroom rather than discovering exhaustion mid-batch via a `RATELIMITED` error. `--json` for scripted gates; exit `5` when quota is at zero so `&&`-chains abort cleanly. (Observed pain-point: a 32-issue filing run exhausted the 2500 req/hr ceiling with no prior visibility; this command closes that gap.)
 8. *(shipped — §6.13)* **`linearctl doc`** — get/set a project's overview document headlessly. (Observed pain-point: the unsigned-paas house rule mirrors plan docs to the Linear project overview, which was unfulfillable without the UI.)
 
 ## 8. Distribution & release
@@ -413,7 +413,7 @@ and would hit the rate-guard). Titles are Conventional-Commit-ready.
 | T15 | `chore(release): macOS notarization / codesign` — *pipeline built (ADR-0007); gated on Apple Developer Program enrollment (CER-1150)* | M2 | Gatekeeper quarantine fix for darwin assets; build-darwin job on `macos-latest`, dormant-until-keyed |
 | T16 | `ci: SHA-pin all GitHub Actions` — *shipped* | M1 | supply-chain hardening (all workflows pin to commit SHA) |
 | T17 | `feat(project): create + list Linear projects` — *shipped (§6.6)* | M2 | resolve team by key, `createProject`, print id+url; the dogfood-loop container for `file` |
-| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` — *shipped (§6.12)* | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `2` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
+| T18 | `feat(ratelimit): expose API rate-limit quota + reset time` — *shipped (§6.12)* | M3 | lightweight introspection query → `remaining` / `resetAt`; `--json`; exit `5` when exhausted so batch scripts abort before filing; surfaces `X-RateLimit-*` headers from `@linear/sdk` response metadata |
 | T19 | `feat(doc): project overview get/set` — *shipped (§6.13)* | M3 | `doc get-overview` / `doc set-overview --file <md\|->` on `Project.content`; whole-document replace, empty-content guard; MCP `project_overview_get`/`_set` |
 | T20 | `feat(milestone): create project milestones` — *shipped (§6.15)* | M3 | `milestone create <name> --project <ref> [--target-date] [--desc]`; resolves project name→UUID; emits milestone UUID (CER-1686) |
 | T21 | `feat(project): update project state/name/description` — *shipped (§6.16)* | M3 | `project update <ref> [--state] [--name] [--desc]`; resolves state by type against workspace project-status set (CER-1687) |

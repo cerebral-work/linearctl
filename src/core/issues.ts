@@ -1,3 +1,4 @@
+import { notFoundError, usageError } from "../lib/errors.js";
 import type { LinearClient, Issue } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
@@ -71,7 +72,7 @@ export async function createIssue(
     );
     const state = states.nodes.find((s) => s.type === params.stateType);
     if (!state) {
-      throw new Error(`no ${params.stateType} workflow state found for team ${params.teamKey}.`);
+      throw notFoundError(`no ${params.stateType} workflow state found for team ${params.teamKey}.`);
     }
     stateId = state.id;
   }
@@ -158,7 +159,7 @@ export async function resolveAssignee(client: LinearClient, who: string): Promis
   });
   const user = users.nodes[0];
   if (!user) {
-    throw new Error(
+    throw notFoundError(
       `no user matching ${JSON.stringify(who)} — try "me", an email, or a display name.`,
     );
   }
@@ -182,10 +183,10 @@ async function resolveLabelIds(
   const filter = {
     and: [
       { or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] },
-      { or: names.map((n) => ({ name: { eqIgnoreCase: n } })) },
     ],
   };
   const labels = await withRetry(() => client.issueLabels({ filter }));
+  while (labels.pageInfo?.hasNextPage) await labels.fetchNext();
   return pickLabelIds(labels.nodes, names);
 }
 
@@ -302,7 +303,7 @@ async function resolveStateId(
   const state = states.nodes.find((s) => s.name.toLowerCase() === target);
   if (!state) {
     const avail = states.nodes.map((s) => s.name).join(", ");
-    throw new Error(
+    throw notFoundError(
       `no workflow state ${JSON.stringify(name)} for this team — available: ${avail}.`,
     );
   }
@@ -338,7 +339,7 @@ export async function updateIssue(
   let teamId: string | undefined;
   if (params.state || params.labels?.length) {
     const team = await issue.team;
-    if (!team) throw new Error("issue has no team; cannot resolve state/labels.");
+    if (!team) throw notFoundError("issue has no team; cannot resolve state/labels.");
     teamId = team.id;
   }
   const stateId = params.state ? await resolveStateId(client, teamId!, params.state) : undefined;
@@ -358,7 +359,7 @@ export async function updateIssue(
   let cycleId: string | null | undefined;
   if (params.cycle !== undefined) {
     const team = await issue.team;
-    if (!team) throw new Error("issue has no team; cannot resolve --cycle.");
+    if (!team) throw notFoundError("issue has no team; cannot resolve --cycle.");
     cycleId = await resolveCycleId(client, team.key, params.cycle);
   }
   const parentId = params.parent ? await resolveIssueId(client, params.parent) : undefined;
@@ -376,7 +377,7 @@ export async function updateIssue(
     ...(parentId ? { parentId } : {}),
   };
   if (Object.keys(input).length === 0) {
-    throw new Error(
+    throw usageError(
       "nothing to update — pass at least one of state / assignee / labels / project / priority.",
     );
   }
@@ -396,14 +397,14 @@ export async function updateIssue(
 export async function closeIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
   const issue = await withRetry(() => client.issue(id));
   const team = await issue.team;
-  if (!team) throw new Error("issue has no team; cannot resolve a completed state.");
+  if (!team) throw notFoundError("issue has no team; cannot resolve a completed state.");
 
   const states = await client.workflowStates({ filter: { team: { id: { eq: team.id } } } });
   const done =
     states.nodes.find((s) => s.type === "completed" && /done/i.test(s.name)) ??
     states.nodes.find((s) => s.type === "completed");
   if (!done) {
-    throw new Error("no completed workflow state found for this team.");
+    throw notFoundError("no completed workflow state found for this team.");
   }
 
   const res = await withRetry(() => client.updateIssue(issue.id, { stateId: done.id }));
@@ -487,14 +488,14 @@ export function renderIssueDetail(d: IssueDetail): string {
 export async function startIssue(client: LinearClient, id: string): Promise<UpdatedIssue> {
   const issue = await client.issue(id);
   const team = await issue.team;
-  if (!team) throw new Error("issue has no team; cannot resolve a started state.");
+  if (!team) throw notFoundError("issue has no team; cannot resolve a started state.");
 
   const states = await client.workflowStates({ filter: { team: { id: { eq: team.id } } } });
   const started =
     states.nodes.find((s) => s.type === "started" && /in progress/i.test(s.name)) ??
     states.nodes.find((s) => s.type === "started");
   if (!started) {
-    throw new Error("no started workflow state found for this team.");
+    throw notFoundError("no started workflow state found for this team.");
   }
 
   const res = await client.updateIssue(issue.id, { stateId: started.id });

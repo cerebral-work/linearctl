@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { createIssue } from "../core/issues.js";
 import { readStdinFor } from "../lib/io.js";
@@ -24,7 +25,7 @@ const PARK_LABEL = "user-story";
  * auto-created `user-story` label. See docs/features/park.md (CER-1557).
  */
 export async function park(title: string, opts: ParkOptions): Promise<void> {
-  if (!opts.team) throw new Error("park needs --team <key> (e.g. CER).");
+  if (!opts.team) throw usageError("park needs --team <key> (e.g. CER).");
   const client = makeClient();
 
   const acceptRaw = opts.accept === "-" ? await readStdinFor("--accept -") : opts.accept;

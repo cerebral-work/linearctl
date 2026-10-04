@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 /**
  * `linearctl operator` — the long-running daemon subcommand (CER-1149 / CER-1188).
  *
@@ -74,7 +75,7 @@ function parsePollInterval(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(`--queue-poll-interval must be a positive number of milliseconds, got "${raw}"`);
+    throw usageError(`--queue-poll-interval must be a positive number of milliseconds, got "${raw}"`);
   }
   return Math.floor(n);
 }
@@ -123,7 +124,7 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
   // --health and --check are mutually exclusive — the liveness vs readiness
   // probes must not be conflated. An explicit error beats silent precedence.
   if (opts.health && opts.check) {
-    throw new Error(
+    throw usageError(
       "linearctl operator: --health and --check are mutually exclusive " +
         "(--health probes /healthz for liveness, --check probes /readyz for readiness).",
     );
@@ -184,15 +185,12 @@ export async function checkOperator(socketPath: string, json?: boolean): Promise
     const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
     const res = await client.request("GET", "/readyz");
     if (res.status !== 200) {
-      process.stderr.write(`operator --check: /readyz returned HTTP ${res.status}\n`);
-      process.exit(1);
+      throw new Error(`operator --check: /readyz returned HTTP ${res.status}`);
     }
     report = JSON.parse(res.body ?? "") as ReadyzReport;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (json) printJson({ ok: false, error: msg });
-    else process.stderr.write(`operator --check: not ready — ${msg}\n`);
-    process.exit(1);
+    throw new Error(`operator --check: not ready — ${msg}`);
   }
 
   if (json) {
@@ -207,7 +205,7 @@ export async function checkOperator(socketPath: string, json?: boolean): Promise
         `  queue depth: ${report.queueDepth}\n`,
     );
   }
-  process.exit(report.ok ? 0 : 1);
+  if (!report.ok) throw new Error("operator probe reported unhealthy; inspect the report on stdout.");
 }
 
 /**
@@ -228,15 +226,12 @@ export async function healthOperator(socketPath: string, json?: boolean): Promis
     const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
     const res = await client.request("GET", "/healthz");
     if (res.status !== 200) {
-      process.stderr.write(`operator --health: /healthz returned HTTP ${res.status}\n`);
-      process.exit(1);
+      throw new Error(`operator --health: /healthz returned HTTP ${res.status}`);
     }
     report = JSON.parse(res.body ?? "") as HealthReport;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (json) printJson({ ok: false, error: msg });
-    else process.stderr.write(`operator --health: not alive — ${msg}\n`);
-    process.exit(1);
+    throw new Error(`operator --health: not alive — ${msg}`);
   }
 
   if (json) {
@@ -248,5 +243,5 @@ export async function healthOperator(socketPath: string, json?: boolean): Promis
         `  queue depth: ${report.queueDepth}\n`,
     );
   }
-  process.exit(report.ok ? 0 : 1);
+  if (!report.ok) throw new Error("operator probe reported unhealthy; inspect the report on stdout.");
 }

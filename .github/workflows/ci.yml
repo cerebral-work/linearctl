@@ -69,3 +69,6 @@ jobs:
         run: |
           bun run build
           ./dist/linearctl --version
+          ./dist/linearctl examples comment > "${RUNNER_TEMP}/linearctl-example.sh"
+          bash -n "${RUNNER_TEMP}/linearctl-example.sh"
+          grep -q -- "--body -" "${RUNNER_TEMP}/linearctl-example.sh"

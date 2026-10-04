@@ -1,3 +1,4 @@
+import { CliError } from "./lib/errors.js";
 import { LinearClient } from "@linear/sdk";
 
 /**
@@ -11,14 +12,7 @@ import { LinearClient } from "@linear/sdk";
 export function makeClient(): LinearClient {
   const apiKey = process.env.LINEAR_API_KEY;
   if (!apiKey) {
-    console.error(
-      "error: LINEAR_API_KEY is not set.\n" +
-        "  This CLI reads a Linear personal API key from the environment.\n" +
-        "  It renders from 1Password into ~/.config/zsh/secrets.env at `chezmoi apply`,\n" +
-        "  or export it for one run via `op run`. See README.md → Authentication.\n" +
-        "  The key is never stored or printed by this tool.",
-    );
-    process.exit(1);
+    throw new CliError("auth", "LINEAR_API_KEY is not set.", "Set LINEAR_API_KEY in the environment; see README.md → Authentication.");
   }
   return new LinearClient({ apiKey });
 }

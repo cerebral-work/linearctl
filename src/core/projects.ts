@@ -1,3 +1,4 @@
+import { notFoundError, refusedError, usageError } from "../lib/errors.js";
 import type { LinearClient, Project } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 
@@ -14,7 +15,7 @@ export async function resolveProject(
     filter: { or: [{ name: { eqIgnoreCase: ref } }, { slugId: { eq: ref } }] },
   });
   const project = projects.nodes[0];
-  if (!project) throw new Error(`no project matching ${JSON.stringify(ref)}.`);
+  if (!project) throw notFoundError(`no project matching ${JSON.stringify(ref)}.`);
   return project;
 }
 
@@ -134,7 +135,7 @@ export async function setProjectOverview(
   content: string,
 ): Promise<ProjectOverview> {
   if (content.trim() === "") {
-    throw new Error(
+    throw refusedError(
       "refusing to write an empty overview (that would blank the project's Overview doc).",
     );
   }
@@ -182,7 +183,7 @@ export async function updateProject(
   const p = await resolveProject(client, projectRef);
 
   if (!params.name && params.description === undefined && !params.state) {
-    throw new Error("project update needs at least one of --state, --name, --description.");
+    throw usageError("project update needs at least one of --state, --name, --description.");
   }
 
   let statusId: string | undefined;
@@ -193,7 +194,7 @@ export async function updateProject(
     );
     if (!match) {
       const valid = [...new Set(statuses.nodes.map((s) => s.type))].join(", ");
-      throw new Error(
+      throw notFoundError(
         `no project state matching ${JSON.stringify(params.state)}. Valid: ${valid}.`,
       );
     }

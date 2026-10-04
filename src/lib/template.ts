@@ -1,3 +1,4 @@
+import { usageError } from "./errors.js";
 /**
  * Issue templates (docs/features/template.md, CER-1562). Pure parsing +
  * substitution — file discovery lives in core/templates.ts.
@@ -24,16 +25,16 @@ const VAR_RE = /\{\{\s*([A-Za-z_][\w-]*)\s*(?:\|\s*"([^"]*)")?\s*\}\}/g;
 
 export function parseTemplate(raw: string, fallbackName: string): ParsedTemplate {
   const fm = raw.match(FRONTMATTER_RE);
-  if (!fm) throw new Error("template has no frontmatter block (--- … ---).");
+  if (!fm) throw usageError("template has no frontmatter block (--- … ---).");
   const fields = new Map<string, string>();
   for (const line of fm[1].split("\n")) {
     if (!line.trim() || line.trimStart().startsWith("#")) continue;
     const m = line.match(/^(\w[\w-]*):\s*(.*)$/);
-    if (!m) throw new Error(`bad frontmatter line: ${JSON.stringify(line)}`);
+    if (!m) throw usageError(`bad frontmatter line: ${JSON.stringify(line)}`);
     fields.set(m[1], m[2].trim());
   }
   const title = fields.get("title")?.replace(/^"(.*)"$/, "$1");
-  if (!title) throw new Error('template frontmatter needs a `title:` field.');
+  if (!title) throw usageError('template frontmatter needs a `title:` field.');
   const labelsRaw = fields.get("labels") ?? "";
   const labels = labelsRaw
     .replace(/^\[|\]$/g, "")
@@ -80,7 +81,7 @@ export function renderTemplate(
     .filter((v) => vars[v.name] === undefined && v.default === undefined)
     .map((v) => v.name);
   if (missing.length) {
-    throw new Error(
+    throw usageError(
       `missing template variable(s): ${missing.join(", ")} — pass --var ${missing[0]}=…`,
     );
   }
@@ -95,7 +96,7 @@ export function parseVarFlags(flags: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of flags) {
     const i = f.indexOf("=");
-    if (i <= 0) throw new Error(`--var expects key=value, got ${JSON.stringify(f)}.`);
+    if (i <= 0) throw usageError(`--var expects key=value, got ${JSON.stringify(f)}.`);
     out[f.slice(0, i)] = f.slice(i + 1);
   }
   return out;

@@ -1,3 +1,4 @@
+import { assertBatchSucceeded, notFoundError, usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { updateIssue, closeIssue, addRelations } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
@@ -47,7 +48,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     return;
   }
   if (!id) {
-    throw new Error("update needs an <id> — or pass --stdin for a bulk update.");
+    throw usageError("update needs an <id> — or pass --stdin for a bulk update.");
   }
 
   // `--desc -` reads stdin — resolve BEFORE the interactive trigger so a piped
@@ -68,6 +69,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     opts.blockedBy !== undefined ||
     opts.relatedTo !== undefined;
 
+  if (!hasMutation && !isInteractive(opts.json)) throw usageError("update needs at least one mutation flag or --stdin.");
   if (!hasMutation && isInteractive(opts.json)) {
     const proceed = await updateWizard(client, id, opts);
     if (!proceed) {
@@ -150,7 +152,7 @@ async function updateWizard(
   if (field === "state") {
     const issue = await client.issue(id);
     const team = await issue.team;
-    if (!team) throw new Error(`${id}: could not resolve the issue's team.`);
+    if (!team) throw notFoundError(`${id}: could not resolve the issue's team.`);
     const states = await team.states({ first: 50 });
     opts.state = await promptSelect(
       "New state",
@@ -181,12 +183,19 @@ async function updateWizard(
  * batched mutations. Mirrors `stale`'s dry-run→apply contract.
  */
 async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions): Promise<void> {
-  const items = parseBulkSpec(await readStdin());
-  if (items.length === 0) throw new Error("--stdin: no issues in the plan.");
+  const raw = await readStdin();
+  if (!raw) throw usageError("--stdin was empty.", "pipe the file: cat plan.json | linearctl update --stdin; add --apply to write.");
+  let items;
+  try { items = parseBulkSpec(raw); } catch (err) {
+    if (err instanceof SyntaxError) throw usageError("--stdin must contain a JSON array or NDJSON objects.");
+    throw err;
+  }
+  if (items.length === 0) throw usageError("--stdin: no issues in the plan.");
   const plan = await bulkUpdate(client, items, opts.apply === true);
 
   if (opts.json) {
     printJson(plan);
+    assertBatchSucceeded(plan.result?.failed ?? [], plan.unresolved);
     return;
   }
 
@@ -199,6 +208,7 @@ async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions):
       const fields = Object.keys(r.input).join(", ") || "—";
       process.stdout.write(`  ${r.ref}${r.skipped ? ` (skip: ${r.skipped})` : `  set: ${fields}`}\n`);
     }
+    assertBatchSucceeded([], plan.unresolved);
     return;
   }
 
@@ -210,6 +220,7 @@ async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions):
   if (res?.failed.length) {
     process.stdout.write(`  failed: ${res.failed.map((f) => `${f.ref} (${f.error})`).join("; ")}\n`);
   }
+  assertBatchSucceeded(res?.failed ?? [], plan.unresolved);
 }
 
 export interface CloseOptions {
@@ -233,7 +244,7 @@ export async function close(id: string | undefined, opts: CloseOptions): Promise
       return;
     }
   }
-  if (!id) throw new Error("close needs an <id> (e.g. CER-123).");
+  if (!id) throw usageError("close needs an <id> (e.g. CER-123).");
   const issue = await withSpinner(`Closing ${id}…`, () => closeIssue(client, id));
 
   if (opts.json) {
