@@ -41,6 +41,48 @@ Unknown teams list accessible keys; unknown labels suggest the three closest
 available names and `linearctl label list --team <key>`. `project list` accepts
 an omitted `--team` and lists all accessible projects.
 
+### Listing contract
+
+An agent cannot tell a short list from a truncated one by looking at it, so a
+listing must either be complete or say that it is not.
+
+1. **Listings paginate fully by default.** A command that returns a collection
+   follows the API's cursors to the end. The number of rows an agent gets must
+   not depend on the server's page size. A single-page read that reports its
+   first page as the whole answer is a bug, not a performance choice.
+2. **A listing returns each entity once.** Cursor pagination can repeat a row
+   across a page boundary when the row is modified mid-scan, so listings
+   de-duplicate by id. Row counts are safe to compare; `length` is a count of
+   entities, not of pages.
+3. **`--limit <n>` caps the rows and marks the result partial.** The cap is
+   applied to the whole sorted listing, not to whichever page the API answered
+   with first — all pages are fetched, then sorted, then truncated. Under
+   `--json` every row carries `"partial": true`; in text mode the note goes to
+   **stderr** so stdout stays pipe-clean. Without `--limit` a listing is never
+   partial. Marking partial on the rows rather than wrapping the array keeps
+   `jq '.[]'` consumers working.
+4. **A bad `--limit` is a usage error (exit 2), never an empty or unbounded
+   listing.** `--limit` takes a positive integer; `0`, a negative and a
+   non-numeric value all exit 2 rather than being silently ignored.
+5. **Ordering is stable.** A listing sorts by a deterministic key before
+   truncating, so the same data yields the same rows in the same order, and a
+   capped listing is a prefix of the full one.
+6. **Pagination terminates on any response.** `hasNextPage` with no
+   `endCursor` ends the scan; a cursor that does not advance is an error, not
+   a loop. A malformed page reports a usable error rather than a raw type
+   failure.
+
+An agent that must know whether it has the whole list checks for the marker:
+
+```bash
+linearctl label list --limit 5 --json | jq -e 'any(.[]; .partial == true)' > /dev/null \
+  && echo 'truncated; raise or drop --limit' >&2
+```
+
+`label list` implements this contract. Other listings predate it and are being
+brought into line; `reorg census --limit` deliberately caps what is *fetched*
+(a smoke-test path, documented in its `--help`) and so does not follow rule 3.
+
 Use `set -euo pipefail` in Bash so pipelines propagate failures. Send comment
 bodies through `--body -`, issue descriptions through `--desc -`, and plans
 through `cat plan.json | linearctl update --stdin`. Empty stdin fails before a
@@ -274,3 +316,41 @@ not overlapping), which is correct for a single-token actor.
 - No persistent process state beyond the token cache + in-flight guards.
   Durable state is in Linear (comments/labels/states) and engram (Track 6).
 - No TUI surface (Track 2). The role catalog is not a UI surface.
+
+## 11. Listing compliance audit (read-only)
+
+Measured against the §"Listing contract" rules on 2026-10-04 (workspace: 269
+labels, 93 projects incl. archived, 15 teams). Read-only: nothing in this
+audit changes behaviour, and the non-compliant entries are recorded rather
+than fixed here.
+
+| Listing | Paginates fully | De-dupes | `--limit` partial | Verdict |
+|---|---|---|---|---|
+| `label list` (`core/labels.ts`) | yes, cursor loop | yes, by id | yes, rows + stderr, exit 2 on bad input | **complies** |
+| `doc list` (`core/documents.ts`) | yes, cursor loop | n/a (none observed) | no `--limit` | **complies** (rules 1–2, 6 partial) |
+| `resolveLabelIds` (`core/issues.ts`) | yes, `fetchNext` drain | n/a (resolver) | n/a | **complies** |
+| `resolveLabelIdMap` (`core/bulk.ts`) | yes, `fetchNext` drain | n/a (resolver) | n/a | **complies** |
+| `listTeamKeys` (`core/teams.ts`) | yes, `fetchNext` drain | yes, `new Set` | n/a | **complies** |
+| `reorg census` `paged()` (`core/reorg.ts`) | yes when unlimited | no | **no marker**; `--limit` stops fetching | **deviates, by design** — see below |
+| `project list` (`core/projects.ts`) | yes, `fetchNext` drain | **no** | no `--limit` | **does not comply** — returns duplicates |
+| `listMilestones` (`core/milestones.ts`) | yes, `fetchNext` drain | **no** | n/a | **latent** — same shape, single page today |
+| `roadmap` (`core/roadmap.ts`) | yes, `fetchNext` drain | **no** | n/a | **latent** — same shape, single page today |
+
+**`project list` returns each project twice up to the page size.** The SDK's
+`fetchNext()` *appends* to `connection.nodes` (`_appendNodes`), but the caller
+also pushes `connection.nodes` into a separate array on every iteration, so
+page one is counted again for each later page. Live: `project list --json`
+returns **141 rows for 91 distinct projects** — 50 duplicates, exactly the
+first page re-added. The same accumulate-into-an-array shape appears in
+`listMilestones` and `roadmap`; both read a single page in this workspace, so
+they are latent rather than failing. `listTeamKeys` has the shape too but
+de-duplicates through a `Set`, which masks it. The correct form is to drain
+the connection and then read `connection.nodes` once.
+
+**`reorg census --limit` is a deliberate deviation.** Its `--help` describes a
+smoke-test cap on what is *fetched*, and downstream counts are explicitly
+lower bounds. It therefore does not mark partial. Two gaps are still worth
+noting against rule 4: `--limit 0` and `--limit -5` are silently ignored
+(the guard is `limit &&`, so `0` is falsy) and exit 0 having fetched
+everything, and a non-numeric `--limit abc` becomes `NaN` and does the same.
+Under the contract those are usage errors.
