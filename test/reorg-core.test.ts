@@ -151,7 +151,7 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgTeamProjects")) {
       be.readCalls++;
-      return ok({ projects: { nodes: [...be.projects.values()].map((p) => ({ id: p.id, teams: { nodes: p.teamIds.map((id) => ({ id })) } })) } });
+      return ok({ projects: { nodes: [...be.projects.values()].map((p) => ({ id: p.id, teams: { nodes: p.teamIds.map((id) => ({ id })) } })), pageInfo: { hasNextPage: false, endCursor: null } } });
     }
     if (query.includes("ReorgBatchVerify")) {
       be.readCalls++;
@@ -654,7 +654,9 @@ describe("swallowed writes fail loudly", () => {
     const be = freshBackend();
     be.swallowWrites = true;
     be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
-    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1", "t-2"], initiativeIds: [] });
+    // seeded WITHOUT the destination team: the drift check passes and the
+    // swallowed write (not the drift abort) is what the verify catches
+    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] });
     let op: ReorgOp;
     if (kind === "relabel") {
       op = baseOp({ op: kind, from: { labelIds: ["l-a"] }, to: { add: ["l-ws"], remove: [] } });
@@ -672,6 +674,7 @@ describe("swallowed writes fail loudly", () => {
         to: { teamId: "t-2", reapplyLabelIds: [], stateId: "s-todo" },
       });
       // preconditions must pass so the swallowed WRITE is what's tested
+      be.projects.get("p-1")!.teamIds = ["t-1", "t-2"]; // (b) live membership ok
       journalAppend(join(dir, "j.jsonl"), { seq: "verify", phase: 1, at: "a", ok: true });
       journalAppend(join(dir, "j.jsonl"), { seq: "verify", phase: 2, at: "b", ok: true });
     }
@@ -818,6 +821,21 @@ describe("move-issue-team", () => {
 // ---------------------------------------------------------------------------
 
 describe("emptiness pre-reads", () => {
+  test("delete-team refuses when a project is still attached (guard must fail the write)", async () => {
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.projects.set("p-9", { id: "p-9", name: "Leftover", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-9"], initiativeIds: [] });
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    await expect(
+      applyPlan(be, [del], join(dir, "j.jsonl"), { allowIrreversible: true }),
+    ).rejects.toThrow("project(s) still attached");
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+  });
+
   test("delete-team refuses with live issues / labels / projects; deletes when empty", async () => {
     const be = freshBackend();
     be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });

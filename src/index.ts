@@ -648,7 +648,7 @@ reorgCmd
   .command("census")
   .description("Read-only workspace structure snapshot (teams/labels/states/projects/initiatives)")
   .option("--team <key...>", "restrict to team key(s)")
-  .option("--limit <n>", "cap teams/projects fetched (smoke path)")
+  .option("--limit <n>", "cap teams/issues/projects fetched (smoke path; per-label counts and --team project filtering apply AFTER the cap, so counts are lower bounds under a cap)")
   .option("--out <file>", "write the census JSON here")
   .option("--json", "emit JSON to stdout")
   .action((opts) => reorgCensus(opts));

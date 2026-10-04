@@ -608,8 +608,11 @@ const TEAM_ISSUES_Q = /* GraphQL */ `
   }
 `;
 const TEAM_PROJECTS_Q = /* GraphQL */ `
-  query ReorgTeamProjects($id: String!) {
-    projects(filter: {}, first: 250) { nodes { id teams { nodes { id } } } }
+  query ReorgTeamProjects($first: Int!, $after: String) {
+    projects(first: $first, after: $after, includeArchived: true) {
+      nodes { id teams { nodes { id } } }
+      pageInfo { hasNextPage endCursor }
+    }
   }
 `;
 const TEAM_LABELS_Q = /* GraphQL */ `
@@ -986,10 +989,12 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       const active = labels.issueLabels.nodes.filter((l) => l.retiredAt == null);
       if (active.length > 0)
         throw new Error(`delete-team ${op.target.identifier}: ${active.length} non-retired label(s) remain`);
-      const projects = await reorgRaw<{ projects: { nodes: { id: string; teams: { nodes: { id: string }[] } }[] } }>(
-        ctx.client, TEAM_PROJECTS_Q, {}, ctx.pace,
+      // Paginated, archived-inclusive — a team attached only to an archived
+      // project (or past the first page) must still block the delete.
+      const projects = await paged<{ id: string; teams: { nodes: { id: string }[] } }>(
+        ctx.client, ctx.pace, TEAM_PROJECTS_Q, "projects", {},
       );
-      const member = projects.projects.nodes.filter((p) =>
+      const member = projects.filter((p) =>
         p.teams.nodes.some((t) => t.id === op.target.id),
       );
       if (member.length > 0)
@@ -1412,7 +1417,7 @@ async function runBatch(
   const d = await reorgRaw<{ issues: { nodes: BatchVerifyNode[] } }>(
     ctx.client,
     `query ReorgBatchVerify($ids: [ID!]!) {
-      issues(filter: { id: { in: $ids } }) {
+      issues(filter: { id: { in: $ids } }, includeArchived: true) {
         nodes { id state { id } labels { nodes { id } } }
       }
     }`,
