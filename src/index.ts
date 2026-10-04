@@ -277,6 +277,7 @@ labelCmd
   .description("List labels for a team (or all teams). --counts adds per-label issue usage.")
   .option("--team <key...>", "restrict to team key(s); omit for all teams")
   .option("--counts", "aggregate per-label issue counts (one request per 100 issues)")
+  .option("--limit <n>", "cap rows returned; marks the listing partial when it truncates", parseInt)
   .option("--json", "emit JSON")
   .action((opts) => labelList(opts));
 

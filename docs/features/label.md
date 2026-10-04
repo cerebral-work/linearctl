@@ -1,7 +1,7 @@
 # Feature: `linearctl label` — label management
 
 **Status:** ticketed — [CER-1558](https://linear.app/cerebral-work/issue/CER-1558)
-**Command:** `linearctl label list|create|rename [--team CER] [--json]`
+**Command:** `linearctl label list|create|rename [--team CER] [--limit N] [--json]`
 **Roadmap:** net-new (not in §7)
 **Milestone:** M3
 
@@ -25,11 +25,17 @@ with different IDs). There's no headless way to audit that — `triage` and
 
 Three subcommands:
 
-### `linearctl label list [--team CER] [--json]`
+### `linearctl label list [--team CER] [--limit N] [--json]`
 
 List labels for a team (or all teams), with usage counts (how many issues
 carry each label). Exposes the drift: duplicate names across teams, unused
 labels (0 issues), orphan labels (team deleted).
+
+The listing follows API cursors to the end, so it is complete regardless of
+how many labels the workspace holds. `--limit N` caps the rows; when it
+truncates, every row carries `"partial": true` under `--json` and a
+`partial: …` note goes to **stderr** in text mode (stdout stays pipe-clean).
+Without `--limit` the output is never partial.
 
 ```
 linearctl label list --team BRAND --json | jq '.[] | select(.issues == 0)'

@@ -1,4 +1,4 @@
-import { notFoundError } from "../lib/errors.js";
+import { notFoundError, usageError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { resolveTeamByKey } from "./teams.js";
@@ -13,38 +13,122 @@ export interface LabelInfo {
   issues?: number;
 }
 
+/** A label listing plus whether it was cut short by `limit`. */
+export interface LabelListing {
+  labels: LabelInfo[];
+  /** True only when `limit` truncated the result; a short last page is complete. */
+  partial: boolean;
+}
+
+export interface ListLabelsOptions {
+  teamKeys?: string[];
+  counts?: boolean;
+  /** Cap the rows returned. Marks the listing partial when it truncates. */
+  limit?: number;
+}
+
+const LIST_LABELS_QUERY = /* GraphQL */ `
+  query ListLabels($filter: IssueLabelFilter, $first: Int!, $after: String) {
+    issueLabels(filter: $filter, first: $first, after: $after) {
+      nodes {
+        id
+        name
+        color
+        team {
+          key
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+interface RawLabelNode {
+  id: string;
+  name: string;
+  color: string | null;
+  team: { key: string } | null;
+}
+
 /**
- * List labels, optionally team-scoped. Linear's API exposes no per-label
- * issue count, so `counts: true` runs a paginated team-issue sweep and
- * aggregates client-side — opt-in because it costs one request per 100
- * issues; the plain list is a single request.
+ * List labels, optionally team-scoped. Follows cursors to the end — a
+ * workspace with more labels than one page used to be silently cut off at the
+ * first page, reporting a short list as if it were complete (CER-2349).
+ *
+ * Linear's API exposes no per-label issue count, so `counts: true` runs a
+ * paginated team-issue sweep and aggregates client-side — opt-in because it
+ * costs one request per 100 issues.
  */
-export async function listLabels(
+export async function listLabelsPaged(
   client: LinearClient,
-  opts: { teamKeys?: string[]; counts?: boolean } = {},
-): Promise<LabelInfo[]> {
+  opts: ListLabelsOptions = {},
+): Promise<LabelListing> {
+  const { limit } = opts;
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw usageError("--limit must be a positive integer.");
+  }
   const teams = scopedTeams(opts.teamKeys);
-  const labels = await withRetry(() =>
-    client.issueLabels({
-      first: 250,
-      ...(teams
-        ? { filter: { or: [{ team: { key: { in: teams } } }, { team: { null: true } }] } }
-        : {}),
-    }),
-  );
-  const rows: LabelInfo[] = await Promise.all(
-    labels.nodes.map(async (l) => {
-      const team = await l.team;
-      return { id: l.id, name: l.name, color: l.color ?? null, team: team?.key ?? null };
-    }),
-  );
+  const filter = teams
+    ? { or: [{ team: { key: { in: teams } } }, { team: { null: true } }] }
+    : undefined;
+
+  // Dedupe by id: a label mutated mid-scan can otherwise reappear across a
+  // page boundary (cursor instability), the same guard pullIssues uses.
+  const byId = new Map<string, LabelInfo>();
+  let after: string | null = null;
+  let truncated = false;
+  type Vars = { filter?: unknown; first: number; after: string | null };
+  do {
+    const vars: Vars = { ...(filter ? { filter } : {}), first: 100, after };
+    const res = await withRetry(() =>
+      client.client.rawRequest<
+        {
+          issueLabels: {
+            nodes: RawLabelNode[];
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          };
+        },
+        Vars
+      >(LIST_LABELS_QUERY, vars),
+    );
+    const page = res.data?.issueLabels;
+    if (!page) throw new Error("issueLabels query returned no data");
+    for (const l of page.nodes) {
+      byId.set(l.id, { id: l.id, name: l.name, color: l.color ?? null, team: l.team?.key ?? null });
+    }
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    // More rows exist than asked for — stop early and say so.
+    if (limit !== undefined && byId.size >= limit && after) {
+      truncated = true;
+      break;
+    }
+  } while (after);
+
+  const rows = [...byId.values()];
+  // Sort before truncating so the cap takes a stable prefix, not an arbitrary one.
   rows.sort((a, b) => (a.team ?? "").localeCompare(b.team ?? "") || a.name.localeCompare(b.name));
+  const partial = truncated || (limit !== undefined && rows.length > limit);
+  const labels = limit !== undefined ? rows.slice(0, limit) : rows;
 
   if (opts.counts) {
     const usage = await labelUsage(client, teams);
-    for (const r of rows) r.issues = usage.get(r.id) ?? 0;
+    for (const r of labels) r.issues = usage.get(r.id) ?? 0;
   }
-  return rows;
+  return { labels, partial };
+}
+
+/**
+ * Array-returning form, preserved as the stable entry point for callers that
+ * do not care about truncation.
+ */
+export async function listLabels(
+  client: LinearClient,
+  opts: ListLabelsOptions = {},
+): Promise<LabelInfo[]> {
+  return (await listLabelsPaged(client, opts)).labels;
 }
 
 const LABEL_USAGE_QUERY = /* GraphQL */ `
