@@ -42,6 +42,7 @@ linearctl pull \
 | `--label <name...>` | label name (repeatable) | none | all must match (AND) |
 | `--assignee <who>` | `me` / `none` / email / display name / user id | none | `none` = unassigned |
 | `--project <ref>` | project UUID or name | none | server-side |
+| `--milestone <ref>` | milestone UUID or exact case-insensitive name | none | bare names match all accessible projects; unknown names exit 4 with closest names; AND with project; use `--state all` for complete membership |
 | `--priority <0-4\|none>` | exact priority | none | 1=Urgent 2=High 3=Medium 4=Low 0/none=unset |
 | `--text <query>` | substring over title + description | none | server-side containsIgnoreCase |
 | `--updated-since <window>` | lookback (`7d`, `24h`, `2w`) | none | server-side `updatedAt: { gte }` |

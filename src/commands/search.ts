@@ -9,6 +9,7 @@ export interface SearchCmdOptions {
   label?: string[];
   assignee?: string;
   project?: string;
+  milestone?: string;
   priority?: string;
   text?: string;
   updatedSince?: string;
@@ -32,6 +33,7 @@ export async function searchCmd(opts: SearchCmdOptions): Promise<void> {
     labels: opts.label,
     assignee: opts.assignee,
     project: opts.project,
+    milestone: opts.milestone,
     priority: opts.priority,
     text: opts.text,
     updatedSince: opts.updatedSince,

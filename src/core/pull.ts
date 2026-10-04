@@ -1,7 +1,7 @@
 import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
-import { buildSearchFilter, type SearchOptions } from "./search.js";
+import { resolveSearchFilter, type SearchOptions } from "./search.js";
 
 /**
  * The machine-consumable issue shape the soma WorkSource reconcile loop pulls.
@@ -86,12 +86,7 @@ export async function pullIssues(
   client: LinearClient,
   opts: SearchOptions,
 ): Promise<PullIssue[]> {
-  const needsResolution = opts.assignee !== undefined && opts.assignee !== "none";
-  const resolvedAssigneeId = needsResolution
-    ? await import("./issues.js").then((m) => m.resolveAssignee(client, opts.assignee as string))
-    : undefined;
-
-  const filter = buildSearchFilter(opts, resolvedAssigneeId);
+  const filter = await resolveSearchFilter(client, opts);
 
   // Dedupe by id: under `orderBy: updatedAt`, a row whose updatedAt changes
   // mid-scan can reappear across page boundaries (cursor instability). See

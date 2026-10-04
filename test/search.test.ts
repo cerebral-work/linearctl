@@ -85,3 +85,15 @@ describe("buildSearchFilter", () => {
     expect("team" in buildSearchFilter({ teamKeys: ["all"] })).toBe(false);
   });
 });
+
+
+describe("milestone membership filter", () => {
+  test("UUID filters milestone id and --state all retains terminal members", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    expect(buildSearchFilter({ milestone: id, state: "all" })).toEqual({ and: [{ projectMilestone: { id: { eq: id } } }] });
+  });
+  test("name is case-insensitive and ANDed with project", () => {
+    expect(clauses(buildSearchFilter({ milestone: " Launch ", project: "Example project" }))).toContainEqual({ projectMilestone: { name: { eqIgnoreCase: "Launch" } } });
+    expect(clauses(buildSearchFilter({ milestone: "Launch", project: "Example project" }))).toContainEqual({ project: { name: { eqIgnoreCase: "Example project" } } });
+  });
+});

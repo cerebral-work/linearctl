@@ -428,6 +428,7 @@ export interface IssueDetail {
   assignee: string | null;
   priority: string;
   project: string | null;
+  milestone: { id: string; name: string; targetDate: string | null } | null;
   labels: string[];
   parent: string | null;
   description: string | null;
@@ -442,12 +443,13 @@ export interface IssueDetail {
  */
 export async function getIssue(client: LinearClient, id: string): Promise<IssueDetail> {
   const issue = await client.issue(id);
-  const [state, assignee, project, parent, labels] = await Promise.all([
+  const [state, assignee, project, parent, labels, milestone] = await Promise.all([
     issue.state,
     issue.assignee,
     issue.project,
     issue.parent,
     issue.labels(),
+    issue.projectMilestone,
   ]);
   return {
     id: issue.id,
@@ -459,6 +461,11 @@ export async function getIssue(client: LinearClient, id: string): Promise<IssueD
     assignee: assignee?.displayName ?? null,
     priority: issue.priorityLabel,
     project: project?.name ?? null,
+    milestone: milestone ? {
+      id: milestone.id,
+      name: milestone.name,
+      targetDate: milestone.targetDate ? new Date(milestone.targetDate).toISOString().slice(0, 10) : null,
+    } : null,
     labels: labels.nodes.map((l) => l.name),
     parent: parent?.identifier ?? null,
     description: issue.description ?? null,
@@ -473,6 +480,7 @@ export function renderIssueDetail(d: IssueDetail): string {
     `  url: ${d.url}`,
     `  priority: ${d.priority}${d.assignee ? `   assignee: ${d.assignee}` : ""}`,
     ...(d.project ? [`  project: ${d.project}`] : []),
+    ...(d.milestone ? [`  milestone: ${d.milestone.name} (${d.milestone.id})${d.milestone.targetDate ? `   due: ${d.milestone.targetDate}` : ""}`] : []),
     ...(d.labels.length ? [`  labels: ${d.labels.join(", ")}`] : []),
     ...(d.parent ? [`  parent: ${d.parent}`] : []),
     `  created: ${d.createdAt}   updated: ${d.updatedAt}`,

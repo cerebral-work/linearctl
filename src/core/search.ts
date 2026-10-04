@@ -2,6 +2,8 @@ import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { sinceToDate } from "../lib/time.js";
 import { parsePriority } from "../lib/priority.js";
+import { resolveReadMilestones } from "./milestone-filter.js";
+import { UUID_RE } from "./projects.js";
 import { resolveAssignee } from "./issues.js";
 import {
   collectIssuesFlat,
@@ -19,6 +21,8 @@ export interface SearchOptions {
   labels?: string[];
   assignee?: string;
   project?: string;
+  /** Milestone UUID or exact name; combine with project to scope a reused name. */
+  milestone?: string;
   priority?: string;
   text?: string;
   updatedSince?: string;
@@ -53,8 +57,8 @@ const STATE_TYPE_ALIASES: Record<string, string> = {
 };
 
 /**
- * Compose a Linear `IssueFilter` from search flags (AND logic). Pure — the one
- * async input (assignee resolution) is passed in pre-resolved. Default scope is
+ * Compose a Linear `IssueFilter` from search flags (AND logic). Pure — async
+ * assignee and milestone lookups are passed in pre-resolved. Default scope is
  * active states (completed/canceled excluded), matching `triage`'s safe default;
  * `--state all` lifts it, `--state done` (etc.) replaces it.
  */
@@ -62,6 +66,7 @@ export function buildSearchFilter(
   opts: SearchOptions,
   resolvedAssigneeId?: string,
   now: Date = new Date(),
+  resolvedMilestoneIds?: string[],
 ): LinearDocument.IssueFilter {
   const and: Record<string, unknown>[] = [];
 
@@ -101,6 +106,12 @@ export function buildSearchFilter(
   }
 
   and.push(...projectClause(opts.project));
+  if (opts.milestone) {
+    const ref = opts.milestone.trim();
+    and.push({ projectMilestone: resolvedMilestoneIds
+      ? { id: { in: resolvedMilestoneIds } }
+      : UUID_RE.test(ref) ? { id: { eq: ref } } : { name: { eqIgnoreCase: ref } } });
+  }
 
   if (opts.priority !== undefined) {
     and.push({ priority: { eq: parsePriority(opts.priority) } });
@@ -135,15 +146,10 @@ export async function search(
   client: LinearClient,
   opts: SearchOptions,
 ): Promise<SearchItem[]> {
-  const needsResolution =
-    opts.assignee !== undefined && opts.assignee !== "none";
-  const resolvedAssigneeId = needsResolution
-    ? await resolveAssignee(client, opts.assignee as string)
-    : undefined;
 
   const issues = await collectIssuesFlat(
     client,
-    buildSearchFilter(opts, resolvedAssigneeId),
+    await resolveSearchFilter(client, opts),
     LinearDocument.PaginationOrderBy.UpdatedAt,
   );
 
@@ -156,4 +162,21 @@ export async function search(
     priority: issue.priority ?? 0,
     url: issue.url,
   }));
+}
+
+/** Resolve names before querying issues, distinguishing an empty milestone from a typo. */
+export async function resolveSearchFilter(client: LinearClient, opts: SearchOptions): Promise<LinearDocument.IssueFilter> {
+  const needsResolution =
+    opts.assignee !== undefined && opts.assignee !== "none";
+  const resolvedAssigneeId = needsResolution
+    ? await resolveAssignee(client, opts.assignee as string)
+    : undefined;
+
+  const milestone = await resolveReadMilestones(client, opts.milestone, opts.project);
+  return buildSearchFilter(
+    { ...opts, project: milestone?.projectId ?? opts.project },
+    resolvedAssigneeId,
+    new Date(),
+    milestone?.ids,
+  );
 }
