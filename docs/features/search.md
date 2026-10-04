@@ -114,3 +114,23 @@ separate `searchIssues` root — needs SDK verification.
   priority-1 issues carrying the `bug` label.
 - `linearctl search --text "rate limit" --state all` returns issues whose
   title/description mention "rate limit", including done ones.
+
+
+## Milestone membership
+
+Both `search` and `pull` accept `--milestone <ref>`, where the ref is a UUID
+or an exact, case-insensitive milestone name. Name matches can span projects;
+pair with `--project` to restrict them. The API applies the filter before
+pagination. `pull` keeps its existing ten-field output contract.
+
+```sh
+linearctl pull --project 'Example project' --milestone 'Launch' --state all --json
+linearctl search --milestone 00000000-0000-4000-8000-000000000001 --state all --json
+linearctl show ENG-123 --json
+```
+
+Use `--state all` to enumerate complete membership, including completed and
+canceled issues; the default remains active issues only. Avoid `pull --limit`
+when verifying all members. `show --json` includes `milestone` as
+`{"id":"...","name":"Launch","targetDate":"2026-10-31"}` or `null` when
+unassigned. `targetDate` is `YYYY-MM-DD` or `null` for an undated milestone.

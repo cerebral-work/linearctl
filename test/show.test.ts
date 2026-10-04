@@ -37,12 +37,21 @@ describe("getIssue", () => {
       assignee: "aria",
       priority: "High",
       project: "reverie-cloud platform prereqs",
+      milestone: null,
       labels: ["store", "M3"],
       parent: null,
       description: "## What\nRoute chunk vectors through EmbedderClient.",
       createdAt: "2026-06-20T10:00:00.000Z",
       updatedAt: "2026-07-01T09:00:00.000Z",
     });
+  });
+
+  test("includes milestone identity and date for post-write verification", async () => {
+    const detail = await getIssue(stubClient({ projectMilestone: Promise.resolve({ id: "m1", name: "Launch", targetDate: new Date("2026-10-31") }) }), "ENG-123");
+    expect(detail.milestone).toEqual({ id: "m1", name: "Launch", targetDate: "2026-10-31" });
+    expect(renderIssueDetail(detail)).toContain("milestone: Launch (m1)   due: 2026-10-31");
+    const undated = await getIssue(stubClient({ projectMilestone: Promise.resolve({ id: "m2", name: "Later" }) }), "ENG-124");
+    expect(undated.milestone?.targetDate).toBeNull();
   });
 
   test("tolerates missing optional relations", async () => {
@@ -57,6 +66,7 @@ describe("getIssue", () => {
     );
     expect(detail.assignee).toBeNull();
     expect(detail.project).toBeNull();
+    expect(detail.milestone).toBeNull();
     expect(detail.labels).toEqual([]);
     expect(detail.description).toBeNull();
   });
@@ -73,6 +83,7 @@ describe("renderIssueDetail", () => {
     assignee: null,
     priority: "High",
     project: null,
+    milestone: null,
     labels: ["bug"],
     parent: "CER-1",
     description: "body text",

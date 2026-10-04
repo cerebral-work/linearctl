@@ -2,6 +2,7 @@ import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { sinceToDate } from "../lib/time.js";
 import { parsePriority } from "../lib/priority.js";
+import { UUID_RE } from "./projects.js";
 import { resolveAssignee } from "./issues.js";
 import {
   collectIssuesFlat,
@@ -19,6 +20,8 @@ export interface SearchOptions {
   labels?: string[];
   assignee?: string;
   project?: string;
+  /** Milestone UUID or exact name; combine with project to scope a reused name. */
+  milestone?: string;
   priority?: string;
   text?: string;
   updatedSince?: string;
@@ -101,6 +104,12 @@ export function buildSearchFilter(
   }
 
   and.push(...projectClause(opts.project));
+  if (opts.milestone) {
+    const ref = opts.milestone.trim();
+    and.push({ projectMilestone: UUID_RE.test(ref)
+      ? { id: { eq: ref } }
+      : { name: { eqIgnoreCase: ref } } });
+  }
 
   if (opts.priority !== undefined) {
     and.push({ priority: { eq: parsePriority(opts.priority) } });

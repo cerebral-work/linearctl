@@ -10,6 +10,7 @@ export interface PullOptions {
   label?: string[];
   assignee?: string;
   project?: string;
+  milestone?: string;
   priority?: string;
   text?: string;
   updatedSince?: string;
@@ -37,12 +38,14 @@ export async function pull(opts: PullOptions): Promise<void> {
     stateSet: opts.stateSet,
     assignee: opts.assignee,
     project: opts.project,
+    milestone: opts.milestone,
     priority: opts.priority,
     text: opts.text,
     updatedSince: opts.updatedSince,
     createdSince: opts.createdSince,
     limit: opts.limit,
   });
+
 
   // JSON is the only output path — `pull` exists for machine consumption.
   // `--json` is accepted for consistency with every other command, but the

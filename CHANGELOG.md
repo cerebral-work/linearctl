@@ -13,6 +13,8 @@
 
 ### Features
 
+* **milestone:** filter `pull` and `search` by milestone UUID/name; include milestone identity and target date in `show` for membership verification.
+
 * **milestone:** `milestone create` subcommand — create project milestones headless (CER-1686)
 * **project:** `project update` subcommand — update project state, name, description (CER-1687)
 * **roadmap:** milestone timeline view with progress and issue lists per milestone (CER-1688)
