@@ -55,8 +55,13 @@ interface FakeBackend {
   swallowWrites: boolean;
   /** ids the batch mutation deliberately skips (mid-batch mismatch testing). */
   batchSkip: Set<string>;
+  /** When set, the projects probe answers in two pages: the blocking project
+   *  arrives on page two — an engine that drops the pagination loop misses it. */
+  forceProjectPagination: boolean;
   mutationCalls: string[];
   readCalls: number;
+  /** ReorgTeamProjects calls — the pagination test asserts the second page. */
+  projectProbeCalls: number;
   createdLabelSeq: number;
 }
 
@@ -141,9 +146,13 @@ function fakeClient(be: FakeBackend): LinearClient {
       be.readCalls++;
       return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.stateId === vars.id && !i.archived).map((i) => ({ id: i.id })) } });
     }
+    // The fake honours includeArchived EXACTLY like Linear: archived rows are
+    // hidden unless the query carries the flag. An engine that drops the flag
+    // sees a truncated world (the tests pin this).
+    const inclArchived = query.includes("includeArchived: true");
     if (query.includes("ReorgTeamIssues")) {
       be.readCalls++;
-      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.teamId === vars.id).map((i) => ({ id: i.id })) } });
+      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => (inclArchived || !i.archived) && i.teamId === vars.id).map((i) => ({ id: i.id })) } });
     }
     if (query.includes("ReorgTeamLabels")) {
       be.readCalls++;
@@ -151,16 +160,27 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgTeamProjects")) {
       be.readCalls++;
-      return ok({ projects: { nodes: [...be.projects.values()].map((p) => ({ id: p.id, teams: { nodes: p.teamIds.map((id) => ({ id })) } })), pageInfo: { hasNextPage: false, endCursor: null } } });
+      be.projectProbeCalls++;
+      const all = [...be.projects.values()]
+        .filter((p) => inclArchived || !p.trashed)
+        .map((p) => ({ id: p.id, teams: { nodes: p.teamIds.map((id) => ({ id })) } }));
+      if (be.forceProjectPagination && !vars.after) {
+        // page 1 withholds the blocking project; page 2 delivers it
+        return ok({ projects: { nodes: all.filter((p) => !p.teams.nodes.length), pageInfo: { hasNextPage: true, endCursor: "p2" } } });
+      }
+      const nodes = be.forceProjectPagination ? all.filter((p) => p.teams.nodes.length) : all;
+      return ok({ projects: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } });
     }
     if (query.includes("ReorgBatchVerify")) {
       be.readCalls++;
       const ids = vars.ids as string[];
       return ok({
         issues: {
-          nodes: ids.map((id) => be.issues.get(id)).filter(Boolean).map((i) => ({
-            id: i!.id, state: { id: i!.stateId }, labels: { nodes: i!.labelIds.map((x) => ({ id: x })) },
-          })),
+          nodes: ids.map((id) => be.issues.get(id)).filter(Boolean)
+            .filter((i) => inclArchived || !i!.archived)
+            .map((i) => ({
+              id: i!.id, state: { id: i!.stateId }, labels: { nodes: i!.labelIds.map((x) => ({ id: x })) },
+            })),
         },
       });
     }
@@ -275,7 +295,8 @@ function freshBackend(): FakeBackend {
   return {
     issues: new Map(), labels: new Map(), states: new Map(),
     projects: new Map(), initiatives: new Map(), teams: new Map(),
-    swallowWrites: false, batchSkip: new Set(), mutationCalls: [], readCalls: 0,
+    swallowWrites: false, batchSkip: new Set(), forceProjectPagination: false,
+    mutationCalls: [], readCalls: 0, projectProbeCalls: 0,
     createdLabelSeq: 0,
   };
 }
@@ -707,6 +728,25 @@ describe("batching", () => {
     expect(journalRead(j).filter((r) => r.ok)).toHaveLength(51);
   });
 
+  test("batch with an ARCHIVED member verifies (verify read must carry includeArchived)", async () => {
+    // Without includeArchived in the verify read the archived member is
+    // "missing from verify read" and the batch stops — red without the flag.
+    const be = freshBackend();
+    const ops: ReorgOp[] = [];
+    for (const n of [1, 2]) {
+      const id = `i-${n}`;
+      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["l-a"], archived: n === 2 });
+      ops.push(baseOp({
+        seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
+        from: { labelIds: ["l-a"] }, to: { add: ["l-b"], remove: [] }, batchKey: "k",
+      }));
+    }
+    const result = await applyPlan(be, ops, join(dir, "j.jsonl"));
+    expect(result.applied).toBe(2);
+    expect(be.mutationCalls.filter((c) => c === "issueBatchUpdate")).toHaveLength(1);
+    expect(be.issues.get("i-2")!.labelIds).toContain("l-b"); // archived member relabeled
+  });
+
   test("mid-batch mismatch: good members journaled ok, bad one marked ok:false, then stop", async () => {
     const be = freshBackend();
     const ops: ReorgOp[] = [];
@@ -834,6 +874,40 @@ describe("emptiness pre-reads", () => {
     ).rejects.toThrow("project(s) still attached");
     expect(be.mutationCalls).toEqual([]);
     expect(be.teams.get("t-9")!.deleted).toBe(false);
+  });
+
+  test("delete-team blocked by an ARCHIVED project attachment (probe must carry includeArchived)", async () => {
+    // Without includeArchived the probe's world excludes trashed projects, the
+    // team looks unattached, and the delete proceeds — this test is red then.
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.projects.set("p-arc", { id: "p-arc", name: "Archived", statusId: "st", leadId: null, targetDate: null, trashed: true, teamIds: ["t-9"], initiativeIds: [] });
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    await expect(
+      applyPlan(be, [del], join(dir, "j.jsonl"), { allowIrreversible: true }),
+    ).rejects.toThrow("project(s) still attached");
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+  });
+
+  test("delete-team probe paginates (blocking project on page two)", async () => {
+    // forceProjectPagination withholds member projects to page two; an engine
+    // that drops the pagination loop sees page one only and deletes — red.
+    const be = freshBackend();
+    be.forceProjectPagination = true;
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.projects.set("p-late", { id: "p-late", name: "PageTwo", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-9"], initiativeIds: [] });
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    await expect(
+      applyPlan(be, [del], join(dir, "j.jsonl"), { allowIrreversible: true }),
+    ).rejects.toThrow("project(s) still attached");
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+    expect(be.projectProbeCalls).toBe(2); // the probe paged to the second page
   });
 
   test("delete-team refuses with live issues / labels / projects; deletes when empty", async () => {
