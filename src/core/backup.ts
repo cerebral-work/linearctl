@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry, type RetryOptions } from "../lib/retry.js";
@@ -245,6 +245,8 @@ export interface Manifest {
   entities: Record<string, ManifestEntity>;
   markdown: { dir: string; count: number } | null;
   rateLimit: { minRequestsRemaining: number | null };
+  /** Total GraphQL requests sent for this run (including resumed segments). */
+  requests: number;
   /** Team ids referenced by dumped rows but not returned by `teams` (private/archived teams the key cannot list). */
   unresolved?: { teams: string[] };
   warnings: string[];
@@ -385,6 +387,7 @@ interface BackupState {
   entities: Record<string, ManifestEntity>;
   warnings: string[];
   minRequestsRemaining: number | null;
+  requests?: number;
   workspace: Manifest["workspace"];
 }
 
@@ -453,6 +456,7 @@ export async function runBackup(client: LinearClient, opts: BackupOptions): Prom
   }
 
   const gql = new Gql(client, opts.retry ?? {});
+  const priorRequests = state.requests ?? 0;
   const warn = (w: string) => {
     if (!state.warnings.includes(w)) state.warnings.push(w);
   };
@@ -537,6 +541,7 @@ export async function runBackup(client: LinearClient, opts: BackupOptions): Prom
 
     state.entities[spec.name] = writeEntityFile(runDir, spec.name, rows);
     state.minRequestsRemaining = gql.minRemaining;
+    state.requests = priorRequests + gql.requests;
     writeState(runDir, state);
     log(`${spec.name}: ${rows.length}`);
   }
@@ -551,6 +556,7 @@ export async function runBackup(client: LinearClient, opts: BackupOptions): Prom
       warn,
     });
     state.minRequestsRemaining = gql.minRemaining;
+    state.requests = priorRequests + gql.requests;
     writeState(runDir, state);
   }
 
@@ -569,7 +575,9 @@ export async function runBackup(client: LinearClient, opts: BackupOptions): Prom
     markdownInfo = { dir: "issues-md", count };
   }
 
-  const unresolvedTeams = teams ? [] : findUnresolvedTeams(data);
+  const skipUnresolved = !!(teams || opts.limit || opts.since);
+  const unresolvedTeams = skipUnresolved ? [] : findUnresolvedTeams(data);
+  if (skipUnresolved && (opts.limit || opts.since) && data.teams) warn("unresolved-team check skipped: dump is truncated or incremental");
   if (unresolvedTeams.length)
     warn(`${unresolvedTeams.length} team id(s) referenced by dumped rows are not returned by the teams query (private or archived teams this key cannot list)`);
 
@@ -592,6 +600,7 @@ export async function runBackup(client: LinearClient, opts: BackupOptions): Prom
     entities: sortKeys(state.entities),
     markdown: markdownInfo,
     rateLimit: { minRequestsRemaining: gql.minRemaining ?? state.minRequestsRemaining },
+    requests: priorRequests + gql.requests,
     ...(unresolvedTeams.length ? { unresolved: { teams: unresolvedTeams } } : {}),
     warnings: state.warnings,
   };
@@ -650,12 +659,33 @@ async function historyPass(
 ): Promise<void> {
   const path = join(runDir, HISTORY_FILE);
   const progressPath = join(runDir, ".history-done.json");
+  // A finished pass (state survived a later crash) is reused when its file still hashes to the record.
+  const prior = state.entities[HISTORY_ENTITY];
+  if (prior && existsSync(join(runDir, prior.file)) && sha256(readFileSync(join(runDir, prior.file))) === prior.sha256) {
+    o.log(`history: resumed (${prior.count} rows)`);
+    return;
+  }
   const done = new Set<string>(existsSync(progressPath) ? (JSON.parse(readFileSync(progressPath, "utf8")) as string[]) : []);
-  // Rows for fully-processed issues only; anything after the last checkpoint is re-fetched.
-  let kept: Row[] = existsSync(path) ? parseJsonl(readFileSync(path, "utf8")).filter((r) => done.has(String(r.issueId))) : [];
+  // Rows for fully-processed issues only; rows appended after the last done-list write are dropped and re-fetched.
+  let kept: Row[] = [];
+  if (existsSync(path)) {
+    const all = parseJsonl(readFileSync(path, "utf8"));
+    kept = all.filter((r) => done.has(String(r.issueId)));
+    if (kept.length !== all.length) writeFileSync(path, toJsonl(kept));
+  }
+
+  const CHECKPOINT_EVERY = 50;
+  let pending: Row[] = [];
+  const flush = () => {
+    // Rows first (append), done-list second: a crash re-fetches, never skips.
+    if (pending.length) appendFileSync(path, toJsonl(pending));
+    writeFileSync(progressPath, JSON.stringify([...done]));
+    pending = [];
+  };
 
   const ids = issues.map(idOf).sort();
   let n = 0;
+  let sinceFlush = 0;
   for (const issueId of ids) {
     n += 1;
     if (done.has(issueId)) continue;
@@ -680,12 +710,16 @@ async function historyPass(
       if (!after) break;
     }
     kept.push(...rows);
+    pending.push(...rows);
     done.add(issueId);
-    // Checkpoint: data file first, progress marker second (so a crash re-fetches, never skips).
-    writeFileSync(path, toJsonl(kept));
-    writeFileSync(progressPath, JSON.stringify([...done]));
+    sinceFlush += 1;
+    if (sinceFlush >= CHECKPOINT_EVERY) {
+      flush();
+      sinceFlush = 0;
+    }
     if (n % 100 === 0) o.log(`history: ${n}/${ids.length}`);
   }
+  flush();
 
   kept = [...kept].sort((a, b) => {
     const ka = `${a.issueId}|${a.createdAt}|${a.id}`;
@@ -906,8 +940,8 @@ export async function verifyBackup(dir: string, opts: VerifyOptions = {}): Promi
   const lk = buildLookups(data);
   for (const i of picked) {
     const rec = issues[i];
-    const d = await gql.run<{ issue: { identifier: string; title: string; description: string | null; priorityLabel: string; updatedAt: string; state: { name: string } | null } | null }>(
-      `query($id: String!) { issue(id: $id) { identifier title description priorityLabel updatedAt state { name } } }`,
+    const d = await gql.run<{ issue: { identifier: string; title: string; description: string | null; priorityLabel: string; createdAt: string; updatedAt: string; team: { id: string } | null; state: { name: string } | null } | null }>(
+      `query($id: String!) { issue(id: $id) { identifier title description priorityLabel createdAt updatedAt team { id } state { name } } }`,
       { id: String(rec.id) },
     );
     const live = d.issue;
@@ -917,12 +951,21 @@ export async function verifyBackup(dir: string, opts: VerifyOptions = {}): Promi
       continue;
     }
     const want = recordToDetail(rec, lk);
-    const diffs: string[] = [];
-    if (live.title !== want.title) diffs.push("title");
-    if ((live.description ?? null) !== want.description) diffs.push("description");
-    if (live.priorityLabel !== want.priority) diffs.push("priority");
-    if ((live.state?.name ?? "") !== want.state) diffs.push("state");
-    if (diffs.length) res.sampleMismatches.push(`${ident}: ${diffs.join(", ")} differ (live updatedAt ${live.updatedAt})`);
+    // Stable fields must always match. Mutable fields may differ only if the issue
+    // was edited after the dump (live updatedAt newer); that is expected drift, noted not failed.
+    const stable: string[] = [];
+    if (live.identifier !== ident) stable.push("identifier");
+    if (Date.parse(live.createdAt) !== Date.parse(String(rec.createdAt))) stable.push("createdAt");
+    if ((live.team?.id ?? null) !== ((rec.teamId as string | null) ?? null)) stable.push("team");
+    const mutable: string[] = [];
+    if (live.title !== want.title) mutable.push("title");
+    if ((live.description ?? null) !== want.description) mutable.push("description");
+    if (live.priorityLabel !== want.priority) mutable.push("priority");
+    if ((live.state?.name ?? "") !== want.state) mutable.push("state");
+    const edited = Date.parse(live.updatedAt) > Date.parse(String(rec.updatedAt));
+    if (stable.length) res.sampleMismatches.push(`${ident}: ${stable.join(", ")} differ`);
+    if (mutable.length && edited) res.notes.push(`${ident}: edited since the dump (${mutable.join(", ")}); not counted as drift`);
+    else if (mutable.length) res.sampleMismatches.push(`${ident}: ${mutable.join(", ")} differ with no newer live updatedAt`);
   }
   if (res.drift.length || res.sampleMismatches.length) res.exitCode = 2;
   return res;

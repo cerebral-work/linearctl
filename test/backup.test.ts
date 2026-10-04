@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,7 @@ import {
   verifyBackup,
 } from "../src/core/backup.js";
 import { renderIssueDetail } from "../src/core/issues.js";
+import { backup as backupCommand } from "../src/commands/backup.js";
 
 type Row = Record<string, unknown>;
 
@@ -279,24 +280,25 @@ describe("resilience", () => {
 describe("history pass", () => {
   const hist = (id: string): Row => ({ id: `h-${id}`, createdAt: "2026-01-03T00:00:00.000Z", toStateId: "s1" });
 
-  test("resumes per issue without refetching finished ones", async () => {
-    const pages = { ...base(), issues: [[issue("a"), issue("b")]] };
-    const history = { a: [hist("a")], b: [hist("b")] };
+  test("resumes from the last 50-issue checkpoint without refetching finished ones", async () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `i${String(i).padStart(2, "0")}`);
+    const pages = { ...base(), issues: [ids.map((id) => issue(id))] };
+    const history = Object.fromEntries(ids.map((id) => [id, [hist(id)]]));
     const failing = stub({
       pages,
       history,
       hook: (q, vars) => {
-        if (q.includes("BackupHistory") && vars?.id === "b") throw new Error("history boom");
+        if (q.includes("BackupHistory") && vars?.id === "i55") throw new Error("history boom");
       },
     });
     await expect(runBackup(failing.client, { out, version: "t", includeHistory: true, ...fast })).rejects.toThrow("history boom");
 
     const ok = stub({ pages, history });
-    const { dir, manifest } = await runBackup(ok.client, { out, version: "t", includeHistory: true, resume: true, ...fast });
+    const { dir, manifest } = await runBackup(ok.client, { out, version: "t", includeHistory: true, resume: true, markdown: false, ...fast });
     const fetched = ok.calls.filter((c) => c.query.includes("BackupHistory")).map((c) => c.vars?.id);
-    expect(fetched).toEqual(["b"]); // "a" was checkpointed in the first run
-    expect(manifest.entities.issueHistory.count).toBe(2);
-    expect(lines(dir, "issueHistory.jsonl").map((r) => r.issueId)).toEqual(["a", "b"]);
+    expect(fetched).toEqual(ids.slice(50)); // first 50 were checkpointed; the rest are re-fetched
+    expect(manifest.entities.issueHistory.count).toBe(60);
+    expect(new Set(lines(dir, "issueHistory.jsonl").map((r) => r.issueId)).size).toBe(60);
   });
 
   test("sleeps when the request budget is under the floor", async () => {
@@ -427,8 +429,8 @@ describe("verifyBackup", () => {
     const dir = await make();
     const grew = stub({ pages: { ...base(), issues: [[issue("a"), issue("b"), issue("c"), issue("d")]] } });
     const live = {
-      a: { identifier: "T-a", title: "Issue a", description: "body a", priorityLabel: "High", updatedAt: "x", state: { name: "Todo" } },
-      b: { identifier: "T-b", title: "Issue b", description: "body b", priorityLabel: "High", updatedAt: "x", state: { name: "Todo" } },
+      a: { identifier: "T-a", title: "Issue a", description: "body a", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, updatedAt: "2026-01-02T00:00:00.000Z", state: { name: "Todo" } },
+      b: { identifier: "T-b", title: "Issue b", description: "body b", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, updatedAt: "2026-01-02T00:00:00.000Z", state: { name: "Todo" } },
     };
     const sGrew = stub({ pages: { ...base(), issues: [[issue("a"), issue("b"), issue("c"), issue("d")]] }, live });
     const r = await verifyBackup(dir, { client: sGrew.client, tolerance: 0.02, rand: () => 0 });
@@ -446,8 +448,8 @@ describe("verifyBackup", () => {
   test("a sampled issue that differs live is reported (exit 2)", async () => {
     const dir = await make();
     const live = {
-      a: { identifier: "T-a", title: "RENAMED", description: "body a", priorityLabel: "High", updatedAt: "x", state: { name: "Todo" } },
-      b: { identifier: "T-b", title: "Issue b", description: "body b", priorityLabel: "High", updatedAt: "x", state: { name: "Todo" } },
+      a: { identifier: "T-a", title: "RENAMED", description: "body a", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, updatedAt: "2026-01-02T00:00:00.000Z", state: { name: "Todo" } },
+      b: { identifier: "T-b", title: "Issue b", description: "body b", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, updatedAt: "2026-01-02T00:00:00.000Z", state: { name: "Todo" } },
     };
     const s = stub({ pages: { ...base(), issues: [[issue("a"), issue("b")]] }, live });
     const r = await verifyBackup(dir, { client: s.client, sample: 2, rand: (() => { let i = 0; return () => (i++ === 0 ? 0 : 0.99); })() });
@@ -457,5 +459,103 @@ describe("verifyBackup", () => {
 
   test("missing manifest is a usage error", async () => {
     await expect(verifyBackup(out)).rejects.toThrow(/no manifest/);
+  });
+});
+
+describe("round 1 hardening", () => {
+  test("a finished history pass is reused on --resume after a later crash", async () => {
+    const fixed = new Date("2026-10-04T10:00:00.000Z");
+    const pages = { ...base(), issues: [[issue("a"), issue("b")]] };
+    const history = { a: [{ id: "h1", createdAt: "2026-01-03T00:00:00.000Z" }], b: [] };
+    const dirName = join(out, "linear-20261004T100000Z");
+    let planted = false;
+    const crashing = stub({
+      pages,
+      history,
+      hook: (q) => {
+        if (q.includes("BackupHistory") && !planted) {
+          planted = true;
+          writeFileSync(join(dirName, "issues-md"), "blocker"); // makes the markdown step fail later
+        }
+      },
+    });
+    await expect(runBackup(crashing.client, { out, version: "t", includeHistory: true, now: () => fixed, ...fast })).rejects.toThrow();
+    rmSync(join(dirName, "issues-md"));
+    const again = stub({ pages, history });
+    const { manifest } = await runBackup(again.client, { out, version: "t", includeHistory: true, resume: true, now: () => fixed, ...fast });
+    expect(again.calls.some((c) => c.query.includes("BackupHistory"))).toBe(false);
+    expect(manifest.entities.issueHistory.count).toBe(1);
+  });
+
+  test("history over many issues checkpoints in batches and keeps every row", async () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `i${String(i).padStart(3, "0")}`);
+    const history = Object.fromEntries(ids.map((id) => [id, [{ id: `h-${id}`, createdAt: "2026-01-03T00:00:00.000Z" }]]));
+    const s = stub({ pages: { ...base(), issues: [ids.map((id) => issue(id))] }, history });
+    const { dir, manifest } = await runBackup(s.client, { out, version: "t", includeHistory: true, markdown: false, ...fast });
+    expect(manifest.entities.issueHistory.count).toBe(120);
+    expect(lines(dir, "issueHistory.jsonl")).toHaveLength(120);
+  });
+
+  test("manifest records the request count", async () => {
+    const s = stub({ pages: { ...base(), issues: [[issue("a")]] } });
+    const { manifest } = await runBackup(s.client, { out, version: "t", ...fast });
+    expect(manifest.requests).toBe(s.calls.length);
+  });
+
+  test("unresolved-team detection is skipped (with a warning) under --limit", async () => {
+    const s = stub({
+      pages: { ...base(), workflowStates: [[{ id: "s9", name: "Todo", type: "unstarted", team: { id: "hidden" } }]], issues: [[issue("a")]] },
+    });
+    const { manifest } = await runBackup(s.client, { out, version: "t", limit: 5, ...fast });
+    expect(manifest.unresolved).toBeUndefined();
+    expect(manifest.warnings.join("\n")).toContain("unresolved-team check skipped");
+  });
+
+  test("an issue edited since the dump is a note, not drift; a changed createdAt is a failure", async () => {
+    const s0 = stub({ pages: { ...base(), issues: [[issue("a")]] } });
+    const { dir } = await runBackup(s0.client, { out, version: "t", ...fast });
+    const liveBase = { identifier: "T-a", title: "Edited", description: "body a", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, state: { name: "Todo" } };
+    const edited = stub({ pages: { ...base(), issues: [[issue("a")]] }, live: { a: { ...liveBase, updatedAt: "2026-02-01T00:00:00.000Z" } } });
+    const r = await verifyBackup(dir, { client: edited.client, rand: () => 0 });
+    expect(r.exitCode).toBe(0);
+    expect(r.notes.join("\n")).toContain("edited since the dump");
+    const bad = stub({ pages: { ...base(), issues: [[issue("a")]] }, live: { a: { ...liveBase, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z" } } });
+    const r2 = await verifyBackup(dir, { client: bad.client, rand: () => 0 });
+    expect(r2.exitCode).toBe(2);
+    expect(r2.sampleMismatches.join("\n")).toContain("createdAt");
+  });
+});
+
+describe("CLI entry point exit codes", () => {
+  async function run(opts: Parameters<typeof backupCommand>[0]): Promise<number> {
+    const exit = spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    const err = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await backupCommand(opts);
+      return 0;
+    } catch (e) {
+      const m = /^exit:(\d+)$/.exec((e as Error).message);
+      if (!m) throw e;
+      return Number(m[1]);
+    } finally {
+      exit.mockRestore();
+      err.mockRestore();
+      log.mockRestore();
+    }
+  }
+
+  test("no --out is a usage error (3)", async () => {
+    expect(await run({})).toBe(3);
+  });
+
+  test("--verify --offline exits 0 on a clean dump and 1 on a tampered line", async () => {
+    const s = stub({ pages: { ...base(), issues: [[issue("a"), issue("b")]] } });
+    const { dir } = await runBackup(s.client, { out, version: "t", ...fast });
+    expect(await run({ verify: dir, offline: true })).toBe(0);
+    writeFileSync(join(dir, "issues.jsonl"), read(dir, "issues.jsonl").replace("Issue a", "Issue X"));
+    expect(await run({ verify: dir, offline: true })).toBe(1);
   });
 });
