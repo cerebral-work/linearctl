@@ -36,5 +36,3 @@ only after selecting the intended canonical issue.
 When Linear returns "Missing duplicate relation" for a state-only update,
 linearctl reports usage 2 with a hint pointing to `close --duplicate-of` or
 `update --duplicate-of`.
-
-`update --duplicate-of` writes the relation before any other field change in the same call; if a later field update fails, the relation stays in place and no rollback is attempted, exactly as for `close`.
