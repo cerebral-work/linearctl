@@ -11,7 +11,7 @@ globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
   if (scenario === "bulk" && query.includes("query Resolve")) return Response.json({ data: { r0: { id: "issue-uuid", identifier: "ENG-123" } } });
   if (scenario === "dup" && query.includes("teams(")) return Response.json({ data: { teams: connection([{ id: "t1", key: "ENG", name: "Engineering" }]) } });
   if (scenario === "dup" && query.includes("issues(")) return Response.json({ data: { issues: connection([{ id: "i1", identifier: "ENG-123", title: "Fix timeout", url: "https://example.com/ENG-123", state: { name: "Todo", type: "unstarted" }, labels: { nodes: [] } }]) } });
-  if (scenario === "userinput") return Response.json({ errors: [{ message: 'Duplicate label name - Label "annex-iii-2027" already exists in team Business Development', extensions: { type: "userinput", userError: true } }] }, { status: 400 });
+  if (scenario === "userinput") return Response.json({ errors: [{ message: 'Duplicate label name - Label "example-label" already exists in team Example Team', extensions: { type: "userinput", userError: true } }] }, { status: 400 });
   if (scenario === "auth") return Response.json({ errors: [{ message: "Invalid API key", extensions: { code: "AUTHENTICATION_ERROR", type: "authentication error" } }] }, { status: 401 });
   if (scenario === "rate_limit") return Response.json({ errors: [{ message: "Rate limited", extensions: { code: "RATELIMITED" } }] }, { status: 429, headers: { "X-RateLimit-Requests-Remaining": "0" } });
   throw new Error("fixture transport failure");

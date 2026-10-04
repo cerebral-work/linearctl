@@ -130,7 +130,7 @@ describe("agent CLI contract", () => {
     } finally { rmSync(store, { recursive: true }); }
   });
   test("2: GraphQL user-input details reach both human and JSON CLI output", async () => {
-    const message = 'Duplicate label name - Label "annex-iii-2027" already exists in team Business Development';
+    const message = 'Duplicate label name - Label "example-label" already exists in team Example Team';
     const json = await cli(["whoami", "--json"], "", "userinput");
     expect(envelope(json, 2, "usage").message).toBe(message + " (userError=true)");
     expect(json.out).toBe("");

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { cliError, errorEnvelope, printCliError } from "../src/lib/errors.js";
 import { spyOn } from "bun:test";
 
-const diagnostic = 'Duplicate label name - Label "annex-iii-2027" already exists in team Business Development';
+const diagnostic = 'Duplicate label name - Label "example-label" already exists in team Example Team';
 describe("Linear user-input diagnostics", () => {
   test("raw GraphQL first message and userError survive in text and JSON", () => {
     const err = { errors: [

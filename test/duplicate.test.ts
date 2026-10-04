@@ -35,7 +35,7 @@ function stub(opts: { existing?: string[]; noState?: boolean; missing?: string; 
 }
 const writes = (s: ReturnType<typeof stub>) => s.calls.filter(c => c.query.startsWith("mutation"));
 
-describe("duplicate relations (CER-2344)", () => {
+describe("duplicate relations", () => {
   test("update creates source -> canonical duplicate relation and re-reads", async () => {
     const s = stub();
     const result = await markDuplicate(s.client, "SRC-1", "CAN-1");

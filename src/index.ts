@@ -393,7 +393,6 @@ program
   .description("Show one issue in full: metadata + description.")
   .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
   .option("--team <key...>", "scope the interactive picker to team key(s)")
-  .option("--duplicate-of <canonical>", "create the duplicate relation, then close in the team's duplicate-type state")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
 
