@@ -119,8 +119,13 @@ separate `searchIssues` root — needs SDK verification.
 ## Milestone membership
 
 Both `search` and `pull` accept `--milestone <ref>`, where the ref is a UUID
-or an exact, case-insensitive milestone name. Name matches can span projects;
-pair with `--project` to restrict them. The API applies the filter before
+or an exact, case-insensitive milestone name. Bare names search all projects the viewer can see and may be ambiguous:
+if the same name exists in several projects, members of **all** matching
+milestones are returned. Pair with `--project` to restrict the name. A name
+is resolved before fetching issues; an unknown name exits 4 (`not_found`),
+identifies the project scope, and suggests the three closest milestone names.
+A known milestone with no matching issues still returns `[]` and exit 0.
+UUIDs retain the direct-filter behavior (an unmatched UUID returns `[]`). The API applies the filter before
 pagination. `pull` keeps its existing ten-field output contract.
 
 ```sh
