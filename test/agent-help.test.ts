@@ -129,6 +129,17 @@ describe("agent CLI contract", () => {
       envelope(await cli(["handoff", "show", "absent", "--store", store, "--json"]), 4, "not_found");
     } finally { rmSync(store, { recursive: true }); }
   });
+  test("2: GraphQL user-input details reach both human and JSON CLI output", async () => {
+    const message = 'Duplicate label name - Label "annex-iii-2027" already exists in team Business Development';
+    const json = await cli(["whoami", "--json"], "", "userinput");
+    expect(envelope(json, 2, "usage").message).toBe(message + " (userError=true)");
+    expect(json.out).toBe("");
+    const human = await cli(["whoami"], "", "userinput");
+    expect(human.code).toBe(2);
+    expect(human.err).toContain(message);
+    expect(human.err).toContain("userError=true");
+    expect(human.err).not.toContain("Authorization");
+  });
   test("5: exhausted quota is machine-readable on stderr", async () => {
     envelope(await cli(["ratelimit", "--json"], "", "rate_limit"), 5, "rate_limit");
   });
