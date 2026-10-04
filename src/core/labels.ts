@@ -54,9 +54,30 @@ interface RawLabelNode {
 }
 
 /**
+ * Decide the next cursor, or null to stop. A paginated read must terminate on
+ * any response the server can produce, so this refuses two shapes that would
+ * otherwise spin forever: `hasNextPage` without an `endCursor`, and a cursor
+ * identical to the one just used (a server that never advances). Treating
+ * either as "done" would silently truncate, so the repeated cursor throws.
+ */
+function nextCursor(
+  pageInfo: { hasNextPage?: boolean; endCursor?: string | null } | null | undefined,
+  previous: string | null,
+  connection: string,
+): string | null {
+  if (!pageInfo?.hasNextPage) return null;
+  const cursor = pageInfo.endCursor ?? null;
+  if (!cursor) return null;
+  if (previous !== null && cursor === previous) {
+    throw new Error(`${connection} pagination did not advance (cursor repeated); aborting.`);
+  }
+  return cursor;
+}
+
+/**
  * List labels, optionally team-scoped. Follows cursors to the end — a
  * workspace with more labels than one page used to be silently cut off at the
- * first page, reporting a short list as if it were complete (CER-2349).
+ * first page, reporting a short list as if it were complete.
  *
  * Linear's API exposes no per-label issue count, so `counts: true` runs a
  * paginated team-issue sweep and aggregates client-side — opt-in because it
@@ -79,7 +100,6 @@ export async function listLabelsPaged(
   // page boundary (cursor instability), the same guard pullIssues uses.
   const byId = new Map<string, LabelInfo>();
   let after: string | null = null;
-  let truncated = false;
   type Vars = { filter?: unknown; first: number; after: string | null };
   do {
     const vars: Vars = { ...(filter ? { filter } : {}), first: 100, after };
@@ -96,21 +116,21 @@ export async function listLabelsPaged(
     );
     const page = res.data?.issueLabels;
     if (!page) throw new Error("issueLabels query returned no data");
-    for (const l of page.nodes) {
+    for (const l of page.nodes ?? []) {
       byId.set(l.id, { id: l.id, name: l.name, color: l.color ?? null, team: l.team?.key ?? null });
     }
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-    // More rows exist than asked for — stop early and say so.
-    if (limit !== undefined && byId.size >= limit && after) {
-      truncated = true;
-      break;
-    }
+    after = nextCursor(page.pageInfo, after, "issueLabels");
+    // Deliberately no early exit on `limit`: the API returns labels in its own
+    // order, so stopping at the first `limit` rows would cap an arbitrary
+    // subset and then sort only that. Fetch every page, sort, then truncate —
+    // the cap must be the prefix of the whole listing, not of one page.
   } while (after);
 
   const rows = [...byId.values()];
-  // Sort before truncating so the cap takes a stable prefix, not an arbitrary one.
+  // Sort the complete listing before truncating, so `limit` yields a stable
+  // prefix that does not depend on page boundaries or server ordering.
   rows.sort((a, b) => (a.team ?? "").localeCompare(b.team ?? "") || a.name.localeCompare(b.name));
-  const partial = truncated || (limit !== undefined && rows.length > limit);
+  const partial = limit !== undefined && rows.length > limit;
   const labels = limit !== undefined ? rows.slice(0, limit) : rows;
 
   if (opts.counts) {
@@ -176,10 +196,10 @@ async function labelUsage(
     );
     const page = res.data?.issues;
     if (!page) throw new Error("issues query returned no data");
-    for (const issue of page.nodes) {
-      for (const l of issue.labels.nodes) counts.set(l.id, (counts.get(l.id) ?? 0) + 1);
+    for (const issue of page.nodes ?? []) {
+      for (const l of issue.labels?.nodes ?? []) counts.set(l.id, (counts.get(l.id) ?? 0) + 1);
     }
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    after = nextCursor(page.pageInfo, after, "issues");
   } while (after);
   return counts;
 }

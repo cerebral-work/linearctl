@@ -3,7 +3,7 @@ import type { LinearClient } from "@linear/sdk";
 import { listLabels, listLabelsPaged } from "../src/core/labels.js";
 
 /**
- * `label list` must follow cursors to the end (CER-2349). It previously asked
+ * `label list` must follow cursors to the end. It previously asked
  * for a single page and reported a truncated list as if it were complete, so
  * these cover: multi-page accumulation, the stable sort across pages, the
  * `--limit` partial flag, and the boundary cases around it.
@@ -128,6 +128,66 @@ describe("listLabelsPaged — pagination", () => {
   });
 });
 
+/**
+ * A paginated read has to terminate on anything the server can return. These
+ * pin the loop-exit conditions: without them a malformed page either spins
+ * forever or surfaces a raw TypeError instead of a usable message.
+ */
+describe("listLabelsPaged — malformed responses terminate", () => {
+  test("hasNextPage with a null endCursor stops instead of looping", async () => {
+    const client = {
+      client: {
+        rawRequest: async () => ({
+          data: {
+            issueLabels: {
+              nodes: [label("1", "alpha")],
+              pageInfo: { hasNextPage: true, endCursor: null },
+            },
+          },
+        }),
+      },
+    } as unknown as LinearClient;
+    const { labels } = await listLabelsPaged(client);
+    expect(labels.map((l) => l.name)).toEqual(["alpha"]);
+  });
+
+  test("a server that repeats the same cursor aborts rather than spinning", async () => {
+    let calls = 0;
+    const client = {
+      client: {
+        rawRequest: async () => {
+          calls++;
+          if (calls > 50) throw new Error("spun out of control");
+          return {
+            data: {
+              issueLabels: {
+                nodes: [label("1", "alpha")],
+                pageInfo: { hasNextPage: true, endCursor: "same-cursor" },
+              },
+            },
+          };
+        },
+      },
+    } as unknown as LinearClient;
+    await expect(listLabelsPaged(client)).rejects.toThrow(/did not advance/);
+    expect(calls).toBeLessThan(5);
+  });
+
+  test("null nodes and a missing pageInfo degrade to an empty listing", async () => {
+    for (const page of [
+      { nodes: null, pageInfo: { hasNextPage: false, endCursor: null } },
+      { nodes: [] },
+    ]) {
+      const client = {
+        client: { rawRequest: async () => ({ data: { issueLabels: page } }) },
+      } as unknown as LinearClient;
+      const { labels, partial } = await listLabelsPaged(client);
+      expect(labels).toEqual([]);
+      expect(partial).toBe(false);
+    }
+  });
+});
+
 describe("listLabelsPaged — --limit", () => {
   test("marks the listing partial and truncates when more rows exist", async () => {
     const { client } = stubClient([
@@ -139,14 +199,16 @@ describe("listLabelsPaged — --limit", () => {
     expect(partial).toBe(true);
   });
 
-  test("stops fetching once the limit is met", async () => {
+  test("fetches every page under a limit, so the cap is not page-bound", async () => {
     const { client, calls } = stubClient([
       [label("1", "alpha"), label("2", "bravo")],
       [label("3", "charlie")],
       [label("4", "delta")],
     ]);
     await listLabelsPaged(client, { limit: 2 });
-    expect(calls).toHaveLength(1);
+    // Stopping at the first page that satisfies the limit would cap an
+    // arbitrary subset of the server's ordering.
+    expect(calls).toHaveLength(3);
   });
 
   test("a limit equal to the total is not partial", async () => {
@@ -163,13 +225,35 @@ describe("listLabelsPaged — --limit", () => {
     expect(partial).toBe(false);
   });
 
-  test("the truncated rows are the stable sorted prefix, not page order", async () => {
+  test("the truncated rows are the sorted prefix of ALL pages, not of page one", async () => {
+    // The whole answer lives on page 2: a loop that stops once it has `limit`
+    // rows returns yankee/zulu and never sees these.
     const { client } = stubClient([
-      [label("1", "zulu"), label("2", "alpha")],
-      [label("3", "bravo")],
+      [label("1", "yankee"), label("2", "zulu")],
+      [label("3", "alpha"), label("4", "bravo")],
     ]);
-    const { labels } = await listLabelsPaged(client, { limit: 1 });
-    expect(labels.map((l) => l.name)).toEqual(["alpha"]);
+    const { labels, partial } = await listLabelsPaged(client, { limit: 2 });
+    expect(labels.map((l) => l.name)).toEqual(["alpha", "bravo"]);
+    expect(partial).toBe(true);
+  });
+
+  test("the sorted prefix spans pages when the cap straddles a boundary", async () => {
+    const { client } = stubClient([
+      [label("1", "charlie"), label("2", "echo")],
+      [label("3", "alpha"), label("4", "delta")],
+    ]);
+    const { labels } = await listLabelsPaged(client, { limit: 3 });
+    expect(labels.map((l) => l.name)).toEqual(["alpha", "charlie", "delta"]);
+  });
+
+  test("team ordering wins over name when truncating across pages", async () => {
+    const { client } = stubClient([
+      [label("1", "aaa", "ZED")],
+      [label("2", "zzz"), label("3", "mmm", "ALPHA")],
+    ]);
+    // Workspace labels (team null) sort first, then ALPHA, then ZED.
+    const { labels } = await listLabelsPaged(client, { limit: 2 });
+    expect(labels.map((l) => `${l.team ?? "-"}/${l.name}`)).toEqual(["-/zzz", "ALPHA/mmm"]);
   });
 
   test("rejects a non-positive or non-integer limit as a usage error", async () => {
