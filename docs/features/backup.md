@@ -58,11 +58,16 @@ progress-history arrays.
    parent, issue references). On a full dump a dangling id fails; on a partial
    dump it is reported as a note.
 3. Compare live per-entity counts to the manifest (full dumps only).
-4. Compare five random issues (title, description, priority, state) to the
-   live API.
+4. Spot-check five random issues against the live API. Identifier, creation
+   time and team must match. Title, description, priority and state may differ
+   only if the issue was edited after the dump (live `updatedAt` is newer);
+   that is noted, not failed. A difference with no newer `updatedAt` fails.
 
 `--offline` runs steps 1 and 2 only. `--tolerance` is the allowed live count
 drift per entity as a fraction (default `0.02`).
+
+Live-drift semantics: step 3 is the only place `--tolerance` applies. Edits made
+after the dump are expected on a live workspace and never fail the sample.
 
 Exit codes: `0` ok · `1` hash, count or reference mismatch (or runtime error) ·
 `2` live drift beyond tolerance, or a sampled issue differs · `3` usage.
@@ -77,6 +82,14 @@ ids as dangling and no others.
 ## Behavior
 
 - Read-only: no mutation is ever sent.
+- `manifest.requests` is the total GraphQL request count for the run (resumed
+  segments included), so the rate-limit budget used is visible.
+- History is stored as raw history nodes (ids, as returned), not rendered
+  through the timeline normaliser. This is deliberate: a backup keeps the
+  source records; rendering is a read-time concern. Checkpoints are written
+  every 50 issues, and a finished history pass is reused by `--resume`.
+- The unlisted-team check (below) is skipped under `--limit` and `--since`,
+  where a truncated `teams` page would make it report false entries.
 - Auth is `LINEAR_API_KEY` from the environment, as for every command. The key
   is never written to any output file.
 - Transient errors (rate limit, 5xx, transport) retry with the shared backoff.
@@ -84,6 +97,32 @@ ids as dangling and no others.
   are de-duplicated by id.
 - A full base dump of a workspace with about 5,000 issues takes roughly 270
   requests and a couple of minutes. History adds one request per issue.
+
+## API surface
+
+- Introspection: `__type(name: "Query") { fields { name } }`, once per run.
+- Reads: one paginated query per entity (`first: 100`, `includeArchived: true`),
+  and `organization` and `templates` as single reads. `--since` and `--team`
+  add a `filter:` argument where the connection supports it.
+- History: `issue(id) { history(first: 100, includeArchived: true) }`, one
+  request per issue plus pages.
+- Verify: `first: 250` id-only pages for live counts, and one `issue(id)` read
+  per sampled issue.
+- No mutations.
+
+## Alternatives considered
+
+- **Reuse `pull`.** Rejected: it is issues-only, active states by default, and
+  its output shape is a contract for another consumer.
+- **One JSON file per run.** Rejected: JSON Lines streams, diffs line by line,
+  and lets verify hash and count each entity independently.
+- **SDK model objects instead of raw GraphQL.** Rejected: the SDK resolves
+  relations lazily, one request per relation; flat selections cost a few hundred
+  requests for the whole workspace.
+- **Render history with the timeline normaliser.** Rejected for the backup
+  itself, see Behavior.
+- **Fail verify on any live difference.** Rejected: a live workspace changes
+  while you verify.
 
 ## Non-goals
 
