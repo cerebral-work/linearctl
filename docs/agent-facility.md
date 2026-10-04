@@ -79,9 +79,10 @@ linearctl label list --limit 5 --json | jq -e 'any(.[]; .partial == true)' > /de
   && echo 'truncated; raise or drop --limit' >&2
 ```
 
-`label list` implements this contract. Other listings predate it and are being
-brought into line; `reorg census --limit` deliberately caps what is *fetched*
-(a smoke-test path, documented in its `--help`) and so does not follow rule 3.
+`label list` and `project list` implement this contract. `reorg census
+--limit` deliberately caps what is *fetched* (a smoke-test path, documented
+in its `--help`), so its cap is page-bound rather than a sorted prefix; it
+still marks the result partial and still rejects a bad limit.
 
 Use `set -euo pipefail` in Bash so pipelines propagate failures. Send comment
 bodies through `--body -`, issue descriptions through `--desc -`, and plans
@@ -317,12 +318,12 @@ not overlapping), which is correct for a single-token actor.
   Durable state is in Linear (comments/labels/states) and engram (Track 6).
 - No TUI surface (Track 2). The role catalog is not a UI surface.
 
-## 11. Listing compliance audit (read-only)
+## 11. Listing compliance audit
 
 Measured against the §"Listing contract" rules on 2026-10-04 (workspace: 269
-labels, 93 projects incl. archived, 15 teams). Read-only: nothing in this
-audit changes behaviour, and the non-compliant entries are recorded rather
-than fixed here.
+labels, 93 projects incl. archived, 15 teams). The audit was read-only; the
+defects it found were fixed separately, and the table below reflects the
+state after those fixes.
 
 | Listing | Paginates fully | De-dupes | `--limit` partial | Verdict |
 |---|---|---|---|---|
@@ -331,26 +332,32 @@ than fixed here.
 | `resolveLabelIds` (`core/issues.ts`) | yes, `fetchNext` drain | n/a (resolver) | n/a | **complies** |
 | `resolveLabelIdMap` (`core/bulk.ts`) | yes, `fetchNext` drain | n/a (resolver) | n/a | **complies** |
 | `listTeamKeys` (`core/teams.ts`) | yes, `fetchNext` drain | yes, `new Set` | n/a | **complies** |
-| `reorg census` `paged()` (`core/reorg.ts`) | yes when unlimited | no | **no marker**; `--limit` stops fetching | **deviates, by design** — see below |
-| `project list` (`core/projects.ts`) | yes, `fetchNext` drain | **no** | no `--limit` | **does not comply** — returns duplicates |
-| `listMilestones` (`core/milestones.ts`) | yes, `fetchNext` drain | **no** | n/a | **latent** — same shape, single page today |
-| `roadmap` (`core/roadmap.ts`) | yes, `fetchNext` drain | **no** | n/a | **latent** — same shape, single page today |
+| `reorg census` `paged()` (`core/reorg.ts`) | teams/issues/projects only; labels and initiatives always in full | no | marks `partial` + stderr, exit 2 on bad input; cap applied while fetching | **deviates, by design** — see below |
+| `project list` (`core/projects.ts`) | yes, drained once | yes, by id | yes, rows + stderr, exit 2 on bad input | **complies** |
+| `listMilestones` (`core/milestones.ts`) | yes, drained once | n/a (no accumulate) | n/a | **complies** |
+| `roadmap` (`core/roadmap.ts`) | yes, drained once | n/a (no accumulate) | n/a | **complies** |
 
-**`project list` returns each project twice up to the page size.** The SDK's
-`fetchNext()` *appends* to `connection.nodes` (`_appendNodes`), but the caller
-also pushes `connection.nodes` into a separate array on every iteration, so
-page one is counted again for each later page. Live: `project list --json`
-returns **141 rows for 91 distinct projects** — 50 duplicates, exactly the
-first page re-added. The same accumulate-into-an-array shape appears in
-`listMilestones` and `roadmap`; both read a single page in this workspace, so
-they are latent rather than failing. `listTeamKeys` has the shape too but
-de-duplicates through a `Set`, which masks it. The correct form is to drain
-the connection and then read `connection.nodes` once.
+**`project list` used to return each project twice up to the page size.** The
+SDK's `fetchNext()` *appends* to `connection.nodes` (`_appendNodes`), but the
+caller also pushed `connection.nodes` into a separate array on every
+iteration, so page one was counted again for each later page: `project list
+--json` returned **141 rows for 91 distinct projects**, exactly the first page
+re-added. The same accumulate-into-an-array shape was in `listMilestones` and
+`roadmap` (single page in this workspace, so latent) and in `listTeamKeys`,
+where a `Set` masked it. Worst of all, `countIssues` summed `nodes.length` per
+iteration and inflated quadratically — **2500 reported for 1000 issues** —
+silently corrupting milestone done/total/percent. All of these now go through
+one `drainConnection` helper: drain the connection, then read `nodes` once.
 
 **`reorg census --limit` is a deliberate deviation.** Its `--help` describes a
 smoke-test cap on what is *fetched*, and downstream counts are explicitly
-lower bounds. It therefore does not mark partial. Two gaps are still worth
-noting against rule 4: `--limit 0` and `--limit -5` are silently ignored
-(the guard is `limit &&`, so `0` is falsy) and exit 0 having fetched
-everything, and a non-numeric `--limit abc` becomes `NaN` and does the same.
-Under the contract those are usage errors.
+lower bounds, so the cap is applied **while paging** rather than after a full
+scan — draining first would defeat the flag (measured: 28.6s versus 14.0s on
+an unfiltered census). Page-bound is correct here. The cap is also *partial*
+in a second sense: it bounds **teams, issues and projects only**, while
+**labels and initiatives are always fetched in full** (`core/reorg.ts`, the
+`issueLabels` and `initiatives` calls pass no limit), which is why a capped
+census is cheaper but not cheap. A capped census now sets `partial: true`,
+notes it on stderr, and `reorg plan` preserves the flag when reading a census
+from disk. A `0`, negative or non-numeric `--limit` is a usage error (exit 2)
+rather than a silently unbounded scan.
