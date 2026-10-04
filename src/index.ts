@@ -659,6 +659,7 @@ reorgCmd
   .description("Generate a reorg plan JSONL from a rules file + a census file")
   .requiredOption("--rules <file>", "rules JSON (lives outside the repo)")
   .requiredOption("--census <file>", "census JSON from `reorg census --out`")
+  .option("--since-census <minutes>", "refuse to plan against a census older than N minutes")
   .option("--out <file>", "plan output path (default reorg-plan.jsonl)")
   .action((opts) => reorgPlan(opts));
 reorgCmd

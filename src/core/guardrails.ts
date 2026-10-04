@@ -39,11 +39,14 @@ const GATED_KINDS: ReadonlySet<string> = new Set([
   "set-project-lead",
   "set-project-target",
   "add-project-team",
+  "remove-project-team",
   "move-project-initiative",
+  "set-initiative-owner",
   "archive-issue",
   "archive-project",
   "archive-initiative",
   "move-issue-team",
+  "create-project-status",
   "delete-team",
 ]);
 

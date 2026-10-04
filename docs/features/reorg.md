@@ -81,19 +81,48 @@ bounds) — fine for smoke, never for a plan's census.
 ## Plan file
 
 `reorg-plan.jsonl`: header line `{"_meta": {generated, censusHash,
-workspaceId, rulesHash}}`, then one op per line:
+workspaceId, rulesHash, warnings[]}}`, then one op per line:
 
 ```json
 {"seq":12,"phase":1,"op":"relabel","target":{"type":"issue","id":"…","identifier":"EX-12"},"from":{"labelIds":["l-team"]},"to":{"add":["l-ws"],"remove":["l-team"]},"evidence":"rule ws-bug-label","reversible":true,"batchKey":"ws-bug"}
 ```
 
 `from` is captured at census time and is the executor's drift anchor.
-`reversible:false` requires `phase: 6` + `approval`. The 16 ops:
-`create-workspace-label`, `relabel`, `retire-or-delete-label`, `set-state`,
-`enable-triage`, `archive-state`, `set-project-status`, `set-project-lead`,
-`set-project-target`, `add-project-team`, `move-project-initiative`,
+The 19 ops: `create-workspace-label`, `relabel`, `retire-or-delete-label`,
+`set-state`, `enable-triage`, `archive-state`, `set-project-status`,
+`set-project-lead`, `set-project-target`, `add-project-team`,
+`remove-project-team`, `move-project-initiative`, `set-initiative-owner`,
 `archive-issue`, `archive-project`, `archive-initiative`, `move-issue-team`,
-`delete-team`.
+`create-project-status`, `delete-team`.
+
+Notes per kind:
+- `archive-state` is **never** reversible (Linear has no unarchive): the
+  planner coerces it to `reversible:false` and requires an approval id;
+  `reversible:false` is allowed in phase 2 (states) or 6 (deletes) only.
+- `remove-project-team` computes the post-membership from a LIVE read at apply
+  time — a team added after the census is never dropped by a stale plan.
+- `create-project-status` rides `projectStatusCreate`; the inverse is archive
+  in the UI (no inverse op).
+
+## Rules and selectors
+
+`reorg plan --rules <file>` takes declarative rules. `match.entity` is one of
+`team`, `issue`, `workspace-label`, `team-label`, `team-state`, `project`,
+`initiative`, `none` (creation ops). Selectors:
+
+- **issues**: `identifier`, `teamKey`, `stateId`, `projectId`, `archived`,
+  plus `label` (name — any census label sharing it counts) or `labelId`, in
+  combination. A rule's `batchKey` propagates to every op it expands into.
+- **projects / initiatives**: select by `id` preferred; a `name` match hitting
+  more than one entity is REFUSED (duplicate names exist), never fanned out.
+- **label refs across ops**: `"name:<label-name>"` inside `to.add`,
+  `to.remove`, or `to.reapplyLabelIds` resolves at apply time — the journal's
+  earlier `create-workspace-label` first, then a live workspace-scoped lookup.
+  Zero hits or several = refuse.
+- **warnings**: the planner warns (stderr + `_meta.warnings`) when a rule
+  references a team the same plan deletes, or a census project still lists a
+  to-be-deleted team.
+- **`--since-census <minutes>`** refuses to plan against a stale census.
 
 ## Rollback
 

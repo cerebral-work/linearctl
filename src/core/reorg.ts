@@ -53,11 +53,14 @@ export const REORG_OPS = [
   "set-project-lead",
   "set-project-target",
   "add-project-team",
+  "remove-project-team",
   "move-project-initiative",
+  "set-initiative-owner",
   "archive-issue",
   "archive-project",
   "archive-initiative",
   "move-issue-team",
+  "create-project-status",
   "delete-team",
 ] as const;
 export type ReorgOpKind = (typeof REORG_OPS)[number];
@@ -107,6 +110,8 @@ export interface ReorgPlanMeta {
 export interface ReorgPlan {
   meta: ReorgPlanMeta;
   ops: ReorgOp[];
+  /** Non-fatal planner warnings (e.g. a to-be-deleted team still referenced). */
+  warnings: string[];
 }
 
 export function sha256File(path: string): string {
@@ -141,8 +146,13 @@ export function parsePlanFile(path: string): ReorgPlan {
     if (typeof o.to !== "object" || o.to === null) throw new Error(`${where}: to required`);
     if (typeof o.evidence !== "string") throw new Error(`${where}: evidence required`);
     if (typeof o.reversible !== "boolean") throw new Error(`${where}: reversible required`);
+    if (o.op === "archive-state" && o.reversible !== false)
+      throw new Error(`${where}: archive-state is never reversible (Linear has no unarchive) — reversible:false + approval required`);
     if (o.reversible === false) {
-      if (o.phase !== 6) throw new Error(`${where}: reversible:false ops are phase-6 only`);
+      // archive-state runs in phase 2 (after its issues are moved out) with a
+      // deck approval; every other irreversible form is phase-6 only.
+      const allowedPhase = o.op === "archive-state" ? o.phase === 2 || o.phase === 6 : o.phase === 6;
+      if (!allowedPhase) throw new Error(`${where}: reversible:false ${o.op} is out of its allowed phase`);
       if (typeof o.approval !== "string" || !o.approval)
         throw new Error(`${where}: reversible:false needs an approval id`);
       if (!(o.op in IRREVERSIBLE_CAPABLE))
@@ -155,7 +165,7 @@ export function parsePlanFile(path: string): ReorgPlan {
     if (seqs.has(o.seq)) throw new Error(`duplicate seq ${o.seq}`);
     seqs.add(o.seq);
   }
-  return { meta, ops: ops.sort((a, b) => a.seq - b.seq) };
+  return { meta, ops: ops.sort((a, b) => a.seq - b.seq), warnings: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +453,7 @@ const PROJECT_STATE_Q = /* GraphQL */ `
 
 const INITIATIVE_STATE_Q = /* GraphQL */ `
   query ReorgInitiativeState($id: String!) {
-    initiative(id: $id) { id name archivedAt }
+    initiative(id: $id) { id name archivedAt owner { id } }
   }
 `;
 
@@ -461,6 +471,61 @@ const FIND_WS_LABEL_Q = /* GraphQL */ `
     }
   }
 `;
+
+/**
+ * Label references by NAME across ops in one plan: `"name:<n>"` entries in
+ * to.add / to.remove / to.reapplyLabelIds resolve at apply time — first from
+ * the journal (a landed create-workspace-label's id), then from a live
+ * workspace-scoped by-name lookup. Zero hits or several = refuse (no guesses).
+ */
+const LABEL_REF_PREFIX = "name:";
+
+async function resolveLabelRef(
+  ctx: OpCtx,
+  journal: JournalRecord[],
+  name: string,
+): Promise<string> {
+  for (const r of journal) {
+    if (
+      r.ok && r.op === "create-workspace-label" &&
+      r.original?.to.name === name && typeof r.original.to.labelId === "string"
+    ) {
+      return r.original.to.labelId;
+    }
+  }
+  const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+    ctx.client, FIND_WS_LABEL_Q, { name }, ctx.pace,
+  );
+  const nodes = d.issueLabels.nodes;
+  if (nodes.length === 0)
+    throw new Error(`labelRef "name:${name}" resolves to nothing (no workspace label, none created earlier in the plan)`);
+  if (nodes.length > 1)
+    throw new Error(`labelRef "name:${name}" is ambiguous (${nodes.length} workspace labels share the name)`);
+  return nodes[0].id;
+}
+
+/** Rewrite any "name:<n>" refs in an op's label-id arrays to real ids. */
+async function resolveOpLabelRefs(
+  ctx: OpCtx,
+  journal: JournalRecord[],
+  op: ReorgOp,
+): Promise<ReorgOp> {
+  const resolveArr = async (v: unknown): Promise<unknown> => {
+    if (!Array.isArray(v)) return v;
+    const out: string[] = [];
+    for (const e of v as string[]) {
+      out.push(typeof e === "string" && e.startsWith(LABEL_REF_PREFIX)
+        ? await resolveLabelRef(ctx, journal, e.slice(LABEL_REF_PREFIX.length))
+        : e);
+    }
+    return out;
+  };
+  const to = { ...op.to };
+  for (const key of ["add", "remove", "reapplyLabelIds"] as const) {
+    if (key in to) to[key] = await resolveArr(to[key]);
+  }
+  return { ...op, to };
+}
 
 async function readIssue(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
   const d = await reorgRaw<{ issue: ReorgIssueNode | null }>(
@@ -513,11 +578,11 @@ async function readProject(ctx: OpCtx, id: string): Promise<Record<string, unkno
 }
 
 async function readInitiative(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
-  const d = await reorgRaw<{ initiative: ReorgInitiativeNode | null }>(
+  const d = await reorgRaw<{ initiative: (ReorgInitiativeNode & { owner?: { id: string } | null }) | null }>(
     ctx.client, INITIATIVE_STATE_Q, { id }, ctx.pace,
   );
   if (!d.initiative) throw new Error(`initiative ${id} not found`);
-  return { archived: d.initiative.archivedAt != null };
+  return { archived: d.initiative.archivedAt != null, ownerId: d.initiative.owner?.id ?? null };
 }
 
 async function readTeam(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
@@ -592,6 +657,10 @@ const M = {
     initiativeToProjectCreate(input: $input) { success } }`,
   batchUpdate: /* GraphQL */ `mutation ReorgBatchUpdate($ids: [UUID!]!, $input: IssueUpdateInput!) {
     issueBatchUpdate(ids: $ids, input: $input) { success } }`,
+  projectStatusCreate: /* GraphQL */ `mutation ReorgProjectStatusCreate($input: ProjectStatusCreateInput!) {
+    projectStatusCreate(input: $input) { success } }`,
+  initiativeUpdate: /* GraphQL */ `mutation ReorgInitiativeUpdate($id: String!, $input: InitiativeUpdateInput!) {
+    initiativeUpdate(id: $id, input: $input) { success } }`,
 };
 
 /** One issue in a state? (archive-state precondition: only empty states.) */
@@ -971,6 +1040,82 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     },
   },
 
+  "remove-project-team": {
+    // to.teamIds is NEVER trusted — the removal membership is computed from a
+    // LIVE read at apply time (a blind replace could drop a team added after
+    // the census).
+    compareKeys: ["teamIds"],
+    readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({
+      teamIds: sortedStrings(op.from.teamIds).filter((t) => t !== op.to.teamId),
+    }),
+    async apply(ctx, op) {
+      const live = await readProject(ctx, op.target.id);
+      const next = sortedStrings(live.teamIds).filter((t) => t !== op.to.teamId);
+      await mutate(ctx, "projectUpdate", M.projectUpdate, {
+        id: op.target.id,
+        input: { teamIds: next },
+      });
+    },
+    inverse(op) {
+      return {
+        ...op,
+        op: "add-project-team",
+        from: { teamIds: sortedStrings(op.from.teamIds).filter((t) => t !== op.to.teamId) },
+        to: { teamId: op.to.teamId, teamIds: sortedStrings(op.from.teamIds) },
+        evidence: `rollback of seq ${op.seq}`,
+      };
+    },
+  },
+
+  "set-initiative-owner": {
+    compareKeys: ["ownerId"],
+    readState: (ctx, op) => readInitiative(ctx, op.target.id),
+    expectedPost: (op) => ({ ownerId: op.to.ownerId ?? null }),
+    async apply(ctx, op) {
+      await mutate(ctx, "initiativeUpdate", M.initiativeUpdate, {
+        id: op.target.id,
+        input: { ownerId: op.to.ownerId ?? null },
+      });
+    },
+    inverse(op) {
+      return { ...op, from: op.to, to: { ownerId: op.from.ownerId ?? null }, evidence: `rollback of seq ${op.seq}` };
+    },
+  },
+
+  "create-project-status": {
+    // API supports projectStatusCreate (SDK createProjectStatus). Additive;
+    // rollback is archiving the status in the UI (no inverse op here).
+    compareKeys: ["statusId"],
+    async readState(ctx, op) {
+      const d = await reorgRaw<{ projectStatuses: { nodes: { id: string }[] } }>(
+        ctx.client,
+        `query ReorgFindProjectStatus($name: String!) {
+          projectStatuses(filter: { name: { eq: $name } }) { nodes { id } }
+        }`,
+        { name: op.to.name },
+        ctx.pace,
+      );
+      return { statusId: d.projectStatuses.nodes[0]?.id ?? null };
+    },
+    expectedPost: (op) => ({ statusId: op.to.statusId ?? null }),
+    async apply(ctx, op) {
+      await mutate(ctx, "projectStatusCreate", M.projectStatusCreate, {
+        input: {
+          name: op.to.name,
+          color: op.to.color ?? "#999999",
+          type: op.to.type,
+          ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
+        },
+      });
+      const live = await OP_REGISTRY["create-project-status"].readState(ctx, op);
+      if (typeof live.statusId !== "string")
+        throw new Error(`created project status "${String(op.to.name)}" not found on re-read`);
+      op.to.statusId = live.statusId;
+    },
+    inverse: () => null,
+  },
+
   "delete-team": {
     compareKeys: [],
     readState: (ctx, op) => readTeam(ctx, op.target.id),
@@ -1157,6 +1302,8 @@ async function executeOne(
   journal: JournalRecord[],
   journalPath: string,
 ): Promise<void> {
+  // 0. resolve name: label refs (journal-created ids first, then live lookup)
+  op = await resolveOpLabelRefs(ctx, journal, op);
   const def = OP_REGISTRY[op.op];
 
   // 1. live pre-read + drift check (scoped to the op's read coverage)
@@ -1382,9 +1529,12 @@ async function runBatch(
     if (JSON.stringify(o.to) !== shape)
       throw new Error(`batchKey ${first.batchKey}: non-identical input at seq ${o.seq}`);
 
-  // drift-check every member before the single write
+  // drift-check every member before the single write (refs resolved first)
   const befores = new Map<number, Record<string, unknown>>();
-  for (const op of group) {
+  const resolvedGroup: ReorgOp[] = [];
+  for (const raw of group) {
+    const op = await resolveOpLabelRefs(ctx, journal, raw);
+    resolvedGroup.push(op);
     const def = OP_REGISTRY[op.op];
     const live = await def.readState(ctx, op);
     const drift = compareState(op.from, live, def.compareKeys);
@@ -1395,11 +1545,13 @@ async function runBatch(
       });
     befores.set(op.seq, live);
   }
+  group = resolvedGroup;
 
+  const resolvedFirst = resolvedGroup[0];
   const input: Record<string, unknown> =
-    first.op === "set-state"
-      ? { stateId: first.to.stateId }
-      : { addedLabelIds: first.to.add ?? [], removedLabelIds: first.to.remove ?? [] };
+    resolvedFirst.op === "set-state"
+      ? { stateId: resolvedFirst.to.stateId }
+      : { addedLabelIds: resolvedFirst.to.add ?? [], removedLabelIds: resolvedFirst.to.remove ?? [] };
 
   await reorgRaw(
     ctx.client,
@@ -1564,26 +1716,29 @@ export async function rollbackPhase(
       skipped.push(`seq ${String(rec.seq)} [${orig.op}]: no inverse op (manual restore required)`);
       continue;
     }
+    // Dispatch on the INVERSE op's kind — an inverse may be a different op
+    // (remove-project-team rolls back via add-project-team).
+    const invDef = OP_REGISTRY[inv.op];
     // Inverse ops bypass the drift check — the point is the current state
     // differs from the original `from`. Write, then verify the inverse's own
     // expected end state.
-    await def.apply(ctx, inv);
-    const expected = def.expectedPost(inv);
+    await invDef.apply(ctx, inv);
+    const expected = invDef.expectedPost(inv);
     if (expected === null) {
       try {
-        await def.readState(ctx, inv);
+        await invDef.readState(ctx, inv);
         throw new ReorgMismatch(inv.seq, { expected: "absent", actual: "still present" });
       } catch (err) {
         if (err instanceof ReorgMismatch) throw err;
         // read failed = absent, as required
       }
     } else {
-      const live = await def.readState(ctx, inv);
-      const bad = compareState(expected, live, def.compareKeys);
+      const live = await invDef.readState(ctx, inv);
+      const bad = compareState(expected, live, invDef.compareKeys);
       if (bad.length)
         throw new ReorgMismatch(inv.seq, {
-          expected: pick(expected, def.compareKeys),
-          actual: pick(live, def.compareKeys),
+          expected: pick(expected, invDef.compareKeys),
+          actual: pick(live, invDef.compareKeys),
         });
     }
     rolledBack++;
@@ -1855,12 +2010,18 @@ export function planFromRules(
   meta: ReorgPlanMeta,
 ): ReorgPlan {
   const ops: ReorgOp[] = [];
+  const warnings: string[] = [];
   let seq = 0;
   for (const rule of rules) {
     const targets = selectTargets(rule, censusData);
     if (targets.length === 0)
       throw new Error(
         `rule matched nothing: ${rule.op} where ${JSON.stringify(rule.match.where)} (${rule.evidence})`,
+      );
+    // archive-state is never reversible — coerce and require approval
+    if (rule.op === "archive-state" && !rule.approval)
+      throw new Error(
+        `archive-state rule needs an approval id (no unarchive exists): ${rule.evidence}`,
       );
     for (const t of targets) {
       seq++;
@@ -1877,13 +2038,40 @@ export function planFromRules(
         from: t.from,
         to,
         evidence: rule.evidence,
-        reversible: rule.reversible ?? true,
+        reversible: rule.op === "archive-state" ? false : (rule.reversible ?? true),
         ...(rule.approval ? { approval: rule.approval } : {}),
         ...(rule.batchKey ? { batchKey: rule.batchKey } : {}),
       });
     }
   }
-  return { meta, ops };
+
+  // Warnings: a team scheduled for deletion must not be referenced by other
+  // rules nor still listed on census projects (the phase-5c dependency).
+  const deletedKeys = new Set(
+    rules.filter((r) => r.op === "delete-team").map((r) => r.match.where.key as string),
+  );
+  if (deletedKeys.size > 0) {
+    const deletedIds = new Set(
+      censusData.teams.filter((t) => deletedKeys.has(t.key)).map((t) => t.id),
+    );
+    for (const r of rules) {
+      if (
+        (r.op === "add-project-team" || r.op === "remove-project-team") &&
+        typeof r.to.teamId === "string" && deletedIds.has(r.to.teamId)
+      )
+        warnings.push(
+          `rule "${r.evidence}" references team ${r.to.teamId} which this plan deletes — order or drop it`,
+        );
+    }
+    for (const p of censusData.projects) {
+      const stillOn = (p.teams?.nodes ?? []).filter((t) => deletedIds.has(t.id));
+      if (stillOn.length > 0)
+        warnings.push(
+          `project "${p.name}" still lists to-be-deleted team(s) ${stillOn.map((t) => t.key).join(", ")} (phase 5 must remove them)`,
+        );
+    }
+  }
+  return { meta, ops, warnings };
 }
 
 function selectTargets(
@@ -1918,12 +2106,29 @@ function selectTargets(
       return out;
     }
     case "issue": {
+      // label/labelId are handled here, not by the generic hit
+      const { label: _label, labelId: _labelId, ...genericWhere } = where;
+      const genericHit = (obj: Record<string, unknown>) =>
+        Object.entries(genericWhere).every(([k, v]) => JSON.stringify(obj[k]) === JSON.stringify(v));
+      const labelName = typeof where.label === "string" ? where.label : null;
+      const labelId = typeof where.labelId === "string" ? where.labelId : null;
+      const nameIds: Set<string> | null = !labelName
+        ? null
+        : new Set(
+            [...censusData.workspaceLabels, ...censusData.teamLabels]
+              .filter((l) => l.name === labelName)
+              .map((l) => l.id),
+          );
+      if (nameIds !== null && nameIds.size === 0)
+        throw new Error(`issue selector: no census label named "${labelName}"`);
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const i of censusData.issues) {
-        if (!hit({
+        if (!genericHit({
           identifier: i.identifier, teamKey: i.teamKey, stateId: i.stateId,
           projectId: i.projectId, archived: i.archived,
         })) continue;
+        if (labelId && !i.labelIds.includes(labelId)) continue;
+        if (nameIds && !i.labelIds.some((l) => nameIds.has(l))) continue;
         out.push({
           target: { type: "issue", id: i.id, identifier: i.identifier },
           from: {
@@ -1978,7 +2183,7 @@ function selectTargets(
     case "project": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const p of censusData.projects) {
-        if (!hit({ name: p.name, trashed: p.trashed === true })) continue;
+        if (!hit({ id: p.id, name: p.name, trashed: p.trashed === true })) continue;
         out.push({
           target: { type: "project", id: p.id, identifier: p.name },
           from: {
@@ -1990,17 +2195,27 @@ function selectTargets(
           },
         });
       }
+      // Duplicate project names exist in the wild — a name selector hitting
+      // several is refused, not fanned out (select by id instead).
+      if (out.length > 1 && typeof where.name === "string" && !where.id)
+        throw new Error(
+          `project selector: name "${where.name}" matches ${out.length} projects — select by id`,
+        );
       return out;
     }
     case "initiative": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const it of censusData.initiatives) {
-        if (!hit({ name: it.name, archived: it.archivedAt != null })) continue;
+        if (!hit({ id: it.id, name: it.name, archived: it.archivedAt != null })) continue;
         out.push({
           target: { type: "initiative", id: it.id, identifier: it.name },
           from: { archived: it.archivedAt != null },
         });
       }
+      if (out.length > 1 && typeof where.name === "string" && !where.id)
+        throw new Error(
+          `initiative selector: name "${where.name}" matches ${out.length} initiatives — select by id`,
+        );
       return out;
     }
     default:

@@ -65,6 +65,8 @@ export interface ReorgPlanOptions {
   rules: string;
   census: string;
   out?: string;
+  /** Refuse to plan against a census older than this many minutes. */
+  sinceCensus?: string;
 }
 
 export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
@@ -85,6 +87,16 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
     generatedAt: typeof cand.generatedAt === "string" ? cand.generatedAt : "unknown",
     rateBudget: cand.rateBudget ?? { limit: 0, remaining: 0 },
   };
+  if (opts.sinceCensus !== undefined) {
+    const maxAgeMin = Number.parseInt(opts.sinceCensus, 10);
+    if (!Number.isFinite(maxAgeMin) || maxAgeMin <= 0)
+      throw new Error("--since-census takes minutes (positive integer)");
+    const ageMs = Date.now() - Date.parse(censusData.generatedAt);
+    if (!Number.isFinite(ageMs) || ageMs > maxAgeMin * 60_000)
+      throw new Error(
+        `census is stale (generated ${censusData.generatedAt}); re-run reorg census — planning against a census older than ${maxAgeMin}m is refused`,
+      );
+  }
   const rules = JSON.parse(readFileSync(opts.rules, "utf8")) as ReorgRule[];
   if (!Array.isArray(rules)) throw new Error(`${opts.rules} must be a JSON array of rules`);
 
@@ -97,11 +109,12 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
   const plan = planFromRules(rules, censusData, meta);
 
   const lines = [
-    JSON.stringify({ _meta: plan.meta }),
+    JSON.stringify({ _meta: { ...plan.meta, warnings: plan.warnings } }),
     ...plan.ops.map((o) => JSON.stringify(o)),
   ].join("\n") + "\n";
   const out = opts.out ?? "reorg-plan.jsonl";
   writeFileSync(out, lines);
+  for (const w of plan.warnings) process.stderr.write(`warning: ${w}\n`);
   process.stdout.write(
     `plan: ${plan.ops.length} op(s) across phases ${[...new Set(plan.ops.map((o) => o.phase))].sort().join(", ")} → ${out}\n` +
       `review the file, then: linearctl reorg apply ${out} --phase N --apply --backup-record <backup.verified.json>\n`,
