@@ -20,6 +20,8 @@ export function cliError(err: unknown): CliError {
     errors?: Array<{ extensions?: { type?: string; code?: string } }> };
   const types = [e.type, e.code, ...(e.errors ?? []).flatMap(g => [g.extensions?.type, g.extensions?.code])].join(" ");
   const message = err instanceof Error ? err.message : String(err);
+  if (/Missing duplicate relation|Issues can only be moved to a duplicate state when a duplicate issue relation exists/i.test(message))
+    return usageError("Moving to a duplicate state requires a duplicate relation.", "Use linearctl close <id> --duplicate-of <canonical>, or linearctl update <id> --duplicate-of <canonical> to create the relation first.");
   if (e.status === 429 || /ratelimit|rate_limit/i.test(types) || /ratelimited|rate limit|too many requests/i.test(message))
     return new CliError("rate_limit", "Linear API rate limit exhausted.", "Wait for quota to reset; check linearctl ratelimit --json.");
   if (e.status === 401 || /authentication|unauthenticated|invalid_api_key/i.test(types))

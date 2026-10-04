@@ -13,3 +13,7 @@ fi
 linearctl ratelimit --json
 linearctl close "$ISSUE" --json
 linearctl show "$ISSUE" --json
+
+# To close as a duplicate instead of completed, use this alternative command:
+# linearctl close "$ISSUE" --duplicate-of "${CANONICAL:?Set canonical issue}" --json
+# It creates/verifies the relation first, then verifies the team's duplicate-type state.

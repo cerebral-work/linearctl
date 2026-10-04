@@ -1,4 +1,5 @@
 import { assertBatchSucceeded, notFoundError, usageError } from "../lib/errors.js";
+import { markDuplicate } from "../core/duplicate.js";
 import { makeClient } from "../client.js";
 import { updateIssue, closeIssue, addRelations } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
@@ -29,6 +30,7 @@ export interface UpdateOptions {
   parent?: string;
   blockedBy?: string[];
   relatedTo?: string[];
+  duplicateOf?: string;
   stdin?: boolean;
   apply?: boolean;
   json?: boolean;
@@ -41,6 +43,7 @@ export interface UpdateOptions {
  * mutations. Delegates to `core.updateIssue` / `core.bulkUpdate`. docs/spec.md §6.8.
  */
 export async function update(id: string | undefined, opts: UpdateOptions): Promise<void> {
+  if (opts.stdin && opts.duplicateOf !== undefined) throw usageError("--duplicate-of cannot be combined with --stdin; update one issue at a time.");
   const client = makeClient();
 
   if (opts.stdin) {
@@ -67,7 +70,8 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     description !== undefined ||
     opts.parent !== undefined ||
     opts.blockedBy !== undefined ||
-    opts.relatedTo !== undefined;
+    opts.relatedTo !== undefined ||
+    opts.duplicateOf !== undefined;
 
   if (!hasMutation && !isInteractive(opts.json)) throw usageError("update needs at least one mutation flag or --stdin.");
   if (!hasMutation && isInteractive(opts.json)) {
@@ -93,7 +97,10 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     description !== undefined ||
     opts.parent !== undefined;
 
-  let issue: UpdatedIssue | undefined;
+  const duplicate = opts.duplicateOf !== undefined
+    ? await withSpinner("Wiring duplicate relation…", () => markDuplicate(client, id, opts.duplicateOf!))
+    : undefined;
+  let issue: UpdatedIssue | undefined = duplicate;
   if (hasFieldMutation) {
     issue = await withSpinner(`Updating ${id}…`, () =>
       updateIssue(client, id, {
@@ -118,10 +125,11 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
   }
 
   if (opts.json) {
-    printJson({ ...(issue ?? { identifier: id }), ...(relations ? { relations } : {}) });
+    printJson({ ...(issue ?? { identifier: id }), ...(relations ? { relations } : {}), ...(duplicate ? { duplicateOf: duplicate.duplicateOf } : {}) });
     return;
   }
   if (issue) renderIssue(issue);
+  if (duplicate) process.stdout.write(`${id}: duplicate-of ${duplicate.duplicateOf.identifier}\n`);
   if (relations) {
     const parts = [
       ...relations.blockedBy.map((r) => `blocked-by ${r}`),
@@ -224,6 +232,7 @@ async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions):
 }
 
 export interface CloseOptions {
+  duplicateOf?: string;
   team?: string[];
   json?: boolean;
 }
@@ -245,7 +254,7 @@ export async function close(id: string | undefined, opts: CloseOptions): Promise
     }
   }
   if (!id) throw usageError("close needs an <id> (e.g. CER-123).");
-  const issue = await withSpinner(`Closing ${id}…`, () => closeIssue(client, id));
+  const issue = await withSpinner(`Closing ${id}…`, () => opts.duplicateOf !== undefined ? markDuplicate(client, id, opts.duplicateOf, true) : closeIssue(client, id));
 
   if (opts.json) {
     printJson(issue);
