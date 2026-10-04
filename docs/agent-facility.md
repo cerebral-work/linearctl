@@ -16,7 +16,7 @@ The `examples` command itself never needs credentials or executes the scripts.
 | 3 | auth | Missing or rejected credentials |
 | 4 | not_found | Referenced issue, project, team, label or other resource not found |
 | 5 | rate_limit | API rate limit or quota preflight exhausted |
-| 6 | refused | Dry-run write guard, duplicate check, or policy refusal |
+| 6 | refused | Dry-run write guard, duplicate check, backup verification mismatch/drift, or policy refusal |
 | 1 | other | Transport, server, filesystem or unexpected failure |
 
 An interrupted interactive prompt retains the conventional exit 130. Daemon
@@ -48,6 +48,13 @@ Batch commands preserve outcome reports on stdout even if some writes fail.
 They exit with the common failure kind when all failures share one, otherwise
 1; unresolved issue references exit 4. Re-read successful writes and retry only
 failed rows. A failed batch is not automatically safe to replay in full.
+
+`backup --verify --json` preserves the detailed report on stdout and emits a
+`refused` error on stderr when integrity checks or live comparisons fail (exit 6).
+A clean report exits 0. In backup's original 0.8.0 contract, integrity mismatch
+was 1, drift/sample mismatch was 2, and usage was 3; these become 6, 6, and 2
+respectively. Authentication failures use 3, API resource lookup failures 4,
+exhausted rate limits 5, and other runtime failures 1. A missing manifest is usage 2.
 
 **Migration:** older binaries used 2 for exhausted quota and often 1 for usage,
 auth or lookup failures. Consumers must now use 5 for rate limits and 6 for

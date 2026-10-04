@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +15,6 @@ import {
   verifyBackup,
 } from "../src/core/backup.js";
 import { renderIssueDetail } from "../src/core/issues.js";
-import { backup as backupCommand } from "../src/commands/backup.js";
 
 type Row = Record<string, unknown>;
 
@@ -378,7 +377,7 @@ describe("unlisted teams", () => {
     const m = JSON.parse(read(dir, "manifest.json"));
     delete m.unresolved;
     writeFileSync(join(dir, "manifest.json"), JSON.stringify(m));
-    expect((await verifyBackup(dir)).exitCode).toBe(1);
+    expect((await verifyBackup(dir)).exitCode).toBe(6);
   });
 });
 
@@ -395,28 +394,28 @@ describe("verifyBackup", () => {
     expect(r.hashMismatches).toEqual([]);
   });
 
-  test("a tampered line is a hash mismatch (exit 1)", async () => {
+  test("a tampered line is a hash mismatch (exit 6)", async () => {
     const dir = await make();
     const p = join(dir, "issues.jsonl");
     writeFileSync(p, read(dir, "issues.jsonl").replace("Issue a", "Issue X"));
     const r = await verifyBackup(dir);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(6);
     expect(r.hashMismatches.join("\n")).toContain("issues: sha256 differs");
   });
 
-  test("a deleted line is a count mismatch (exit 1)", async () => {
+  test("a deleted line is a count mismatch (exit 6)", async () => {
     const dir = await make();
     const kept = read(dir, "issues.jsonl").split("\n").filter(Boolean).slice(0, 1).join("\n") + "\n";
     writeFileSync(join(dir, "issues.jsonl"), kept);
     const r = await verifyBackup(dir);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(6);
     expect(r.countMismatches.join("\n")).toContain("issues: 1 lines, manifest says 2");
   });
 
   test("a dangling reference fails a full dump but only notes a partial one", async () => {
     const full = await make({ comments: [[{ id: "c1", issueId: "ghost", body: "x" }]] });
     const r = await verifyBackup(full);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(6);
     expect(r.integrity.join("\n")).toContain("comments.issueId");
 
     rmSync(out, { recursive: true, force: true });
@@ -427,7 +426,7 @@ describe("verifyBackup", () => {
     expect(partial.integrity.length).toBeGreaterThan(0);
   });
 
-  test("live count drift beyond tolerance exits 2; within tolerance exits 0", async () => {
+  test("live count drift beyond tolerance exits 6; within tolerance exits 0", async () => {
     const dir = await make();
     const grew = stub({ pages: { ...base(), issues: [[issue("a"), issue("b"), issue("c"), issue("d")]] } });
     const live = {
@@ -436,7 +435,7 @@ describe("verifyBackup", () => {
     };
     const sGrew = stub({ pages: { ...base(), issues: [[issue("a"), issue("b"), issue("c"), issue("d")]] }, live });
     const r = await verifyBackup(dir, { client: sGrew.client, tolerance: 0.02, rand: () => 0 });
-    expect(r.exitCode).toBe(2);
+    expect(r.exitCode).toBe(6);
     expect(r.drift.join("\n")).toContain("issues: live 4, backup 2");
     void grew;
 
@@ -447,7 +446,7 @@ describe("verifyBackup", () => {
     expect(tolerant.drift).toEqual([]);
   });
 
-  test("a sampled issue that differs live is reported (exit 2)", async () => {
+  test("a sampled issue that differs live is reported (exit 6)", async () => {
     const dir = await make();
     const live = {
       a: { identifier: "T-a", title: "RENAMED", description: "body a", priorityLabel: "High", createdAt: "2026-01-01T00:00:00.000Z", team: { id: "t1" }, updatedAt: "2026-01-02T00:00:00.000Z", state: { name: "Todo" } },
@@ -455,7 +454,7 @@ describe("verifyBackup", () => {
     };
     const s = stub({ pages: { ...base(), issues: [[issue("a"), issue("b")]] }, live });
     const r = await verifyBackup(dir, { client: s.client, sample: 2, rand: (() => { let i = 0; return () => (i++ === 0 ? 0 : 0.99); })() });
-    expect(r.exitCode).toBe(2);
+    expect(r.exitCode).toBe(6);
     expect(r.sampleMismatches.join("\n")).toContain("T-a: title differ");
   });
 
@@ -523,41 +522,69 @@ describe("round 1 hardening", () => {
     expect(r.notes.join("\n")).toContain("edited since the dump");
     const bad = stub({ pages: { ...base(), issues: [[issue("a")]] }, live: { a: { ...liveBase, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z" } } });
     const r2 = await verifyBackup(dir, { client: bad.client, rand: () => 0 });
-    expect(r2.exitCode).toBe(2);
+    expect(r2.exitCode).toBe(6);
     expect(r2.sampleMismatches.join("\n")).toContain("createdAt");
   });
 });
 
 describe("CLI entry point exit codes", () => {
-  async function run(opts: Parameters<typeof backupCommand>[0]): Promise<number> {
-    const exit = spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-    const err = spyOn(console, "error").mockImplementation(() => {});
-    const log = spyOn(console, "log").mockImplementation(() => {});
-    try {
-      await backupCommand(opts);
-      return 0;
-    } catch (e) {
-      const m = /^exit:(\d+)$/.exec((e as Error).message);
-      if (!m) throw e;
-      return Number(m[1]);
-    } finally {
-      exit.mockRestore();
-      err.mockRestore();
-      log.mockRestore();
-    }
+  async function run(args: string[], scenario?: string) {
+    const proc = Bun.spawn([process.execPath, ...(scenario ? ["--preload", "./test/fixtures/backup-errors.ts"] : []), "src/index.ts", "backup", ...args, "--json"], {
+      cwd: import.meta.dir + "/..",
+      env: { ...process.env, LINEAR_API_KEY: scenario ? "test-only-key" : "", LINEARCTL_TEST_SCENARIO: scenario ?? "" },
+      stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    return { code, out, err };
   }
-
-  test("no --out is a usage error (3)", async () => {
-    expect(await run({})).toBe(3);
+  function failure(r: Awaited<ReturnType<typeof run>>, code: number, kind: string) {
+    expect(r.code).toBe(code);
+    expect(r.err.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(r.err).error).toMatchObject({ code, kind });
+  }
+  test("usage is 2 with one JSON stderr envelope, before credentials", async () => {
+    for (const args of [[], ["--out", out, "--limit", "0"], ["--out", out, "--entities", "bogus"], ["--out", out, "--since", "invalid"], ["--verify", out, "--offline"], ["--verify", out, "--tolerance", "2"]]) {
+      const r = await run(args);
+      failure(r, 2, "usage");
+      expect(r.out).toBe("");
+    }
   });
-
-  test("--verify --offline exits 0 on a clean dump and 1 on a tampered line", async () => {
+  test("missing and rejected credentials are auth / 3", async () => {
+    for (const scenario of [undefined, "auth"]) {
+      const r = await run(["--out", join(out, scenario ?? "missing")], scenario);
+      failure(r, 3, "auth");
+      expect(r.out).toBe("");
+    }
+  });
+  test("API lookup and exhausted rate limit retain codes 4 and 5", async () => {
+    for (const [scenario, code] of [["not_found", 4], ["rate_limit", 5]] as const) {
+      const r = await run(["--out", join(out, scenario ?? "missing")], scenario);
+      failure(r, code, scenario);
+      expect(r.out).toBe("");
+    }
+  });
+  test("transport failure remains other / 1", async () => {
+    failure(await run(["--out", out], "transport"), 1, "other");
+  });
+  test("live drift refuses with code 6, report and JSON envelope", async () => {
+    const s = stub({ pages: base() });
+    const { dir } = await runBackup(s.client, { out, version: "t", ...fast });
+    const r = await run(["--verify", dir], "drift");
+    failure(r, 6, "refused");
+    expect(JSON.parse(r.out).exitCode).toBe(6);
+    expect(JSON.parse(r.out).drift.length).toBeGreaterThan(0);
+  });
+  test("offline verification succeeds, then refuses a tampered dump with a report", async () => {
     const s = stub({ pages: { ...base(), issues: [[issue("a"), issue("b")]] } });
     const { dir } = await runBackup(s.client, { out, version: "t", ...fast });
-    expect(await run({ verify: dir, offline: true })).toBe(0);
+    const clean = await run(["--verify", dir, "--offline"]);
+    expect(clean.code).toBe(0);
+    expect(clean.err).toBe("");
+    expect(JSON.parse(clean.out).exitCode).toBe(0);
     writeFileSync(join(dir, "issues.jsonl"), read(dir, "issues.jsonl").replace("Issue a", "Issue X"));
-    expect(await run({ verify: dir, offline: true })).toBe(1);
+    const bad = await run(["--verify", dir, "--offline"]);
+    failure(bad, 6, "refused");
+    expect(JSON.parse(bad.out).exitCode).toBe(6);
+    expect(JSON.parse(bad.out).hashMismatches.length).toBeGreaterThan(0);
   });
 });

@@ -380,7 +380,7 @@ program
   .option("--resume", "continue the latest interrupted run under --out (same flags)")
   .option("--markdown", "write issues-md/ (default)")
   .option("--no-markdown", "skip issues-md/")
-  .option("--verify <dir>", "verify a backup: hashes, counts, references, live drift (exit 0/1/2; 3 = usage)")
+  .option("--verify <dir>", "verify a backup: hashes, counts, references, live drift (exit 0 clean, 6 refused; see exit codes)")
   .option("--tolerance <fraction>", "verify: allowed live count drift per entity (default 0.02)", parseFloat)
   .option("--offline", "verify: skip the live comparison")
   .option("--json", "emit JSON")
