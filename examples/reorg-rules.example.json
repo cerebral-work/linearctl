@@ -1,19 +1,28 @@
 [
   {
+    "_comment": "Toy rules for the reorg plan generator — a fake EX workspace. entity:none is for creation ops (the target does not exist yet). See docs/features/reorg.md.",
     "phase": 1,
     "op": "create-workspace-label",
-    "match": { "entity": "workspace-label", "where": { "name": "bug" } },
+    "match": { "entity": "none", "where": {} },
     "to": { "name": "bug", "color": "#e5484d" },
-    "evidence": "toy: one workspace 'bug' label per duplicated name",
+    "evidence": "toy: seed the workspace 'bug' label before relabeling",
+    "reversible": true
+  },
+  {
+    "phase": 1,
+    "op": "relabel",
+    "match": { "entity": "issue", "where": { "teamKey": "EX", "archived": false } },
+    "to": { "add": ["<workspace-bug-label-id>"], "remove": ["<ex-team-bug-label-id>"] },
+    "evidence": "toy: swap EX's team 'bug' for the workspace one",
     "reversible": true,
-    "_comment": "create-workspace-label matches on the workspace-label entity to assert the seed set exists; a from.labelId of null marks creation"
+    "batchKey": "ws-bug"
   },
   {
     "phase": 1,
     "op": "retire-or-delete-label",
-    "match": { "entity": "team-label", "teamKey": "EX", "where": { "name": "bug", "retired": false } },
+    "match": { "entity": "team-label", "teamKey": "EX", "where": { "name": "bug", "retired": false, "issueCount": 0 } },
     "to": { "retired": true },
-    "evidence": "toy: retire the EX team copy of 'bug' after relabel",
+    "evidence": "toy: retire the emptied EX team copy (reversible)",
     "reversible": true
   },
   {
@@ -34,6 +43,14 @@
   },
   {
     "phase": 3,
+    "op": "add-project-team",
+    "match": { "entity": "project", "where": { "name": "Toy Project" } },
+    "to": { "teamId": "<destination-team-id>" },
+    "evidence": "toy: destination joins the project before any move (planner computes full teamIds)",
+    "reversible": true
+  },
+  {
+    "phase": 3,
     "op": "archive-initiative",
     "match": { "entity": "initiative", "where": { "name": "[DUP] example initiative" } },
     "to": { "archived": true },
@@ -45,7 +62,7 @@
     "op": "delete-team",
     "match": { "entity": "team", "where": { "key": "OLD", "archived": true } },
     "to": {},
-    "evidence": "toy: phase-6 gated delete — census shows 0 issues, 0 projects, 0 non-retired labels",
+    "evidence": "toy: phase-6 gated delete — live pre-read enforces 0 issues / 0 projects / 0 non-retired labels",
     "reversible": false,
     "approval": "deck-item-EXAMPLE"
   }

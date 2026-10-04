@@ -6,26 +6,28 @@
  * the pacing, and the verification machinery — nothing workspace-specific.
  *
  * Pipeline: `reorg census` → `reorg plan --rules <file>` → human review →
- * `reorg apply <plan> --phase N [--apply] [--resume]`. Dry-run is the default;
- * `--apply` additionally requires a fresh backup record (see
- * {@link assertFreshBackup}) and gates irreversible ops behind
- * `--allow-irreversible` + a per-op `approval` id.
+ * `reorg apply <plan> --phase N [--apply | --check] [--resume]`. Dry-run is
+ * the default; `--check` adds a live drift pre-read of every target (still no
+ * writes); `--apply` requires a fresh backup record ({@link assertFreshBackup})
+ * and gates irreversible ops behind `--allow-irreversible` + per-op approvals.
  *
  * Executor contract (per op, strictly sequential):
- *   pre-read target (abort if live ≠ op.from) → write inside withRetry →
- *   re-read by a DIFFERENT query → compare to op.to → append to applied.jsonl
- *   (fsync). First mismatch stops the run with exit 3. `--resume` skips
- *   journaled-ok seqs. Ops sharing a `batchKey` (identical input) go through
- *   `issueBatchUpdate` in batches of ≤ 50, verified by one filtered read.
+ *   live pre-read (abort on drift vs the census-time `from`, scoped to the
+ *   op's read coverage) → write inside withRetry → re-read by a DIFFERENT
+ *   query → compare the op's computed EXPECTED end state ({@link OpDef.expectedPost},
+ *   never vacuous) → append to applied.jsonl (fsync). First mismatch stops the
+ *   run with exit 3 — batch members are journaled individually first, the
+ *   mismatching one marked ok:false. `--resume` skips journaled-ok seqs
+ *   (before --max-ops slices). Ops sharing a `batchKey` (identical input) go
+ *   through `issueBatchUpdate` in batches of ≤ 50, verified by one filtered
+ *   read.
  *
  * The Linear MCP is never used. Pacing: token bucket at 2000 req/h plus
- * X-RateLimit-*-Remaining header reads (the SDK exposes response headers on
- * rawRequest), sleeping to reset under 10 %.
+ * X-RateLimit-*-Remaining header reads, sleeping to reset under 10 %.
  */
 
 import { createHash } from "node:crypto";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fsyncSync,
@@ -69,7 +71,7 @@ const IRREVERSIBLE_CAPABLE: Record<string, true> = {
 
 export interface ReorgTarget {
   type: "issue" | "team" | "label" | "state" | "project" | "initiative";
-  /** Linear UUID of the target entity. */
+  /** Linear UUID of the target entity (`new:<name>` for creates). */
   id: string;
   /** Human handle for reports (issue identifier, team key, label name…). */
   identifier: string;
@@ -80,9 +82,11 @@ export interface ReorgOp {
   phase: number;
   op: ReorgOpKind;
   target: ReorgTarget;
-  /** Live state captured at census time; the executor aborts on drift. */
+  /** Live state captured at census time; the executor aborts on drift. May
+   *  carry extra census context (projectTeamIds, cycleId) beyond the op's
+   *  read coverage — the drift check only compares covered keys. */
   from: Record<string, unknown>;
-  /** Expected state after the write; the post-write re-read must match. */
+  /** Intended change; the post-write compare uses {@link OpDef.expectedPost}. */
   to: Record<string, unknown>;
   /** Why this op exists (rule name + census evidence). */
   evidence: string;
@@ -361,6 +365,7 @@ interface ReorgLabelNode {
   id: string;
   name: string;
   retiredAt?: string | null;
+  team?: { id: string; key: string } | null;
 }
 
 interface ReorgStateNode {
@@ -377,7 +382,7 @@ interface ReorgProjectNode {
   lead?: { id: string } | null;
   targetDate?: string | null;
   trashed?: boolean | null;
-  teams?: { nodes: { id: string }[] } | null;
+  teams?: { nodes: { id: string; key: string }[] } | null;
   initiatives?: { nodes: { id: string }[] } | null;
 }
 
@@ -411,7 +416,7 @@ const ISSUE_STATE_Q = /* GraphQL */ `
 
 const LABEL_STATE_Q = /* GraphQL */ `
   query ReorgLabelState($id: String!) {
-    issueLabel(id: $id) { id name retiredAt }
+    issueLabel(id: $id) { id name retiredAt team { id key } }
   }
 `;
 
@@ -430,7 +435,7 @@ const PROJECT_STATE_Q = /* GraphQL */ `
       lead { id }
       targetDate
       trashed
-      teams { nodes { id } }
+      teams { nodes { id key } }
       initiatives { nodes { id } }
     }
   }
@@ -445,6 +450,15 @@ const INITIATIVE_STATE_Q = /* GraphQL */ `
 const TEAM_STATE_Q = /* GraphQL */ `
   query ReorgTeamState($id: String!) {
     team(id: $id) { id key triageEnabled }
+  }
+`;
+
+/** Workspace-scoped label by exact name (team:null) — create's re-read. */
+const FIND_WS_LABEL_Q = /* GraphQL */ `
+  query ReorgFindWsLabel($name: String!) {
+    issueLabels(filter: { name: { eq: $name }, team: { null: true } }) {
+      nodes { id name retiredAt }
+    }
   }
 `;
 
@@ -519,18 +533,27 @@ function pick(state: Record<string, unknown>, keys: string[]): Record<string, un
   return Object.fromEntries(keys.map((k) => [k, state[k]]));
 }
 
+function sortedStrings(v: unknown): string[] {
+  return Array.isArray(v) ? [...(v as string[])].sort() : [];
+}
+
 // ---------------------------------------------------------------------------
-// Op registry — read (drift check + verify), apply (mutation), inverse
+// Op registry — readState (drift + verify), expectedPost (NEVER vacuous:
+// the computed end state the re-read must match; null = entity must be
+// absent), apply (mutation), inverse (rollback).
 // ---------------------------------------------------------------------------
 
 interface OpDef {
   /** Live read used for the from-drift check AND the post-write compare. */
   readState(ctx: OpCtx, op: ReorgOp): Promise<Record<string, unknown>>;
+  /** The computed expected end state over compareKeys; null ⇒ readState must
+   *  throw after the write (deletes). */
+  expectedPost(op: ReorgOp): Record<string, unknown> | null;
   /** The write. */
   apply(ctx: OpCtx, op: ReorgOp): Promise<void>;
   /** Inverse op for rollback, or null when no inverse exists. */
   inverse(op: ReorgOp): ReorgOp | null;
-  /** Which `to` keys this op compares on the post-write re-read. */
+  /** Keys readState returns; scopes BOTH the drift check and the compare. */
   compareKeys: string[];
 }
 
@@ -571,13 +594,43 @@ const M = {
     issueBatchUpdate(ids: $ids, input: $input) { success } }`,
 };
 
+/** One issue in a state? (archive-state precondition: only empty states.) */
+const ISSUES_IN_STATE_Q = /* GraphQL */ `
+  query ReorgIssuesInState($id: String!) {
+    issues(filter: { state: { id: { eq: $id } } }, first: 1) { nodes { id } }
+  }
+`;
+
+/** Emptiness probes for delete-team (all must be empty). */
+const TEAM_ISSUES_Q = /* GraphQL */ `
+  query ReorgTeamIssues($id: String!) {
+    issues(filter: { team: { id: { eq: $id } } }, includeArchived: true, first: 1) { nodes { id } }
+  }
+`;
+const TEAM_PROJECTS_Q = /* GraphQL */ `
+  query ReorgTeamProjects($id: String!) {
+    projects(filter: {}, first: 250) { nodes { id teams { nodes { id } } } }
+  }
+`;
+const TEAM_LABELS_Q = /* GraphQL */ `
+  query ReorgTeamLabels($id: String!) {
+    issueLabels(filter: { team: { id: { eq: $id } } }, first: 250) { nodes { id retiredAt } }
+  }
+`;
+
 export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "create-workspace-label": {
     compareKeys: ["labelId"],
-    // Creation target does not exist yet; the drift check asserts absence via
-    // the planner's from.labelId === null, so the live read is a no-op.
-    async readState() {
-      return { labelId: null };
+    // Absence anchor: from.labelId must be null and the live lookup by name
+    // must find nothing — a pre-existing label is drift (prevents dup create).
+    async readState(ctx, op) {
+      const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+        ctx.client, FIND_WS_LABEL_Q, { name: op.to.name }, ctx.pace,
+      );
+      return { labelId: d.issueLabels.nodes[0]?.id ?? null };
+    },
+    expectedPost(op) {
+      return { labelId: op.to.labelId ?? null };
     },
     async apply(ctx, op) {
       await mutate(ctx, "issueLabelCreate", M.labelCreate, {
@@ -588,18 +641,10 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
           // no teamId → workspace-scoped label
         },
       });
-      // The created id is discovered by a name re-read (different query than
-      // the mutation payload) and lands in the journal's `after`.
-      const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-        ctx.client,
-        `query ReorgFindLabel($name: String!) {
-          issueLabels(filter: { name: { eq: $name } }) { nodes { id name retiredAt } } }`,
-        { name: op.to.name },
-        ctx.pace,
-      );
-      const found = d.issueLabels.nodes[0]?.id;
-      if (!found) throw new Error(`created label "${String(op.to.name)}" not found on re-read`);
-      op.to.labelId = found;
+      const live = await OP_REGISTRY["create-workspace-label"].readState(ctx, op);
+      if (typeof live.labelId !== "string")
+        throw new Error(`created label "${String(op.to.name)}" not found on re-read`);
+      op.to.labelId = live.labelId; // journal `after` carries the created id
     },
     inverse: () => null, // inverse of create is delete — irreversible; retire by hand
   },
@@ -607,6 +652,12 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "relabel": {
     compareKeys: ["labelIds"],
     readState: (ctx, op) => readIssue(ctx, op.target.id),
+    expectedPost(op) {
+      const base = new Set(sortedStrings(op.from.labelIds));
+      for (const a of sortedStrings(op.to.add)) base.add(a);
+      for (const r of sortedStrings(op.to.remove)) base.delete(r);
+      return { labelIds: [...base].sort() };
+    },
     async apply(ctx, op) {
       await mutate(ctx, "issueUpdate", M.issueUpdate, {
         id: op.target.id,
@@ -617,9 +668,11 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       });
     },
     inverse(op) {
+      const ep = OP_REGISTRY.relabel.expectedPost(op);
+      if (ep === null) throw new Error("relabel inverse: unexpected null expectedPost");
       return {
         ...op,
-        from: op.to,
+        from: { ...op.from, labelIds: ep.labelIds },
         to: { add: op.to.remove ?? [], remove: op.to.add ?? [] },
         evidence: `rollback of seq ${op.seq}`,
       };
@@ -629,9 +682,12 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "retire-or-delete-label": {
     compareKeys: ["retired"],
     readState: (ctx, op) => readLabel(ctx, op.target.id),
+    expectedPost(op) {
+      if (!op.reversible) return null; // delete ⇒ the label must be GONE after
+      return { retired: op.to.retired !== false };
+    },
     async apply(ctx, op) {
       if (op.to.retired === false) {
-        // restore — the rollback path of a retire
         await mutate(ctx, "issueLabelUpdate", M.labelUpdate, {
           id: op.target.id,
           input: { retiredAt: null },
@@ -654,6 +710,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "set-state": {
     compareKeys: ["stateId"],
     readState: (ctx, op) => readIssue(ctx, op.target.id),
+    expectedPost: (op) => ({ stateId: op.to.stateId }),
     async apply(ctx, op) {
       await mutate(ctx, "issueUpdate", M.issueUpdate, {
         id: op.target.id,
@@ -668,6 +725,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "enable-triage": {
     compareKeys: ["triageEnabled"],
     readState: (ctx, op) => readTeam(ctx, op.target.id),
+    expectedPost: (op) => ({ triageEnabled: op.to.triageEnabled ?? true }),
     async apply(ctx, op) {
       await mutate(ctx, "teamUpdate", M.teamUpdate, {
         id: op.target.id,
@@ -682,7 +740,17 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "archive-state": {
     compareKeys: ["archived"],
     readState: (ctx, op) => readState(ctx, op.target.id),
+    expectedPost: () => ({ archived: true }),
     async apply(ctx, op) {
+      // Only empty states may be archived (plan §2c) — live pre-read, refuse
+      // loudly instead of discovering Linear's refusal mid-phase.
+      const d = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
+        ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
+      );
+      if (d.issues.nodes.length > 0)
+        throw new Error(
+          `archive-state ${op.target.identifier}: ${d.issues.nodes.length} issue(s) still in the state — move them first`,
+        );
       await mutate(ctx, "workflowStateArchive", M.stateArchive, { id: op.target.id });
     },
     inverse: () => null, // no unarchive — recreate is the undo (operator-acknowledged)
@@ -691,6 +759,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "set-project-status": {
     compareKeys: ["statusId"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({ statusId: op.to.statusId }),
     async apply(ctx, op) {
       await mutate(ctx, "projectUpdate", M.projectUpdate, {
         id: op.target.id,
@@ -705,10 +774,11 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "set-project-lead": {
     compareKeys: ["leadId"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({ leadId: op.to.leadId ?? null }),
     async apply(ctx, op) {
       await mutate(ctx, "projectUpdate", M.projectUpdate, {
         id: op.target.id,
-        input: { leadId: op.to.leadId },
+        input: { leadId: op.to.leadId ?? null },
       });
     },
     inverse(op) {
@@ -719,10 +789,11 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "set-project-target": {
     compareKeys: ["targetDate"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({ targetDate: op.to.targetDate ?? null }),
     async apply(ctx, op) {
       await mutate(ctx, "projectUpdate", M.projectUpdate, {
         id: op.target.id,
-        input: { targetDate: op.to.targetDate },
+        input: { targetDate: op.to.targetDate ?? null },
       });
     },
     inverse(op) {
@@ -731,38 +802,62 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   },
 
   "add-project-team": {
-    // from.teamIds is the FULL pre-add list — sending only the new id would
-    // replace the membership, so the input is always from + the added id.
+    // to.teamIds is the FULL desired membership — sending only the new id
+    // would replace it. The planner computes it (census from.teamIds + the
+    // added id); the inverse restores from.teamIds exactly.
     compareKeys: ["teamIds"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({ teamIds: sortedStrings(op.to.teamIds) }),
     async apply(ctx, op) {
-      const current = Array.isArray(op.from.teamIds) ? op.from.teamIds : [];
       await mutate(ctx, "projectUpdate", M.projectUpdate, {
         id: op.target.id,
-        input: { teamIds: [...new Set([...current, op.to.teamId])] },
+        input: { teamIds: sortedStrings(op.to.teamIds) },
       });
     },
     inverse(op) {
-      const current = Array.isArray(op.from.teamIds) ? op.from.teamIds : [];
       return {
         ...op,
-        from: { teamIds: [...new Set([...current, op.to.teamId])].sort() },
-        to: { teamIds: current },
+        from: { teamIds: sortedStrings(op.to.teamIds) },
+        to: { teamIds: sortedStrings(op.from.teamIds) },
         evidence: `rollback of seq ${op.seq}`,
       };
     },
   },
 
   "move-project-initiative": {
-    // to: { fromInitiativeToProjectId?, toInitiativeId? } — remove the old join
-    // row, create the new one; verify compares the project's initiativeIds.
+    // to: { fromInitiativeToProjectId?, fromInitiativeId?, toInitiativeId? } —
+    // remove the old join row, create the new one; verify compares the full
+    // computed initiativeIds set.
     compareKeys: ["initiativeIds"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost(op) {
+      const set = new Set(sortedStrings(op.from.initiativeIds));
+      if (typeof op.to.fromInitiativeId === "string") set.delete(op.to.fromInitiativeId);
+      if (typeof op.to.toInitiativeId === "string") set.add(op.to.toInitiativeId);
+      return { initiativeIds: [...set].sort() };
+    },
     async apply(ctx, op) {
-      if (typeof op.to.fromInitiativeToProjectId === "string") {
-        await mutate(ctx, "initiativeToProjectDelete", M.initiativeToProjectDelete, {
-          id: op.to.fromInitiativeToProjectId,
-        });
+      // Resolve the join-row id live when the plan doesn't carry it (inverse
+      // ops never know it — re-created joins get fresh ids).
+      let joinId = typeof op.to.fromInitiativeToProjectId === "string"
+        ? op.to.fromInitiativeToProjectId
+        : null;
+      if (!joinId && typeof op.to.fromInitiativeId === "string") {
+        const d = await reorgRaw<{ initiativeToProjects: { nodes: { id: string }[] } }>(
+          ctx.client,
+          `query ReorgInitJoins($initiativeId: String!, $projectId: String!) {
+            initiativeToProjects(filter: {
+              initiative: { id: { eq: $initiativeId } }
+              project: { id: { eq: $projectId } }
+            }) { nodes { id } }
+          }`,
+          { initiativeId: op.to.fromInitiativeId, projectId: op.target.id },
+          ctx.pace,
+        );
+        joinId = d.initiativeToProjects.nodes[0]?.id ?? null;
+      }
+      if (joinId) {
+        await mutate(ctx, "initiativeToProjectDelete", M.initiativeToProjectDelete, { id: joinId });
       }
       if (typeof op.to.toInitiativeId === "string") {
         await mutate(ctx, "initiativeToProjectCreate", M.initiativeToProjectCreate, {
@@ -771,11 +866,14 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       }
     },
     inverse(op) {
+      const ep = OP_REGISTRY["move-project-initiative"].expectedPost(op);
+      if (ep === null) throw new Error("move-project-initiative inverse: unexpected null expectedPost");
       return {
         ...op,
-        from: op.to,
+        from: { ...op.from, initiativeIds: ep.initiativeIds },
         to: {
-          // the re-created join gets a fresh id; verify compares membership
+          fromInitiativeToProjectId: null, // re-created join gets a fresh id
+          fromInitiativeId: op.to.toInitiativeId ?? null,
           toInitiativeId: op.from.initiativeId ?? null,
         },
         evidence: `rollback of seq ${op.seq}`,
@@ -786,6 +884,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "archive-issue": {
     compareKeys: ["archived"],
     readState: (ctx, op) => readIssue(ctx, op.target.id),
+    expectedPost: (op) => ({ archived: op.to.archived !== false }),
     async apply(ctx, op) {
       const unarchiving = op.to.archived === false;
       await mutate(ctx, unarchiving ? "issueUnarchive" : "issueArchive",
@@ -799,6 +898,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "archive-project": {
     compareKeys: ["trashed"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
+    expectedPost: (op) => ({ trashed: op.to.trashed !== false }),
     async apply(ctx, op) {
       // archiveProject is deprecated → trash semantics, restorable via
       // projectUnarchive. The phase-3 canary settles which mutation plans emit.
@@ -814,6 +914,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "archive-initiative": {
     compareKeys: ["archived"],
     readState: (ctx, op) => readInitiative(ctx, op.target.id),
+    expectedPost: (op) => ({ archived: op.to.archived !== false }),
     async apply(ctx, op) {
       const restoring = op.to.archived === false;
       await mutate(ctx, restoring ? "initiativeUnarchive" : "initiativeArchive",
@@ -825,8 +926,19 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   },
 
   "move-issue-team": {
-    compareKeys: ["teamId", "labelIds", "projectId"],
+    compareKeys: ["teamId", "projectId", "stateId"],
     readState: (ctx, op) => readIssue(ctx, op.target.id),
+    expectedPost(op) {
+      // stateId deliberately excluded: the executor's post-move correction
+      // (step 5) owns the destination-state check, because a paired
+      // teamId+stateId write may map the state instead of setting it.
+      // verifyPhase adds to.stateId back for the after-the-fact check.
+      return {
+        teamId: op.to.teamId,
+        // project membership must survive the move (precondition b)
+        projectId: op.from.projectId ?? null,
+      };
+    },
     async apply(ctx, op) {
       await mutate(ctx, "issueUpdate", M.issueUpdate, {
         id: op.target.id,
@@ -835,7 +947,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
           // The move drops team labels; the mapped workspace replacements are
           // re-sent in the same input (precondition a).
           addedLabelIds: op.to.reapplyLabelIds ?? [],
-          // Destination state sent in the same input when known (phase 5).
+          // Destination state sent in the same input when the plan maps one.
           ...(op.to.stateId ? { stateId: op.to.stateId } : {}),
         },
       });
@@ -858,12 +970,30 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
 
   "delete-team": {
     compareKeys: [],
-    // Terminal op; the census precondition (0 issues/projects/labels) is the
-    // from-check, enforced by the phase-6 plan review.
-    async readState() {
-      return {};
-    },
+    readState: (ctx, op) => readTeam(ctx, op.target.id),
+    expectedPost: () => null, // the team must be GONE after
     async apply(ctx, op) {
+      // Live emptiness preconditions (plan §2c phase 6): 0 issues (archived
+      // included), 0 projects, 0 non-retired labels — read NOW, not from census.
+      const issues = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
+        ctx.client, TEAM_ISSUES_Q, { id: op.target.id }, ctx.pace,
+      );
+      if (issues.issues.nodes.length > 0)
+        throw new Error(`delete-team ${op.target.identifier}: issues remain`);
+      const labels = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+        ctx.client, TEAM_LABELS_Q, { id: op.target.id }, ctx.pace,
+      );
+      const active = labels.issueLabels.nodes.filter((l) => l.retiredAt == null);
+      if (active.length > 0)
+        throw new Error(`delete-team ${op.target.identifier}: ${active.length} non-retired label(s) remain`);
+      const projects = await reorgRaw<{ projects: { nodes: { id: string; teams: { nodes: { id: string }[] } }[] } }>(
+        ctx.client, TEAM_PROJECTS_Q, {}, ctx.pace,
+      );
+      const member = projects.projects.nodes.filter((p) =>
+        p.teams.nodes.some((t) => t.id === op.target.id),
+      );
+      if (member.length > 0)
+        throw new Error(`delete-team ${op.target.identifier}: ${member.length} project(s) still attached`);
       await mutate(ctx, "teamDelete", M.teamDelete, { id: op.target.id });
     },
     inverse: () => null, // 30-day grace via the UI; never an inverse op
@@ -871,20 +1001,25 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
 };
 
 // ---------------------------------------------------------------------------
-// move-issue-team preconditions (plan §2b a–d)
+// move-issue-team preconditions (plan §2b a–d) — LIVE reads, no census trust
 // ---------------------------------------------------------------------------
 
 /**
  * Enforced by the executor immediately before a move-issue-team write:
- *  (a) phase 1 verified green in the journal AND the op carries the mapped
- *      workspace label ids to re-send (the move drops team labels);
- *  (b) the destination team is in the issue's project teamIds — either the
- *      census-time from.projectTeamIds already lists it, or the journal holds
- *      an ok add-project-team for that project with a lower seq;
+ *  (a) phase 1 verified green in the journal, and EVERY team-scoped label
+ *      currently on the issue (live read) has a journaled relabel removing it
+ *      whose added workspace replacements are all in to.reapplyLabelIds —
+ *      those are re-sent in the move input because the move drops team labels;
+ *  (b) the destination team is in the issue's project teamIds — read LIVE
+ *      from the project, never from census/journal;
  *  (c) phase 2 verified green (destination state predictable);
  *  (d) the issue's cycleId was captured in op.from (journaled first).
  */
-export function assertMovePreconditions(op: ReorgOp, journal: JournalRecord[]): void {
+export async function assertMovePreconditions(
+  ctx: OpCtx,
+  op: ReorgOp,
+  journal: JournalRecord[],
+): Promise<void> {
   const fail = (why: string): never => {
     throw new Error(`move-issue-team seq ${op.seq} precondition: ${why}`);
   };
@@ -896,43 +1031,54 @@ export function assertMovePreconditions(op: ReorgOp, journal: JournalRecord[]): 
     fail("(c) phase-2 verify is not green in the journal");
   if (!("cycleId" in op.from)) fail("(d) from.cycleId not captured at census");
 
+  // (a) live label check: every TEAM-scoped label on the issue must already
+  // have been swapped for a workspace replacement by a journaled relabel.
+  const live = await readIssue(ctx, op.target.id);
+  const labelIds = sortedStrings(live.labelIds);
+  if (labelIds.length > 0) {
+    const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+      ctx.client,
+      `query ReorgLabelScopes($ids: [ID!]!) {
+        issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } } }
+      }`,
+      { ids: labelIds },
+      ctx.pace,
+    );
+    const teamScoped = d.issueLabels.nodes.filter((l) => l.team != null);
+    const reapply = new Set(sortedStrings(op.to.reapplyLabelIds));
+    for (const l of teamScoped) {
+      const swapped = journal.some(
+        (r) =>
+          r.ok &&
+          r.op === "relabel" &&
+          r.original?.target.id === op.target.id &&
+          sortedStrings(r.original.to.remove).includes(l.id) &&
+          sortedStrings(r.original.to.add).every((a) => reapply.has(a)),
+      );
+      if (!swapped)
+        fail(
+          `(a) team label "${l.name}" (${l.id}) is live on ${op.target.identifier} with no ` +
+            `journaled relabel to a workspace replacement — phase 1 is incomplete for this issue`,
+        );
+    }
+  }
+
+  // (b) LIVE project membership read
   const projectId = op.from.projectId;
   const destTeam = op.to.teamId;
-  if (typeof projectId !== "string" || typeof destTeam !== "string") return; // project-less: (b) n/a
-  const censusHad =
-    Array.isArray(op.from.projectTeamIds) && op.from.projectTeamIds.includes(destTeam);
-  const added = journal.some(
-    (r) =>
-      r.ok &&
-      r.op === "add-project-team" &&
-      typeof r.seq === "number" &&
-      r.seq < op.seq &&
-      r.original?.target.id === projectId &&
-      Array.isArray(r.original.to.teamIds) &&
-      r.original.to.teamIds.includes(destTeam),
-  );
-  if (!censusHad && !added)
-    fail(
-      `(b) destination team ${destTeam} is not in project ${projectId} teamIds ` +
-        `and no earlier add-project-team op landed it`,
-    );
+  if (typeof projectId === "string" && typeof destTeam === "string") {
+    const project = await readProject(ctx, projectId);
+    if (!sortedStrings(project.teamIds).includes(destTeam))
+      fail(
+        `(b) destination team ${destTeam} is not in project ${projectId} teamIds (live read) — ` +
+          `land an add-project-team op first`,
+      );
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Executor
+// Compare helpers
 // ---------------------------------------------------------------------------
-
-export interface ApplyOptions {
-  phase?: number;
-  apply: boolean;
-  resume: boolean;
-  maxOps?: number;
-  allowIrreversible: boolean;
-  journalPath: string;
-  backupRecordPath?: string;
-  pace: { bucket: TokenBucket; tracker: RateTracker };
-  onEvent?: (ev: { kind: string; detail: string }) => void;
-}
 
 export class ReorgMismatch extends Error {
   constructor(
@@ -944,34 +1090,17 @@ export class ReorgMismatch extends Error {
   }
 }
 
-/** Keys of `from` that differ live, rendered for the abort message. `keys`
- * scopes the comparison to what the op's read actually returns — `from` may
- * carry census context (projectTeamIds, cycleId) that the read omits. */
-function drifted(
-  from: Record<string, unknown>,
+/** Keys of `expected` the live state fails to match (skips absent keys). */
+function compareState(
+  expected: Record<string, unknown>,
   live: Record<string, unknown>,
   keys: string[],
 ): string[] {
   const bad: string[] = [];
   for (const k of keys) {
-    if (!(k in from)) continue;
-    if (JSON.stringify(from[k]) !== JSON.stringify(live[k]))
-      bad.push(`${k}: census=${JSON.stringify(from[k])} live=${JSON.stringify(live[k])}`);
-  }
-  return bad;
-}
-
-/** Keys of `to` the live state fails to match after the write. */
-function matches(
-  to: Record<string, unknown>,
-  live: Record<string, unknown>,
-  keys: string[],
-): string[] {
-  const bad: string[] = [];
-  for (const k of keys) {
-    if (!(k in to)) continue;
-    if (JSON.stringify(to[k]) !== JSON.stringify(live[k]))
-      bad.push(`${k}: expected=${JSON.stringify(to[k])} actual=${JSON.stringify(live[k])}`);
+    if (!(k in expected)) continue;
+    if (JSON.stringify(expected[k]) !== JSON.stringify(live[k]))
+      bad.push(`${k}: expected=${JSON.stringify(expected[k])} actual=${JSON.stringify(live[k])}`);
   }
   return bad;
 }
@@ -989,18 +1118,183 @@ export function estimateRequests(ops: ReorgOp[]): number {
   return (ops.length - batched) * 3 + batched + batchKeys.size * 2;
 }
 
+// ---------------------------------------------------------------------------
+// Executor
+// ---------------------------------------------------------------------------
+
+export interface ApplyOptions {
+  phase?: number;
+  apply: boolean;
+  /** Dry-run PLUS a live drift pre-read of every target (no writes). */
+  check?: boolean;
+  resume: boolean;
+  maxOps?: number;
+  allowIrreversible: boolean;
+  journalPath: string;
+  backupRecordPath?: string;
+  pace: { bucket: TokenBucket; tracker: RateTracker };
+  onEvent?: (ev: { kind: string; detail: string }) => void;
+}
+
+export interface RunResult {
+  applied: number;
+  skipped: number;
+  dryRun: boolean;
+  /** --check only: seqs whose live state drifted from `from`. */
+  drifted: number[];
+}
+
+/** One op end-to-end: drift pre-read → preconditions → write → expected-state
+ *  verify (never vacuous) → journal. Shared by runPlan and rollbackPhase. */
+async function executeOne(
+  ctx: OpCtx,
+  op: ReorgOp,
+  journal: JournalRecord[],
+  journalPath: string,
+): Promise<void> {
+  const def = OP_REGISTRY[op.op];
+
+  // 1. live pre-read + drift check (scoped to the op's read coverage)
+  const liveBefore = await def.readState(ctx, op);
+  const drift = compareState(op.from, liveBefore, def.compareKeys);
+  if (drift.length)
+    throw new ReorgMismatch(op.seq, {
+      expected: pick(op.from, def.compareKeys),
+      actual: pick(liveBefore, def.compareKeys),
+    });
+
+  // 2. op-specific preconditions (live reads)
+  if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
+
+  // 3. write
+  await def.apply(ctx, op);
+
+  // 4. expected end state vs a fresh re-read
+  const expected = def.expectedPost(op);
+  let liveAfter: Record<string, unknown> | null = null;
+  if (expected === null) {
+    // delete forms: the re-read must FAIL
+    try {
+      await def.readState(ctx, op);
+    } catch {
+      liveAfter = null; // gone, as required
+    }
+    if (liveAfter !== null)
+      throw new ReorgMismatch(op.seq, { expected: "absent", actual: "still present" });
+  } else {
+    liveAfter = await def.readState(ctx, op);
+    const bad = compareState(expected, liveAfter, def.compareKeys);
+    if (bad.length)
+      throw new ReorgMismatch(op.seq, {
+        expected: pick(expected, def.compareKeys),
+        actual: pick(liveAfter, def.compareKeys),
+      });
+  }
+
+  // 5. move-issue-team post-checks: labels re-applied; destination state
+  if (op.op === "move-issue-team" && liveAfter) {
+    const reapply = sortedStrings(op.to.reapplyLabelIds);
+    const afterLabels = sortedStrings(liveAfter.labelIds);
+    const missing = reapply.filter((l) => !afterLabels.includes(l));
+    if (missing.length)
+      throw new ReorgMismatch(op.seq, {
+        expected: { reapplyLabelIds: reapply },
+        actual: { labelIds: afterLabels, missing },
+      });
+    if (typeof op.to.stateId === "string" && liveAfter.stateId !== op.to.stateId) {
+      // (c) state didn't land at the mapped destination — separate verified
+      // set-state to the DESTINATION state (never the source's from.stateId)
+      const fix: ReorgOp = {
+        ...op,
+        op: "set-state",
+        from: { stateId: liveAfter.stateId },
+        to: { stateId: op.to.stateId },
+        evidence: `post-move destination-state correction for seq ${op.seq}`,
+      };
+      await OP_REGISTRY["set-state"].apply(ctx, fix);
+      const fixed = await readIssue(ctx, op.target.id);
+      if (fixed.stateId !== op.to.stateId)
+        throw new ReorgMismatch(op.seq, {
+          expected: { stateId: op.to.stateId },
+          actual: { stateId: fixed.stateId },
+        });
+      liveAfter.stateId = op.to.stateId;
+    }
+  }
+
+  // 6. journal (fsync) — carries the original op for rollback + cross-refs
+  const rec: JournalRecord = {
+    seq: op.seq,
+    phase: op.phase,
+    op: op.op,
+    original: op,
+    before: liveBefore,
+    after: liveAfter ?? { absent: true },
+    at: new Date().toISOString(),
+    ok: true,
+  };
+  journalAppend(journalPath, rec);
+  journal.push(rec);
+}
+
 export async function runPlan(
   client: LinearClient,
   plan: ReorgPlan,
   opts: ApplyOptions,
-): Promise<{ applied: number; skipped: number; dryRun: boolean }> {
+): Promise<RunResult> {
   let ops = plan.ops;
   if (opts.phase !== undefined) ops = ops.filter((o) => o.phase === opts.phase);
-  if (opts.maxOps !== undefined) ops = ops.slice(0, opts.maxOps);
 
   const journal = journalRead(opts.journalPath);
   const done = opts.resume ? journalOkSeqs(journal) : new Set<number>();
+
+  // resume-skip BEFORE the --max-ops slice, so a capped resume keeps advancing
+  let skipped = 0;
+  if (opts.resume) {
+    const remaining: ReorgOp[] = [];
+    for (const o of ops) {
+      if (done.has(o.seq)) skipped++;
+      else remaining.push(o);
+    }
+    ops = remaining;
+  }
+  if (opts.maxOps !== undefined) ops = ops.slice(0, opts.maxOps);
+
   const ctx: OpCtx = { client, pace: opts.pace };
+
+  // --check: dry-run PLUS a live drift pre-read per target; no writes.
+  if (opts.check && !opts.apply) {
+    const drifted: number[] = [];
+    for (const op of ops) {
+      const def = OP_REGISTRY[op.op];
+      try {
+        const live = await def.readState(ctx, op);
+        const drift = compareState(op.from, live, def.compareKeys);
+        if (drift.length) {
+          drifted.push(op.seq);
+          opts.onEvent?.({
+            kind: "drift",
+            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}`,
+          });
+        } else {
+          opts.onEvent?.({ kind: "check", detail: `ok    seq ${op.seq} [${op.op}] ${op.target.identifier}` });
+        }
+      } catch (err) {
+        drifted.push(op.seq);
+        opts.onEvent?.({
+          kind: "drift",
+          detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: read failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+    }
+    opts.onEvent?.({
+      kind: "budget",
+      detail: `check: ${ops.length} op(s) pre-read live, ${drifted.length} drifted`,
+    });
+    return { applied: 0, skipped, dryRun: true, drifted };
+  }
 
   if (!opts.apply) {
     for (const op of ops) {
@@ -1014,9 +1308,9 @@ export async function runPlan(
     }
     opts.onEvent?.({
       kind: "budget",
-      detail: `${ops.length} op(s), ≈${estimateRequests(ops)} request(s) at ${REORG_RATE_PER_HOUR}/h pace`,
+      detail: `${ops.length} op(s), ≈${estimateRequests(ops)} request(s) at ${REORG_RATE_PER_HOUR}/h pace (add --check for a live drift pre-read)`,
     });
-    return { applied: 0, skipped: 0, dryRun: true };
+    return { applied: 0, skipped, dryRun: true, drifted: [] };
   }
 
   if (!opts.backupRecordPath)
@@ -1033,16 +1327,9 @@ export async function runPlan(
     );
 
   let applied = 0;
-  let skipped = 0;
   let i = 0;
   while (i < ops.length) {
     const op = ops[i];
-
-    if (done.has(op.seq)) {
-      skipped++;
-      i++;
-      continue;
-    }
 
     // Batch run: same batchKey, batchable kind, ≤ 50, identical input.
     if (op.batchKey && (op.op === "relabel" || op.op === "set-state")) {
@@ -1052,7 +1339,6 @@ export async function runPlan(
         j < ops.length &&
         ops[j].batchKey === op.batchKey &&
         ops[j].op === op.op &&
-        !done.has(ops[j].seq) &&
         group.length < 50
       ) {
         group.push(ops[j]);
@@ -1067,80 +1353,7 @@ export async function runPlan(
       // single member — falls through to the sequential path
     }
 
-    const def = OP_REGISTRY[op.op];
-
-    // 1. pre-read + drift check (scoped to the op's read coverage)
-    const liveBefore = await def.readState(ctx, op);
-    const drift = drifted(op.from, liveBefore, def.compareKeys);
-    if (drift.length)
-      throw new ReorgMismatch(op.seq, {
-        expected: pick(op.from, def.compareKeys),
-        actual: pick(liveBefore, def.compareKeys),
-      });
-
-    // 2. op-specific preconditions
-    if (op.op === "move-issue-team") assertMovePreconditions(op, journal);
-
-    // 3. write
-    await def.apply(ctx, op);
-
-    // 4. re-read by a different query + compare
-    const liveAfter = await def.readState(ctx, op);
-    const bad = matches(op.to, liveAfter, def.compareKeys);
-    if (bad.length)
-      throw new ReorgMismatch(op.seq, {
-        expected: pick(op.to, def.compareKeys),
-        actual: pick(liveAfter, def.compareKeys),
-      });
-
-    // 5. move-issue-team post-checks: projectId unchanged; labels re-applied;
-    //    state corrected via a separate verified set-state when it drifted
-    if (op.op === "move-issue-team") {
-      if (op.from.projectId && liveAfter.projectId !== op.from.projectId)
-        throw new ReorgMismatch(op.seq, {
-          expected: { projectId: op.from.projectId },
-          actual: { projectId: liveAfter.projectId },
-        });
-      const reapply = Array.isArray(op.to.reapplyLabelIds) ? op.to.reapplyLabelIds : [];
-      const afterLabels = Array.isArray(liveAfter.labelIds) ? liveAfter.labelIds : [];
-      const missing = reapply.filter((l) => !afterLabels.includes(l));
-      if (missing.length)
-        throw new ReorgMismatch(op.seq, {
-          expected: { reapplyLabelIds: reapply },
-          actual: { labelIds: afterLabels, missing },
-        });
-      if (!op.to.stateId && op.from.stateId && liveAfter.stateId !== op.from.stateId) {
-        // (c) the state drifted in the move — separate verified set-state
-        const fix: ReorgOp = {
-          ...op,
-          op: "set-state",
-          from: { stateId: liveAfter.stateId },
-          to: { stateId: op.from.stateId },
-          evidence: `post-move state correction for seq ${op.seq}`,
-        };
-        await OP_REGISTRY["set-state"].apply(ctx, fix);
-        const fixed = await readIssue(ctx, op.target.id);
-        if (fixed.stateId !== op.from.stateId)
-          throw new ReorgMismatch(op.seq, {
-            expected: { stateId: op.from.stateId },
-            actual: { stateId: fixed.stateId },
-          });
-      }
-    }
-
-    // 6. journal (fsync) — carries the original op for rollback + cross-refs
-    const rec: JournalRecord = {
-      seq: op.seq,
-      phase: op.phase,
-      op: op.op,
-      original: op,
-      before: liveBefore,
-      after: liveAfter,
-      at: new Date().toISOString(),
-      ok: true,
-    };
-    journalAppend(opts.journalPath, rec);
-    journal.push(rec);
+    await executeOne(ctx, op, journal, opts.journalPath);
     applied++;
     opts.onEvent?.({
       kind: "applied",
@@ -1148,7 +1361,7 @@ export async function runPlan(
     });
     i++;
   }
-  return { applied, skipped, dryRun: false };
+  return { applied, skipped, dryRun: false, drifted: [] };
 }
 
 async function runBatch(
@@ -1169,7 +1382,7 @@ async function runBatch(
   for (const op of group) {
     const def = OP_REGISTRY[op.op];
     const live = await def.readState(ctx, op);
-    const drift = drifted(op.from, live, def.compareKeys);
+    const drift = compareState(op.from, live, def.compareKeys);
     if (drift.length)
       throw new ReorgMismatch(op.seq, {
         expected: pick(op.from, def.compareKeys),
@@ -1207,24 +1420,30 @@ async function runBatch(
     ctx.pace,
   );
   const byId = new Map(d.issues.nodes.map((n) => [n.id, n]));
+
+  // Journal EVERY member from the verify read — ok members with their actual
+  // after state, the mismatching one marked ok:false — THEN stop. A mid-batch
+  // mismatch never leaves writes unjournaled (resume/rollback depend on it).
+  const failures: { op: ReorgOp; why: string; expected: unknown; actual: unknown }[] = [];
   for (const op of group) {
+    const def = OP_REGISTRY[op.op];
     const n = byId.get(op.target.id);
-    if (!n) throw new ReorgMismatch(op.seq, { expected: "present", actual: "missing" });
-    if (op.op === "set-state" && op.to.stateId && n.state?.id !== op.to.stateId)
-      throw new ReorgMismatch(op.seq, {
-        expected: { stateId: op.to.stateId },
-        actual: { stateId: n.state?.id },
-      });
-    if (op.op === "relabel") {
-      const have = new Set((n.labels?.nodes ?? []).map((l) => l.id));
-      const add = Array.isArray(op.to.add) ? op.to.add : [];
-      const remove = Array.isArray(op.to.remove) ? op.to.remove : [];
-      for (const a of add)
-        if (!have.has(a as string))
-          throw new ReorgMismatch(op.seq, { expected: `label ${String(a)} present`, actual: "absent" });
-      for (const r of remove)
-        if (have.has(r as string))
-          throw new ReorgMismatch(op.seq, { expected: `label ${String(r)} absent`, actual: "present" });
+    const actual: Record<string, unknown> = n
+      ? {
+          stateId: n.state?.id ?? null,
+          labelIds: (n.labels?.nodes ?? []).map((l) => l.id).sort(),
+        }
+      : {};
+    const expected = def.expectedPost(op);
+    const bad: string[] = [];
+    if (!n) {
+      bad.push("missing from verify read");
+    } else if (expected) {
+      for (const k of def.compareKeys) {
+        if (!(k in expected)) continue;
+        if (JSON.stringify(expected[k]) !== JSON.stringify(actual[k]))
+          bad.push(`${k}: expected=${JSON.stringify(expected[k])} actual=${JSON.stringify(actual[k])}`);
+      }
     }
     const rec: JournalRecord = {
       seq: op.seq,
@@ -1232,17 +1451,29 @@ async function runBatch(
       op: op.op,
       original: op,
       before: befores.get(op.seq),
-      after: { batched: true, batchKey: op.batchKey },
+      after: actual,
       at: new Date().toISOString(),
-      ok: true,
+      ok: bad.length === 0,
+      ...(bad.length ? { error: bad.join("; ") } : {}),
     };
     journalAppend(opts.journalPath, rec);
     journal.push(rec);
+    if (bad.length)
+      failures.push({
+        op,
+        why: bad.join("; "),
+        expected: expected ? pick(expected, def.compareKeys) : null,
+        actual,
+      });
+  }
+  if (failures.length) {
+    const f = failures[0];
+    throw new ReorgMismatch(f.op.seq, { expected: f.expected, actual: f.actual });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Verify — per-phase: journal completeness + live re-check of every op's `to`
+// Verify — per-phase: journal completeness + live re-check of expected state
 // ---------------------------------------------------------------------------
 
 export async function verifyPhase(
@@ -1254,23 +1485,36 @@ export async function verifyPhase(
   const ops = plan.ops.filter((o) => o.phase === phase);
   const journal = journalRead(opts.journalPath);
   const okSeqs = journalOkSeqs(journal);
+  const bySeq = new Map<number, JournalRecord>();
+  for (const r of journal) if (typeof r.seq === "number") bySeq.set(r.seq, r);
   const failures: string[] = [];
   const ctx: OpCtx = { client, pace: opts.pace };
 
   for (const op of ops) {
-    if (!okSeqs.has(op.seq)) {
+    const rec = bySeq.get(op.seq);
+    if (!rec || !okSeqs.has(op.seq)) {
       failures.push(`seq ${op.seq} [${op.op}] ${op.target.identifier}: no ok journal entry`);
       continue;
     }
+    // The journaled original carries any executor-resolved fields (created ids)
+    const effective = rec.original ?? op;
+    const def = OP_REGISTRY[effective.op];
+    const expected = def.expectedPost(effective);
+    // move-issue-team's destination state is enforced here (the executor's
+    // correction owns it during apply; by verify time it must BE there)
+    if (expected && effective.op === "move-issue-team" && typeof effective.to.stateId === "string")
+      expected.stateId = effective.to.stateId;
     try {
-      const def = OP_REGISTRY[op.op];
-      const live = await def.readState(ctx, op);
-      const bad = matches(op.to, live, def.compareKeys);
+      const live = await def.readState(ctx, effective);
+      if (expected === null) {
+        failures.push(`seq ${op.seq} [${op.op}] ${op.target.identifier}: expected absent, still present`);
+        continue;
+      }
+      const bad = compareState(expected, live, def.compareKeys);
       for (const b of bad)
         failures.push(`seq ${op.seq} [${op.op}] ${op.target.identifier}: ${b}`);
     } catch (err) {
-      // delete-team targets no longer exist — that IS the end state
-      if (op.op === "delete-team") continue;
+      if (expected === null) continue; // gone, as required
       failures.push(
         `seq ${op.seq} [${op.op}] ${op.target.identifier}: re-read failed: ${
           err instanceof Error ? err.message : String(err)
@@ -1315,14 +1559,28 @@ export async function rollbackPhase(
       skipped.push(`seq ${String(rec.seq)} [${orig.op}]: no inverse op (manual restore required)`);
       continue;
     }
+    // Inverse ops bypass the drift check — the point is the current state
+    // differs from the original `from`. Write, then verify the inverse's own
+    // expected end state.
     await def.apply(ctx, inv);
-    const live = await def.readState(ctx, inv);
-    const bad = matches(inv.to, live, def.compareKeys);
-    if (bad.length)
-      throw new ReorgMismatch(inv.seq, {
-        expected: pick(inv.to, def.compareKeys),
-        actual: pick(live, def.compareKeys),
-      });
+    const expected = def.expectedPost(inv);
+    if (expected === null) {
+      try {
+        await def.readState(ctx, inv);
+        throw new ReorgMismatch(inv.seq, { expected: "absent", actual: "still present" });
+      } catch (err) {
+        if (err instanceof ReorgMismatch) throw err;
+        // read failed = absent, as required
+      }
+    } else {
+      const live = await def.readState(ctx, inv);
+      const bad = compareState(expected, live, def.compareKeys);
+      if (bad.length)
+        throw new ReorgMismatch(inv.seq, {
+          expected: pick(expected, def.compareKeys),
+          actual: pick(live, def.compareKeys),
+        });
+    }
     rolledBack++;
     opts.onEvent?.({
       kind: "rollback",
@@ -1333,7 +1591,7 @@ export async function rollbackPhase(
 }
 
 // ---------------------------------------------------------------------------
-// Census — the read-only snapshot the planner consumes
+// Census — the read-only snapshot the planner consumes (everything paginated)
 // ---------------------------------------------------------------------------
 
 export interface CensusOptions {
@@ -1341,101 +1599,205 @@ export interface CensusOptions {
   limit?: number;
 }
 
+export interface CensusIssue {
+  id: string;
+  identifier: string;
+  teamId: string | null;
+  teamKey: string | null;
+  stateId: string | null;
+  labelIds: string[];
+  projectId: string | null;
+  cycleId: string | null;
+  archived: boolean;
+}
+
+export interface CensusLabel extends ReorgLabelNode {
+  teamKey?: string | null;
+  issueCount: number;
+}
+
+export interface CensusTeamNode extends ReorgTeamNode {
+  name: string;
+  archivedAt?: string | null;
+  issueCount?: number | null;
+  states?: { nodes: (ReorgStateNode & { position: number })[] } | null;
+}
+
 export interface CensusData {
   workspace: { id: string; urlKey: string };
   teams: CensusTeamNode[];
-  workspaceLabels: ReorgLabelNode[];
+  issues: CensusIssue[];
+  workspaceLabels: CensusLabel[];
+  teamLabels: CensusLabel[];
   projects: ReorgProjectNode[];
   initiatives: ReorgInitiativeNode[];
   generatedAt: string;
   rateBudget: { limit: number; remaining: number };
 }
 
-interface CensusTeamNode extends ReorgTeamNode {
-  name: string;
-  archivedAt?: string | null;
-  issueCount?: number | null;
-  labels?: { nodes: ReorgLabelNode[] } | null;
-  states?: { nodes: (ReorgStateNode & { position: number })[] } | null;
+interface Page<T> {
+  nodes: T[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 
-interface CensusTeamsPage {
-  teams: {
-    nodes: CensusTeamNode[];
-    pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  };
+/** Generic first:100 cursor loop (the pull.ts pattern) with an optional cap. */
+async function paged<T>(
+  client: LinearClient,
+  pace: ApplyOptions["pace"],
+  query: string,
+  connection: string,
+  vars: Record<string, unknown>,
+  limit?: number,
+): Promise<T[]> {
+  const out: T[] = [];
+  let after: string | null = null;
+  do {
+    const d: Record<string, Page<T>> = await reorgRaw<Record<string, Page<T>>>(
+      client, query, { ...vars, first: 100, after }, pace,
+    );
+    const page: Page<T> = d[connection];
+    out.push(...page.nodes);
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    if (limit && out.length >= limit) return out.slice(0, limit);
+  } while (after);
+  return out;
 }
+
+const CENSUS_ISSUES_Q = /* GraphQL */ `
+  query ReorgCensusIssues($first: Int!, $after: String, $filter: IssueFilter) {
+    issues(first: $first, after: $after, filter: $filter, includeArchived: true) {
+      nodes {
+        id
+        identifier
+        state { id }
+        labels { nodes { id } }
+        project { id }
+        cycle { id }
+        team { id key }
+        archivedAt
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const CENSUS_LABELS_Q = /* GraphQL */ `
+  query ReorgCensusLabels($first: Int!, $after: String) {
+    issueLabels(first: $first, after: $after) {
+      nodes { id name retiredAt team { id key } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const CENSUS_PROJECTS_Q = /* GraphQL */ `
+  query ReorgCensusProjects($first: Int!, $after: String) {
+    projects(first: $first, after: $after, includeArchived: true) {
+      nodes {
+        id name targetDate trashed
+        status { id name }
+        lead { id }
+        teams { nodes { id key } }
+        initiatives { nodes { id } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const CENSUS_INITIATIVES_Q = /* GraphQL */ `
+  query ReorgCensusInitiatives($first: Int!, $after: String) {
+    initiatives(first: $first, after: $after, includeArchived: true) {
+      nodes { id name archivedAt }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const CENSUS_TEAMS_Q = /* GraphQL */ `
+  query ReorgCensusTeams($first: Int!, $after: String, $filter: TeamFilter) {
+    teams(first: $first, after: $after, includeArchived: true, filter: $filter) {
+      nodes {
+        id key name triageEnabled archivedAt issueCount
+        states { nodes { id name type position archivedAt } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
 
 /**
- * Snapshot the workspace structure: teams (+ states/labels/issue counts),
- * workspace labels, projects, initiatives. Read-only. `--team` and `--limit`
- * bound the smoke path.
+ * Snapshot the workspace structure: teams (+ states), ALL issues (the planner
+ * needs them for relabel/move/archive/set-state ops), labels with per-label
+ * issue counts, projects, initiatives. Everything paginates (first:100).
+ * Read-only. `--team` scopes teams/issues/projects; `--limit` caps the smoke
+ * path.
  */
 export async function census(
   client: LinearClient,
   opts: CensusOptions,
   pace: ApplyOptions["pace"],
 ): Promise<CensusData> {
-  const teamFilter = opts.teamKeys?.length
-    ? `, filter: { key: { in: [${opts.teamKeys.map((k) => JSON.stringify(k)).join(",")}] } }`
-    : "";
-
-  const teams: CensusTeamNode[] = [];
-  let after: string | null = null;
-  do {
-    const d: CensusTeamsPage = await reorgRaw<CensusTeamsPage>(
-      client,
-      `query ReorgCensusTeams($first: Int!, $after: String) {
-        teams(first: $first, after: $after, includeArchived: true${teamFilter}) {
-          nodes {
-            id key name triageEnabled archivedAt issueCount
-            labels { nodes { id name retiredAt } }
-            states { nodes { id name type position archivedAt } }
-          }
-          pageInfo { hasNextPage endCursor }
-        }
-      }`,
-      { first: Math.min(opts.limit ?? 50, 50), after },
-      pace,
-    );
-    teams.push(...d.teams.nodes);
-    after = d.teams.pageInfo.hasNextPage ? d.teams.pageInfo.endCursor : null;
-    if (opts.limit && teams.length >= opts.limit) break;
-  } while (after);
-
-  const ws = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-    client,
-    `query ReorgCensusWsLabels {
-      issueLabels(filter: { team: { null: true } }, first: 250) { nodes { id name retiredAt } }
-    }`,
-    {},
-    pace,
+  const teams = await paged<CensusTeamNode>(
+    client, pace, CENSUS_TEAMS_Q, "teams",
+    opts.teamKeys?.length ? { filter: { key: { in: opts.teamKeys } } } : {},
+    opts.limit,
   );
 
-  const projects = await reorgRaw<{ projects: { nodes: ReorgProjectNode[] } }>(
-    client,
-    `query ReorgCensusProjects($first: Int!) {
-      projects(first: $first, includeArchived: true) {
-        nodes {
-          id name targetDate trashed
-          status { id name }
-          lead { id }
-          teams { nodes { id } }
-          initiatives { nodes { id } }
-        }
-      }
-    }`,
-    { first: Math.min(opts.limit ?? 100, 100) },
-    pace,
-  );
+  const issueFilter = opts.teamKeys?.length
+    ? { filter: { team: { key: { in: opts.teamKeys } } } }
+    : {};
+  const rawIssues = await paged<{
+    id: string;
+    identifier: string;
+    state?: { id: string } | null;
+    labels?: { nodes: { id: string }[] } | null;
+    project?: { id: string } | null;
+    cycle?: { id: string } | null;
+    team?: { id: string; key: string } | null;
+    archivedAt?: string | null;
+  }>(client, pace, CENSUS_ISSUES_Q, "issues", issueFilter, opts.limit);
 
-  const initiatives = await reorgRaw<{ initiatives: { nodes: ReorgInitiativeNode[] } }>(
-    client,
-    `query ReorgCensusInitiatives {
-      initiatives(first: 100, includeArchived: true) { nodes { id name archivedAt } }
-    }`,
-    {},
-    pace,
+  const issues: CensusIssue[] = rawIssues.map((i) => ({
+    id: i.id,
+    identifier: i.identifier,
+    teamId: i.team?.id ?? null,
+    teamKey: i.team?.key ?? null,
+    stateId: i.state?.id ?? null,
+    labelIds: (i.labels?.nodes ?? []).map((l) => l.id).sort(),
+    projectId: i.project?.id ?? null,
+    cycleId: i.cycle?.id ?? null,
+    archived: i.archivedAt != null,
+  }));
+
+  // per-label issue counts derived from the census issues (no extra requests)
+  const countByLabel = new Map<string, number>();
+  for (const i of issues)
+    for (const l of i.labelIds) countByLabel.set(l, (countByLabel.get(l) ?? 0) + 1);
+
+  const rawLabels = await paged<ReorgLabelNode>(client, pace, CENSUS_LABELS_Q, "issueLabels", {});
+  const withCounts: CensusLabel[] = rawLabels.map((l) => ({
+    ...l,
+    teamKey: l.team?.key ?? null,
+    issueCount: countByLabel.get(l.id) ?? 0,
+  }));
+  const workspaceLabels = withCounts.filter((l) => l.team == null);
+  const teamLabelsAll = withCounts.filter((l) => l.team != null);
+  const teamLabels = opts.teamKeys?.length
+    ? teamLabelsAll.filter((l) => opts.teamKeys!.includes(l.teamKey ?? ""))
+    : teamLabelsAll;
+
+  const projectsAll = await paged<ReorgProjectNode>(
+    client, pace, CENSUS_PROJECTS_Q, "projects", {}, opts.limit,
+  );
+  const projects = opts.teamKeys?.length
+    ? projectsAll.filter((p) =>
+        (p.teams?.nodes ?? []).some((t) => opts.teamKeys!.includes(t.key)),
+      )
+    : projectsAll;
+
+  const initiatives = await paged<ReorgInitiativeNode>(
+    client, pace, CENSUS_INITIATIVES_Q, "initiatives", {},
   );
 
   const org = await reorgRaw<{ organization: { id: string; urlKey: string } }>(
@@ -1447,10 +1809,12 @@ export async function census(
 
   return {
     workspace: org.organization,
-    teams: opts.limit ? teams.slice(0, opts.limit) : teams,
-    workspaceLabels: ws.issueLabels.nodes,
-    projects: projects.projects.nodes,
-    initiatives: initiatives.initiatives.nodes,
+    teams,
+    issues,
+    workspaceLabels,
+    teamLabels,
+    projects,
+    initiatives,
     generatedAt: new Date().toISOString(),
     rateBudget: pace.tracker.snapshot,
   };
@@ -1463,7 +1827,8 @@ export async function census(
 export interface ReorgRule {
   phase: number;
   op: ReorgOpKind;
-  /** Selector into the census: {entity, where: {k: v}, teamKey?}. */
+  /** Selector into the census: {entity, where: {k: v}, teamKey?}. The entity
+   *  "none" is for creation ops (target does not exist yet). */
   match: { entity: string; where: Record<string, unknown>; teamKey?: string };
   to: Record<string, unknown>;
   evidence: string;
@@ -1476,6 +1841,8 @@ export interface ReorgRule {
  * Turn declarative rules + a census snapshot into concrete ops. `from` is
  * captured from the census here — that capture is what makes the executor
  * drift-safe. A rule that matches nothing is an error (a typo, not a no-op).
+ * add-project-team rules take `to.teamId`; the planner computes the FULL
+ * `to.teamIds` (census membership + the added id) the mutation requires.
  */
 export function planFromRules(
   rules: ReorgRule[],
@@ -1492,13 +1859,18 @@ export function planFromRules(
       );
     for (const t of targets) {
       seq++;
+      const to = { ...rule.to };
+      if (rule.op === "add-project-team" && typeof to.teamId === "string" && !to.teamIds) {
+        const current = sortedStrings(t.from.teamIds);
+        to.teamIds = [...new Set([...current, to.teamId])].sort();
+      }
       ops.push({
         seq,
         phase: rule.phase,
         op: rule.op,
         target: t.target,
         from: t.from,
-        to: rule.to,
+        to,
         evidence: rule.evidence,
         reversible: rule.reversible ?? true,
         ...(rule.approval ? { approval: rule.approval } : {}),
@@ -1518,6 +1890,17 @@ function selectTargets(
     Object.entries(where).every(([k, v]) => JSON.stringify(obj[k]) === JSON.stringify(v));
 
   switch (rule.match.entity) {
+    case "none": {
+      // creation ops — the target does not exist; one synthetic target per rule
+      return [{
+        target: {
+          type: "label",
+          id: `new:${String(rule.to.name ?? "unnamed")}`,
+          identifier: String(rule.to.name ?? "unnamed"),
+        },
+        from: { labelId: null },
+      }];
+    }
     case "team": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const t of censusData.teams) {
@@ -1529,10 +1912,31 @@ function selectTargets(
       }
       return out;
     }
+    case "issue": {
+      const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
+      for (const i of censusData.issues) {
+        if (!hit({
+          identifier: i.identifier, teamKey: i.teamKey, stateId: i.stateId,
+          projectId: i.projectId, archived: i.archived,
+        })) continue;
+        out.push({
+          target: { type: "issue", id: i.id, identifier: i.identifier },
+          from: {
+            teamId: i.teamId,
+            stateId: i.stateId,
+            labelIds: i.labelIds,
+            projectId: i.projectId,
+            cycleId: i.cycleId,
+            archived: i.archived,
+          },
+        });
+      }
+      return out;
+    }
     case "workspace-label": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const l of censusData.workspaceLabels) {
-        if (!hit({ name: l.name, retired: l.retiredAt != null })) continue;
+        if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: l.issueCount })) continue;
         out.push({
           target: { type: "label", id: l.id, identifier: l.name },
           from: { retired: l.retiredAt != null },
@@ -1542,15 +1946,13 @@ function selectTargets(
     }
     case "team-label": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
-      for (const t of censusData.teams) {
-        if (rule.match.teamKey && t.key !== rule.match.teamKey) continue;
-        for (const l of t.labels?.nodes ?? []) {
-          if (!hit({ name: l.name, retired: l.retiredAt != null })) continue;
-          out.push({
-            target: { type: "label", id: l.id, identifier: `${t.key}/${l.name}` },
-            from: { retired: l.retiredAt != null },
-          });
-        }
+      for (const l of censusData.teamLabels) {
+        if (rule.match.teamKey && l.teamKey !== rule.match.teamKey) continue;
+        if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: l.issueCount })) continue;
+        out.push({
+          target: { type: "label", id: l.id, identifier: `${l.teamKey}/${l.name}` },
+          from: { retired: l.retiredAt != null },
+        });
       }
       return out;
     }

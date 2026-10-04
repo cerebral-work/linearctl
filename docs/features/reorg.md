@@ -25,6 +25,7 @@ linearctl reorg census [--team K] [--limit N] [--out census.json]   # read-only 
 linearctl reorg plan --rules rules.json --census census.json        # → reorg-plan.jsonl
 $EDITOR reorg-plan.jsonl                                            # human review IS the authorization
 linearctl reorg apply reorg-plan.jsonl --phase N                    # dry-run: per-op diff + request budget
+linearctl reorg apply reorg-plan.jsonl --phase N --check            # dry-run + LIVE drift pre-read (exit 1 on drift)
 linearctl reorg apply reorg-plan.jsonl --phase N --apply \
   --backup-record backup.verified.json [--resume] [--max-ops N]
 linearctl reorg verify --plan reorg-plan.jsonl --phase N            # journal + live re-check → report
@@ -36,12 +37,18 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N   # inverse op
 - **Dry-run by default.** `--apply` writes; it refuses without
   `--backup-record <file>` pointing at a `{ "verifiedAt": "<ISO>" }` record
   fresher than 24 h (a verified backup precedes any bulk write).
-- **Every write is sequential**: pre-read (abort when live state drifted from
+- **Every write is sequential**: live pre-read (abort when live state drifted from
   the plan's census-time `from`) → write inside `withRetry` → re-read by a
-  **different** query → compare to `to` → append to `applied.jsonl` with
-  fsync. First mismatch stops the run with exit 3.
-- **`--resume`** skips journaled-ok seqs; interrupted runs continue where they
-  stopped.
+  **different** query → compare the op's **computed expected end state**
+  (`expectedPost` — the full post-label-set for relabel, the full teamIds for
+  add-project-team; never a vacuous key check) → append to `applied.jsonl` with
+  fsync. First mismatch stops the run with exit 3; batch members are journaled
+  individually (the mismatching one `ok:false`) before the stop, so resume and
+  rollback never lose track of a write.
+- **`--check`** is the dry-run with teeth: a live drift pre-read of every
+  target, reporting each op OK/DRIFT without writing (exit 1 on any drift).
+- **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
+  capped resume keeps advancing).
 - **Batching** is opt-in per op via `batchKey`: identical-input `relabel` /
   `set-state` ops group into `issueBatchUpdate` calls of ≤ 50, drift-checked
   per member, verified by one filtered read.
@@ -51,14 +58,23 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N   # inverse op
 - **Irreversible ops** (`delete-team`, label delete, `archive-state`) exist
   only in phase-6 plan files, each carrying an `approval` deck id, and apply
   only with `--allow-irreversible`.
-- **`move-issue-team` preconditions** (enforced by the executor, not the
-  planner): phase-1 and phase-2 verify markers green in the journal; the
-  mapped workspace labels re-sent as `addedLabelIds` in the move input (a team
-  move drops team labels) and verified present afterwards; the destination
-  team already in the issue's project membership (via census or an earlier
-  landed `add-project-team` op); the issue's `cycleId` captured in `from`
-  first; `projectId` unchanged after the move or the run stops; a drifted
-  state is corrected by a separate verified `set-state`.
+- **`delete-team` and `archive-state` re-prove emptiness live** immediately
+  before the write (0 issues incl. archived, 0 projects, 0 non-retired labels;
+  0 issues in the state) — the census is never trusted for irreversible work.
+- **`move-issue-team` preconditions** (enforced by the executor, all LIVE
+  reads): phase-1 and phase-2 verify markers green in the journal; every
+  team-scoped label on the issue (read now) already swapped by a journaled
+  relabel whose workspace replacements ride the move input as `addedLabelIds`;
+  the destination team in the project's membership **read live**; the issue's
+  `cycleId` captured in `from` first; `projectId` unchanged after the move or
+  the run stops; a state that didn't land at the mapped destination is
+  corrected by a separate verified `set-state` to the destination state.
+
+`reorg census` snapshots teams (+states), **all issues** (id, team, state,
+labels, project, cycle, archived — the planner needs them for issue ops),
+labels with per-label issue counts, projects, initiatives. Everything
+paginates; `--team` scopes teams/issues/projects, `--limit` caps the smoke
+path.
 
 ## Plan file
 

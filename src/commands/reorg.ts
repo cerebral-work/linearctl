@@ -57,7 +57,7 @@ export async function reorgCensus(opts: ReorgCensusOptions): Promise<void> {
   const teams = data.teams.length;
   const labels = data.workspaceLabels.length;
   process.stdout.write(
-    `census: ${teams} team(s), ${labels} workspace label(s), ${data.projects.length} project(s), ${data.initiatives.length} initiative(s)\n`,
+    `census: ${teams} team(s), ${data.issues.length} issue(s), ${labels} workspace label(s), ${data.teamLabels.length} team label(s), ${data.projects.length} project(s), ${data.initiatives.length} initiative(s)\n`,
   );
 }
 
@@ -77,7 +77,9 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
   const censusData: CensusData = {
     workspace: cand.workspace ?? { id: "unknown", urlKey: "unknown" },
     teams: cand.teams,
+    issues: Array.isArray(cand.issues) ? cand.issues : [],
     workspaceLabels: cand.workspaceLabels,
+    teamLabels: Array.isArray(cand.teamLabels) ? cand.teamLabels : [],
     projects: Array.isArray(cand.projects) ? cand.projects : [],
     initiatives: Array.isArray(cand.initiatives) ? cand.initiatives : [],
     generatedAt: typeof cand.generatedAt === "string" ? cand.generatedAt : "unknown",
@@ -109,6 +111,7 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
 export interface ReorgApplyOptions {
   phase?: string;
   apply?: boolean;
+  check?: boolean;
   resume?: boolean;
   maxOps?: string;
   allowIrreversible?: boolean;
@@ -124,6 +127,7 @@ export async function reorgApply(planPath: string, opts: ReorgApplyOptions): Pro
     const result = await runPlan(client, plan, {
       phase: opts.phase !== undefined ? Number.parseInt(opts.phase, 10) : undefined,
       apply: opts.apply === true,
+      check: opts.check === true,
       resume: opts.resume === true,
       maxOps: opts.maxOps !== undefined ? Number.parseInt(opts.maxOps, 10) : undefined,
       allowIrreversible: opts.allowIrreversible === true,
@@ -132,7 +136,13 @@ export async function reorgApply(planPath: string, opts: ReorgApplyOptions): Pro
       pace: makePace(),
       onEvent: (ev) => process.stdout.write(`${ev.detail}\n`),
     });
-    if (result.dryRun) {
+    if (opts.check && !opts.apply) {
+      if (result.drifted.length > 0) {
+        process.stdout.write(`check: ${result.drifted.length} op(s) drifted — plan is stale, regenerate or review\n`);
+        process.exit(1);
+      }
+      process.stdout.write(`check: no drift across the plan\n`);
+    } else if (result.dryRun) {
       process.stdout.write(`dry-run — re-run with --apply to write (journal: ${journalPath})\n`);
     } else {
       process.stdout.write(

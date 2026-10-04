@@ -18,7 +18,6 @@ const TOY_CENSUS: CensusData = {
     {
       id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null,
       issueCount: 3,
-      labels: { nodes: [{ id: "l-team-bug", name: "bug", retiredAt: null }] },
       states: {
         nodes: [
           { id: "s-todo", name: "Todo", type: "unstarted", position: 2, archivedAt: null },
@@ -27,13 +26,21 @@ const TOY_CENSUS: CensusData = {
       },
     },
   ],
-  workspaceLabels: [{ id: "l-ws-bug", name: "bug", retiredAt: null }],
+  issues: [
+    {
+      id: "i-1", identifier: "EX-1", teamId: "t-ex", teamKey: "EX",
+      stateId: "s-todo", labelIds: ["l-team-bug"], projectId: "p-1",
+      cycleId: null, archived: false,
+    },
+  ],
+  workspaceLabels: [{ id: "l-ws-bug", name: "bug", retiredAt: null, team: null, teamKey: null, issueCount: 0 }],
+  teamLabels: [{ id: "l-team-bug", name: "bug", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 1 }],
   projects: [
     {
       id: "p-1", name: "Toy Project", trashed: false,
       status: { id: "st-started", name: "Started" },
       lead: null, targetDate: null,
-      teams: { nodes: [{ id: "t-ex" }] },
+      teams: { nodes: [{ id: "t-ex", key: "EX" }] },
       initiatives: { nodes: [] },
     },
   ],
