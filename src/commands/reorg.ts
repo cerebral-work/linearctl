@@ -44,11 +44,20 @@ export interface ReorgCensusOptions {
 
 export async function reorgCensus(opts: ReorgCensusOptions): Promise<void> {
   const client = makeClient();
-  const limit = opts.limit ? Number.parseInt(opts.limit, 10) : undefined;
+  // Parse with `!== undefined`, not truthiness: "0" must reach the validator
+  // rather than being silently dropped as "no limit".
+  const limit = opts.limit !== undefined ? Number.parseInt(opts.limit, 10) : undefined;
   const data = await census(client, { teamKeys: opts.team, limit }, makePace());
   if (opts.out) {
     writeFileSync(opts.out, JSON.stringify(data, null, 2) + "\n");
     process.stderr.write(`census written to ${opts.out}\n`);
+  }
+  // A capped census is a smoke probe, not a workspace total. Say so on stderr
+  // so stdout stays pipe-clean; the JSON carries `partial` for machines.
+  if (data.partial) {
+    process.stderr.write(
+      `partial: --limit capped what was fetched; all counts are lower bounds.\n`,
+    );
   }
   if (opts.json || !opts.out) {
     printJson(data);
@@ -85,6 +94,9 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
     projects: Array.isArray(cand.projects) ? cand.projects : [],
     initiatives: Array.isArray(cand.initiatives) ? cand.initiatives : [],
     generatedAt: typeof cand.generatedAt === "string" ? cand.generatedAt : "unknown",
+    // Preserve the marker: planning against a capped census must not silently
+    // present lower-bound counts as totals.
+    partial: cand.partial === true,
     rateBudget: cand.rateBudget ?? { limit: 0, remaining: 0 },
   };
   if (opts.sinceCensus !== undefined) {

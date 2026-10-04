@@ -1,4 +1,5 @@
 import type { LinearClient, ProjectMilestone } from "@linear/sdk";
+import { drainConnection } from "../lib/paginate.js";
 import { mapPool } from "../lib/pool.js";
 import { withRetry } from "../lib/retry.js";
 import { resolveProject } from "./projects.js";
@@ -37,18 +38,14 @@ export async function roadmap(
   projectRef: string,
 ): Promise<RoadmapResult> {
   const project = await resolveProject(client, projectRef);
-  let page = await project.projectMilestones({ first: 100 });
-  const all: ProjectMilestone[] = [...page.nodes];
-  while (page.pageInfo.hasNextPage) {
-    page = await page.fetchNext();
-    all.push(...page.nodes);
-  }
+  const all: ProjectMilestone[] = await drainConnection(
+    await project.projectMilestones({ first: 100 }),
+  );
 
   const milestones = await mapPool(all, 5, async (m) => {
-    const issues = await withRetry(() => m.issues({ first: 100 }));
+    const issues = await drainConnection(await withRetry(() => m.issues({ first: 100 })));
     const issueList: RoadmapIssue[] = [];
-    let ipage = issues;
-    for (const issue of ipage.nodes) {
+    for (const issue of issues) {
       const state = await issue.state;
       const assignee = await issue.assignee;
       issueList.push({
@@ -60,22 +57,6 @@ export async function roadmap(
         assignee: assignee?.displayName ?? null,
         priority: issue.priorityLabel ?? null,
       });
-    }
-    while (ipage.pageInfo.hasNextPage) {
-      ipage = await ipage.fetchNext();
-      for (const issue of ipage.nodes) {
-        const state = await issue.state;
-        const assignee = await issue.assignee;
-        issueList.push({
-          id: issue.id,
-          identifier: issue.identifier,
-          title: issue.title,
-          state: state?.name ?? "—",
-          stateType: state?.type ?? "—",
-          assignee: assignee?.displayName ?? null,
-          priority: issue.priorityLabel ?? null,
-        });
-      }
     }
 
     const done = issueList.filter((i) => i.stateType === "completed").length;

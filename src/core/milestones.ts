@@ -1,5 +1,6 @@
 import { notFoundError } from "../lib/errors.js";
 import type { LinearClient, ProjectMilestone } from "@linear/sdk";
+import { countConnection, drainConnection } from "../lib/paginate.js";
 import { mapPool } from "../lib/pool.js";
 import { withRetry } from "../lib/retry.js";
 import { resolveProject, UUID_RE } from "./projects.js";
@@ -9,13 +10,9 @@ async function countIssues(
   client: LinearClient,
   filter: Record<string, unknown>,
 ): Promise<number> {
-  let page = await client.issues({ filter, first: 250 });
-  let n = page.nodes.length;
-  while (page.pageInfo.hasNextPage) {
-    page = await page.fetchNext();
-    n += page.nodes.length;
-  }
-  return n;
+  // Drain, then count once. Summing `page.nodes.length` per iteration
+  // re-counts every page already fetched, because fetchNext() appends.
+  return countConnection(await client.issues({ filter, first: 250 }));
 }
 
 export interface MilestoneProgress {
@@ -51,11 +48,7 @@ export async function milestones(
   } else {
     page = await client.projectMilestones({ first: 100 });
   }
-  const all: ProjectMilestone[] = [...page.nodes];
-  while (page.pageInfo.hasNextPage) {
-    page = await page.fetchNext();
-    all.push(...page.nodes);
-  }
+  const all: ProjectMilestone[] = await drainConnection(page);
 
   const progress = await mapPool(all, 5, async (m) => {
     const base = { projectMilestone: { id: { eq: m.id } } };

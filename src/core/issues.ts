@@ -1,4 +1,5 @@
 import { notFoundError, usageError } from "../lib/errors.js";
+import { drainConnection } from "../lib/paginate.js";
 import type { LinearClient, Issue } from "@linear/sdk";
 import { resolveTeamByKey } from "./teams.js";
 import { pickLabelIds } from "../lib/labels.js";
@@ -185,9 +186,8 @@ async function resolveLabelIds(
       { or: [{ team: { id: { eq: teamId } } }, { team: { null: true } }] },
     ],
   };
-  const labels = await withRetry(() => client.issueLabels({ filter }));
-  while (labels.pageInfo?.hasNextPage) await labels.fetchNext();
-  return pickLabelIds(labels.nodes, names);
+  const labels = await drainConnection(await withRetry(() => client.issueLabels({ filter })));
+  return pickLabelIds(labels, names);
 }
 
 /** Resolve an issue ref (UUID or identifier like CER-123) to its UUID. */

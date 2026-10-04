@@ -36,6 +36,7 @@ import {
   writeSync,
 } from "node:fs";
 import type { LinearClient } from "@linear/sdk";
+import { usageError } from "../lib/errors.js";
 import { withRetry } from "../lib/retry.js";
 
 // ---------------------------------------------------------------------------
@@ -1844,6 +1845,13 @@ export interface CensusData {
   initiatives: ReorgInitiativeNode[];
   generatedAt: string;
   rateBudget: { limit: number; remaining: number };
+  /**
+   * True when `--limit` capped what was fetched, so every count here is a
+   * lower bound rather than a total. The cap is applied while paging (a
+   * deliberate smoke-path cheapness), so a consumer cannot tell a capped
+   * census from a small workspace without this flag.
+   */
+  partial: boolean;
 }
 
 interface Page<T> {
@@ -1860,6 +1868,12 @@ async function paged<T>(
   vars: Record<string, unknown>,
   limit?: number,
 ): Promise<T[]> {
+  // A bad cap is a usage error, not a silently unbounded scan. The previous
+  // `limit &&` guard treated 0 as "no limit" and NaN as falsy, so both fetched
+  // the whole workspace and exited 0.
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw usageError("--limit must be a positive integer.");
+  }
   const out: T[] = [];
   let after: string | null = null;
   do {
@@ -1867,9 +1881,17 @@ async function paged<T>(
       client, query, { ...vars, first: 100, after }, pace,
     );
     const page: Page<T> = d[connection];
-    out.push(...page.nodes);
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-    if (limit && out.length >= limit) return out.slice(0, limit);
+    out.push(...(page.nodes ?? []));
+    const next = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
+    // A cursor that does not advance would loop forever.
+    after = next !== null && next === after ? null : next;
+    // Stop fetching as soon as the cap is met. Unlike a user-facing listing,
+    // census `--limit` is a smoke-test cap on what is FETCHED: it exists to
+    // keep a probe cheap against the shared request budget, and `--help`
+    // documents the resulting counts as lower bounds. Draining every page
+    // first would defeat the flag — a capped census went from ~2s to >120s
+    // and burned 1000+ requests. Page-bound is correct here, by design.
+    if (limit !== undefined && out.length >= limit) return out.slice(0, limit);
   } while (after);
   return out;
 }
@@ -2028,6 +2050,7 @@ export async function census(
     initiatives,
     generatedAt: new Date().toISOString(),
     rateBudget: pace.tracker.snapshot,
+    partial: opts.limit !== undefined,
   };
 }
 
