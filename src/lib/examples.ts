@@ -35,6 +35,7 @@ import example33 from "../../examples/operator.sh" with { type: "text" };
 import example34 from "../../examples/watch.sh" with { type: "text" };
 import example35 from "../../examples/tui.sh" with { type: "text" };
 import example36 from "../../examples/examples.sh" with { type: "text" };
+import example37 from "../../examples/backup.sh" with { type: "text" };
 
 /** Text imports are embedded by bun build --compile; no runtime filesystem dependency. */
 export const EXAMPLES: Record<string, string> = {
@@ -75,6 +76,7 @@ export const EXAMPLES: Record<string, string> = {
   "watch": example34,
   "tui": example35,
   "examples": example36,
+  "backup": example37,
 };
 
 export function exampleHint(command: string): string {
