@@ -96,7 +96,7 @@ export async function tryDelegate(
  */
 export async function watch(opts: WatchOptions): Promise<void> {
   if (!opts.once) {
-    throw usageError("`linearctl watch` currently requires --once (the long-running tail is CER-1149 follow-up).");
+    throw usageError("`linearctl watch` currently requires --once (the long-running tail is not implemented).");
   }
   if (!opts.payload) {
     throw usageError("`linearctl watch --once` requires --payload <file|-> (read the AgentSessionEvent JSON from a file or stdin).");

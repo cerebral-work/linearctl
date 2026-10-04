@@ -12,3 +12,10 @@ export function closestNames(requested: string[], available: string[]): string[]
   return [...new Set(available)].map(name => ({ name, score: Math.min(...requested.map(r => distance(r.toLowerCase().trim(), name.toLowerCase()))) }))
     .sort((a, b) => a.score - b.score || a.name.localeCompare(b.name)).slice(0, 3).map(x => x.name);
 }
+
+/** Only suggest commands close enough to be plausible typos. */
+export function closestCommand(requested: string, available: string[]): string | undefined {
+  const name = closestNames([requested], available)[0];
+  if (!name) return undefined;
+  return distance(requested, name) <= Math.max(1, Math.floor(Math.min(requested.length, name.length) * 0.4)) ? name : undefined;
+}

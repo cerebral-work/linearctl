@@ -1,7 +1,8 @@
 import { makeClient } from "../client.js";
 import { resolveTeamByKey } from "../core/teams.js";
 import { isInteractive } from "./interactive.js";
-import { Command, CommanderError } from "commander";
+import { closestCommand } from "./closest.js";
+import { Command, CommanderError, Help } from "commander";
 import { EXAMPLES, exampleHint } from "./examples.js";
 import { printCliError, usageError, refusedError } from "./errors.js";
 
@@ -15,6 +16,18 @@ export function configureCli(program: Command) {
     command.showSuggestionAfterError(true).allowExcessArguments(false);
     command.configureOutput({ writeErr: str => { diagnostic += str; } });
     command.exitOverride(err => { active = command; throw err; });
+    // Commander processes help before unknown commands. Validate the command
+    // operand before rendering help so `bogus --help` cannot look successful.
+    command.configureHelp({ formatHelp(cmd, helper) {
+      const operand = cmd.args.find(arg => !arg.startsWith("-"));
+      if (cmd.commands.length && !cmd.registeredArguments.length && operand &&
+          !cmd.commands.some(child => child.name() === operand || child.aliases().includes(operand))) {
+        active = cmd;
+        const suggestion = closestCommand(operand, cmd.commands.map(child => child.name()));
+        throw usageError(`unknown command '${operand}'${suggestion ? ` (Did you mean ${suggestion}?)` : ""}`);
+      }
+      return Help.prototype.formatHelp.call(helper, cmd, helper);
+    } });
     command.hook("preAction", async (_thisCommand, actionCommand) => {
       active = actionCommand;
       // Root hook runs once per invocation, before an API call can mask usage errors.
@@ -57,8 +70,19 @@ export function configureCli(program: Command) {
       const top = names[0];
       const form = top ? `Form: linearctl ${names.join(" ")} ${active.usage()}. ` : "";
       const example = names.length > 1 ? subcommandExample(active, names) : exampleHint(top ?? "");
-      const fallback = top ? `${form}Example: ${example}; linearctl examples ${top}` : "Example: linearctl examples comment; linearctl examples";
+      let fallback = top ? `${form}Example: ${example}; linearctl examples ${top}` : "Example: linearctl examples; linearctl --help";
       const failure = err instanceof CommanderError ? usageError((diagnostic || err.message).trim().replace(/^error: /, "")) : err;
+      const message = failure instanceof Error ? failure.message : String(failure);
+      const unknown = message.match(/unknown command '([^']+)'/);
+      if (unknown) {
+        const suggestion = closestCommand(unknown[1], active.commands.map(child => child.name()));
+        fallback = suggestion
+          ? `Example: linearctl ${[...names, suggestion].join(" ")} --help; linearctl examples ${top ?? suggestion}`
+          : "Example: linearctl examples; linearctl --help";
+      }
+      if (top === "comment") fallback = "Comment text is not positional; use --body - to read stdin. " + fallback;
+      if (message.includes("unknown option '--json'") && active === program)
+        fallback = "Place --json after the subcommand, e.g. linearctl whoami --json. " + fallback;
       // Only flags before -- are options; a literal body containing --json is not one.
       const args = argv.slice(2);
       const end = args.indexOf("--");

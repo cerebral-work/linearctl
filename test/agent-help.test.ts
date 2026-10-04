@@ -54,6 +54,46 @@ describe("agent CLI contract", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain("Did you mean comment?");
   });
+  test("unknown commands still fail with --help, without leaking top-level help", async () => {
+    for (const name of ["backup", "bogus"]) {
+      const result = await cli([name, "--help"]);
+      expect(result.code).toBe(2);
+      expect(result.out).toBe("");
+      expect(result.err).toContain(`unknown command '${name}'`);
+      expect(result.err).toContain("linearctl examples;");
+      expect(result.err).not.toContain("examples comment");
+    }
+    const typo = await cli(["commnt", "--help"]);
+    expect(typo.code).toBe(2);
+    expect(typo.err).toContain("Did you mean comment?");
+    expect(typo.err).toContain("linearctl examples comment");
+    const nested = await cli(["project", "bogus", "--help", "--json"]);
+    envelope(nested, 2, "usage");
+    expect(nested.out).toBe("");
+    // Known commands and help commands remain successful.
+    for (const args of [["comment", "--help"], ["project", "list", "--help"], ["milestone", "--project", "Example", "--help"], ["help", "comment"]]) {
+      expect((await cli(args)).code).toBe(0);
+    }
+  });
+  test("plain positional comment explicitly explains --body -", async () => {
+    const result = await cli(["comment", "X-1", "hello"]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain("Comment text is not positional");
+    expect(result.err).toContain("--body -");
+    expect(result.err).toContain("linearctl examples comment");
+  });
+  test("root --json placement gets actionable guidance", async () => {
+    const e = envelope(await cli(["--json", "nosuchcmd"]), 2, "usage");
+    expect(e.hint).toContain("Place --json after the subcommand");
+    expect(e.hint).toContain("linearctl whoami --json");
+  });
+  test("unknown-command hint follows the plausible match, or lists all examples", async () => {
+    const typo = await cli(["ratelimitt"]);
+    expect(typo.err).toContain("linearctl examples ratelimit");
+    const unknown = envelope(await cli(["nosuchcmd", "--json"]), 2, "usage");
+    expect(unknown.hint).toContain("linearctl examples;");
+    expect(unknown.hint).not.toContain("examples comment");
+  });
   test("usage takes precedence over missing credentials", async () => {
     const e = envelope(await cli(["file", "--json"]), 2, "usage");
     expect(e.hint).toContain("--desc -");

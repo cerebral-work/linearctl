@@ -30,7 +30,8 @@ With `--json`, a failure writes exactly one JSON error line to **stderr**:
 ```
 
 Command-specific hints also show a correct form, concrete example and
-`linearctl examples <command>`. Unknown commands retain spelling suggestions.
+`linearctl examples <command>`. Unknown commands retain spelling suggestions and fail even with `--help`.
+Place `--json` after the subcommand (for example `linearctl whoami --json`).
 Unknown teams list accessible keys; unknown labels suggest the three closest
 available names and `linearctl label list --team <key>`. `project list` accepts
 an omitted `--team` and lists all accessible projects.
