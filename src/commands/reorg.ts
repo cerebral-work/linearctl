@@ -44,7 +44,9 @@ export interface ReorgCensusOptions {
 
 export async function reorgCensus(opts: ReorgCensusOptions): Promise<void> {
   const client = makeClient();
-  const limit = opts.limit ? Number.parseInt(opts.limit, 10) : undefined;
+  // Parse with `!== undefined`, not truthiness: "0" must reach the validator
+  // rather than being silently dropped as "no limit".
+  const limit = opts.limit !== undefined ? Number.parseInt(opts.limit, 10) : undefined;
   const data = await census(client, { teamKeys: opts.team, limit }, makePace());
   if (opts.out) {
     writeFileSync(opts.out, JSON.stringify(data, null, 2) + "\n");

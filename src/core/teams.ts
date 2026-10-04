@@ -1,5 +1,6 @@
 import { notFoundError } from "../lib/errors.js";
 import type { LinearClient, Team } from "@linear/sdk";
+import { drainConnection } from "../lib/paginate.js";
 
 /**
  * Resolve a {@link Team} by its key (e.g. `"CER"`), case-insensitively.
@@ -27,11 +28,6 @@ export async function resolveTeamByKey(
 
 /** Exhaust the connection so hints do not omit teams beyond the first page. */
 export async function listTeamKeys(client: LinearClient): Promise<string[]> {
-  const page = await client.teams({ first: 100 });
-  const keys = page.nodes.map(t => t.key);
-  while (page.pageInfo?.hasNextPage) {
-    await page.fetchNext();
-    keys.push(...page.nodes.map(t => t.key));
-  }
-  return [...new Set(keys)].sort();
+  const teams = await drainConnection(await client.teams({ first: 100 }));
+  return [...new Set(teams.map(t => t.key))].sort();
 }

@@ -1,5 +1,5 @@
 import { makeClient } from "../client.js";
-import { createProject, listProjects, updateProject } from "../core/projects.js";
+import { createProject, listProjectsPaged, updateProject } from "../core/projects.js";
 import { readStdinFor } from "../lib/io.js";
 import { printJson, printTable } from "../lib/output.js";
 
@@ -44,20 +44,27 @@ export async function projectCreate(
 export interface ProjectListOptions {
   team?: string;
   json?: boolean;
+  limit?: number;
 }
 
 /**
- * `linearctl project list [--team CER]` — list projects, optionally team-scoped.
+ * `linearctl project list [--team CER] [--limit N]` — list projects,
+ * optionally team-scoped.
  *
- * Delegates to `core.listProjects`; this layer only formats output.
- * See docs/spec.md §6.6.
+ * Delegates to `core.listProjectsPaged`; this layer only formats output and
+ * surfaces the partial marker. See docs/spec.md §6.6.
  */
 export async function projectList(opts: ProjectListOptions): Promise<void> {
   const client = makeClient();
-  const projects = await listProjects(client, opts.team);
+  const { projects, partial } = await listProjectsPaged(client, {
+    teamKey: opts.team,
+    limit: opts.limit,
+  });
 
   if (opts.json) {
-    printJson(projects);
+    // The documented --json shape is a bare array, so truncation is flagged on
+    // each row rather than by wrapping and breaking `jq '.[]'` consumers.
+    printJson(partial ? projects.map((p) => ({ ...p, partial: true })) : projects);
     return;
   }
 
@@ -70,6 +77,11 @@ export async function projectList(opts: ProjectListOptions): Promise<void> {
     })),
     ["name", "state", "progress", "id"],
   );
+  if (partial) {
+    process.stderr.write(
+      `partial: showing ${projects.length} project(s); more exist — raise or drop --limit for the full list.\n`,
+    );
+  }
 }
 
 export interface ProjectUpdateOptions {

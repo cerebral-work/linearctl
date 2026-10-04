@@ -1,4 +1,5 @@
 import { notFoundError, usageError } from "../lib/errors.js";
+import { drainConnection } from "../lib/paginate.js";
 import type { LinearClient } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
@@ -90,10 +91,9 @@ async function resolveLabelMap(
   const filter = teamKeys.length
     ? { and: [{ or: [{ team: { key: { in: teamKeys } } }, { team: { null: true } }] }] }
     : undefined;
-  const labels = await withRetry(() => client.issueLabels({ filter }));
-  while (labels.pageInfo?.hasNextPage) await labels.fetchNext();
+  const labels = await drainConnection(await withRetry(() => client.issueLabels({ filter })));
   // pickLabelIds throws (listing every miss) if any requested name is unmatched.
-  const ids = pickLabelIds(labels.nodes, distinct);
+  const ids = pickLabelIds(labels, distinct);
   return new Map(distinct.map((n, idx) => [n.toLowerCase(), ids[idx]]));
 }
 

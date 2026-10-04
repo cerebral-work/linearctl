@@ -1,5 +1,6 @@
 import { notFoundError, refusedError, usageError } from "../lib/errors.js";
 import type { LinearClient, Project } from "@linear/sdk";
+import { applyLimit, drainUnique } from "../lib/paginate.js";
 import { resolveTeamByKey } from "./teams.js";
 
 export const UUID_RE =
@@ -75,31 +76,63 @@ export interface ProjectSummary {
   progress: number;
 }
 
+/** A project listing plus whether `--limit` cut it short. */
+export interface ProjectListing {
+  projects: ProjectSummary[];
+  /** True only when `limit` dropped rows; a complete listing is never partial. */
+  partial: boolean;
+}
+
+export interface ListProjectsOptions {
+  teamKey?: string;
+  /** Cap the rows returned. Marks the listing partial when it truncates. */
+  limit?: number;
+}
+
 /**
- * List projects, optionally restricted to a team (resolved by key). Returns the
- * connection's nodes as plain summaries; the caller renders them.
+ * List projects, optionally restricted to a team (resolved by key).
+ *
+ * Follows the listing contract (docs/agent-facility.md): the connection is
+ * drained to the end, each project is returned once, the rows are ordered
+ * before any cap is applied, and `--limit` marks the result partial. The
+ * previous implementation pushed `connection.nodes` into a separate array on
+ * every `fetchNext()`, and since the SDK appends to that same array it
+ * reported 141 rows for 91 projects.
  */
-export async function listProjects(
+export async function listProjectsPaged(
   client: LinearClient,
-  teamKey?: string,
-): Promise<ProjectSummary[]> {
-  let connection = teamKey
-    ? await (await resolveTeamByKey(client, teamKey)).projects({ first: 50 })
+  opts: ListProjectsOptions = {},
+): Promise<ProjectListing> {
+  const connection = opts.teamKey
+    ? await (await resolveTeamByKey(client, opts.teamKey)).projects({ first: 50 })
     : await client.projects({ first: 50 });
 
-  const all = [...connection.nodes];
-  while (connection.pageInfo.hasNextPage) {
-    connection = await connection.fetchNext();
-    all.push(...connection.nodes);
-  }
+  const all = await drainUnique(connection);
 
-  return all.map((p) => ({
+  const rows: ProjectSummary[] = all.map((p) => ({
     id: p.id,
     name: p.name,
     url: p.url,
     state: p.state,
     progress: p.progress,
   }));
+  // Order the complete listing before truncating, so a cap is a stable prefix
+  // and does not depend on page boundaries or server ordering.
+  rows.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+  const { rows: projects, partial } = applyLimit(rows, opts.limit);
+  return { projects, partial };
+}
+
+/**
+ * Array-returning form, preserved as the stable entry point for callers that
+ * do not care about truncation.
+ */
+export async function listProjects(
+  client: LinearClient,
+  teamKey?: string,
+): Promise<ProjectSummary[]> {
+  return (await listProjectsPaged(client, { teamKey })).projects;
 }
 
 export interface ProjectOverview {

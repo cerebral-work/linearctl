@@ -176,6 +176,7 @@ projectCmd
   .command("list")
   .description("List projects (optionally restricted to a team).")
   .option("--team <key>", "restrict to a team key (e.g. CER)")
+  .option("--limit <n>", "cap rows returned; marks the listing partial when it truncates", parseInt)
   .option("--json", "emit JSON")
   .action((opts) => projectList(opts));
 

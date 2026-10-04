@@ -1,4 +1,5 @@
 import type { LinearClient } from "@linear/sdk";
+import { drainConnection } from "../lib/paginate.js";
 import { closestNames } from "../lib/closest.js";
 import { notFoundError } from "../lib/errors.js";
 import { withRetry } from "../lib/retry.js";
@@ -19,15 +20,15 @@ export async function resolveReadMilestones(
     first: 100,
     filter: { ...scope, name: { eqIgnoreCase: name } },
   }));
-  while (matches.pageInfo.hasNextPage) await withRetry(() => matches.fetchNext());
-  if (matches.nodes.length) {
-    return { ids: [...new Set(matches.nodes.map(m => m.id))], projectId: project?.id };
+  const matched = await drainConnection(matches);
+  if (matched.length) {
+    return { ids: [...new Set(matched.map(m => m.id))], projectId: project?.id };
   }
 
   // A successful catalog query is the control for a negative lookup and supplies hints.
   const available = await withRetry(() => client.projectMilestones({ first: 100, filter: scope }));
-  while (available.pageInfo.hasNextPage) await withRetry(() => available.fetchNext());
-  const closest = closestNames([name], available.nodes.map(m => m.name));
+  const catalog = await drainConnection(available);
+  const closest = closestNames([name], catalog.map(m => m.name));
   const location = project ? `in project ${JSON.stringify(project.name)}` : "across all projects accessible to the viewer";
   throw notFoundError(
     `no milestone matching ${JSON.stringify(name)} ${location}.`,

@@ -36,6 +36,7 @@ import {
   writeSync,
 } from "node:fs";
 import type { LinearClient } from "@linear/sdk";
+import { usageError } from "../lib/errors.js";
 import { withRetry } from "../lib/retry.js";
 
 // ---------------------------------------------------------------------------
@@ -1860,6 +1861,12 @@ async function paged<T>(
   vars: Record<string, unknown>,
   limit?: number,
 ): Promise<T[]> {
+  // A bad cap is a usage error, not a silently unbounded scan. The previous
+  // `limit &&` guard treated 0 as "no limit" and NaN as falsy, so both fetched
+  // the whole workspace and exited 0.
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw usageError("--limit must be a positive integer.");
+  }
   const out: T[] = [];
   let after: string | null = null;
   do {
@@ -1867,11 +1874,14 @@ async function paged<T>(
       client, query, { ...vars, first: 100, after }, pace,
     );
     const page: Page<T> = d[connection];
-    out.push(...page.nodes);
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-    if (limit && out.length >= limit) return out.slice(0, limit);
+    out.push(...(page.nodes ?? []));
+    const next = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
+    // A cursor that does not advance would loop forever.
+    after = next !== null && next === after ? null : next;
   } while (after);
-  return out;
+  // Truncate only after the full scan: stopping at the first page that
+  // satisfies `limit` caps an arbitrary page-bound subset.
+  return limit !== undefined ? out.slice(0, limit) : out;
 }
 
 const CENSUS_ISSUES_Q = /* GraphQL */ `
