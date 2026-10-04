@@ -25,6 +25,7 @@ import { commentsCmd } from "./commands/comments.js";
 import { releaseNotesCmd } from "./commands/release-notes.js";
 import { standup } from "./commands/standup.js";
 import { pull } from "./commands/pull.js";
+import { backup } from "./commands/backup.js";
 import { ratelimit } from "./commands/ratelimit.js";
 import { authClientCredentials, authExchangeCode, authRefresh, authWhoami } from "./commands/auth.js";
 import { watch } from "./commands/watch.js";
@@ -361,6 +362,24 @@ program
   .option("--json", "emit JSON (always JSON; flag accepted for consistency)")
   .option("--limit <n>", "cap results (soma dev/testing safety)", parseInt)
   .action((opts) => pull(opts));
+
+program
+  .command("backup")
+  .description("Read-only workspace backup to a local directory (JSONL per entity + manifest + issue markdown); --verify checks one.")
+  .option("--out <dir>", "parent directory; the run is written to <dir>/linear-<UTC>/")
+  .option("--include-history", "second pass: per-issue history (slow, resumable)")
+  .option("--since <window>", "incremental: only entities updated since (7d, 24h or ISO date); marks the manifest partial")
+  .option("--team <key...>", "restrict to team key(s); marks the manifest partial")
+  .option("--limit <n>", "cap rows per entity (smoke tests); marks the manifest partial", parseInt)
+  .option("--entities <csv>", "only these entities (comma-separated)")
+  .option("--resume", "continue the latest interrupted run under --out (same flags)")
+  .option("--markdown", "write issues-md/ (default)")
+  .option("--no-markdown", "skip issues-md/")
+  .option("--verify <dir>", "verify a backup: hashes, counts, references, live drift (exit 0/1/2; 3 = usage)")
+  .option("--tolerance <fraction>", "verify: allowed live count drift per entity (default 0.02)", parseFloat)
+  .option("--offline", "verify: skip the live comparison")
+  .option("--json", "emit JSON")
+  .action((opts) => backup(opts));
 
 program
   .command("show")
