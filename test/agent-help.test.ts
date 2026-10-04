@@ -55,7 +55,7 @@ describe("agent CLI contract", () => {
     expect(r.err).toContain("Did you mean comment?");
   });
   test("unknown commands still fail with --help, without leaking top-level help", async () => {
-    for (const name of ["backup", "bogus"]) {
+    for (const name of ["nosuchcmd", "bogus"]) {
       const result = await cli([name, "--help"]);
       expect(result.code).toBe(2);
       expect(result.out).toBe("");
