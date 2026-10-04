@@ -137,6 +137,11 @@ function fakeClient(be: FakeBackend): LinearClient {
       const nodes = [...be.labels.values()].filter((l) => l.name === vars.name && l.teamId == null);
       return ok({ issueLabels: { nodes } });
     }
+    if (query.includes("ReorgLabelsByNameAllScopes")) {
+      be.readCalls++;
+      const nodes = [...be.labels.values()].filter((l) => l.name === vars.name);
+      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: l.name, team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
+    }
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
       const ids = vars.ids as string[];
@@ -232,14 +237,18 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelCreate"))
       return W("issueLabelCreate", () => {
         const input = vars.input as { name: string; description?: string };
+        // Linear enforces label-name uniqueness ACROSS workspace + team scope
+        if ([...be.labels.values()].some((l) => l.name === input.name))
+          throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
         const id = `l-new-${++be.createdLabelSeq}`;
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
       });
     if (query.includes("ReorgLabelUpdate"))
       return W("issueLabelUpdate", () => {
         const l = be.labels.get(vars.id as string)!;
-        const input = vars.input as { retiredAt?: string | null };
+        const input = vars.input as { retiredAt?: string | null; name?: string };
         if ("retiredAt" in input) l.retiredAt = input.retiredAt ?? null;
+        if (typeof input.name === "string") l.name = input.name;
       });
     if (query.includes("ReorgLabelDelete"))
       return W("issueLabelDelete", () => { be.labels.delete(vars.id as string); });
@@ -1159,6 +1168,58 @@ describe("archive-state gating (bug fix)", () => {
     });
     writeFileSync(p, JSON.stringify({ _meta: planWith([]).meta }) + "\n" + JSON.stringify(op) + "\n");
     expect(() => parsePlanFile(p)).toThrow("out of its allowed phase");
+  });
+});
+
+describe("rename-label + cross-scope uniqueness (planner addition)", () => {
+  test("rename-label triple: apply renames, verify green, rollback restores the name", async () => {
+    const be = freshBackend();
+    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    const j = join(dir, "j.jsonl");
+    const op = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      from: { name: "bug" }, to: { name: "bug·old-EX" },
+    });
+    await applyPlan(be, [op], j);
+    expect(be.labels.get("l-t")!.name).toBe("bug·old-EX");
+    const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(true);
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace() });
+    expect(rb.rolledBack).toBe(1);
+    expect(be.labels.get("l-t")!.name).toBe("bug");
+  });
+
+  test("the fake enforces cross-scope uniqueness like Linear (create fails on any copy)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    await expect(applyPlan(be, [baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
+      from: { labelId: null }, to: { name: "bug" },
+    })], join(dir, "j.jsonl"))).rejects.toThrow("Duplicate label name");
+  });
+
+  test("--check flags the name conflict as drift; a planned rename clears it", async () => {
+    const be = freshBackend();
+    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
+      from: { labelId: null }, to: { name: "bug" },
+    });
+    const conflicted = await runPlan(fakeClient(be), planWith([create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(conflicted.drifted).toContain(2);
+
+    const rename = baseOp({
+      seq: 1, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      from: { name: "bug" }, to: { name: "bug·old-EX" },
+    });
+    const cleared = await runPlan(fakeClient(be), planWith([rename, create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j2.jsonl"), pace: fastPace(),
+    });
+    expect(cleared.drifted).toEqual([]);
   });
 });
 

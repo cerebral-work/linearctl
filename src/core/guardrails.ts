@@ -31,6 +31,7 @@ const GATED_KINDS: ReadonlySet<string> = new Set([
   // irreversible ones additionally need --allow-irreversible + a deck approval
   "create-workspace-label",
   "relabel",
+  "rename-label",
   "retire-or-delete-label",
   "set-state",
   "enable-triage",

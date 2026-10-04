@@ -264,6 +264,41 @@ describe("planner warnings + coercion", () => {
   });
 });
 
+describe("phase-1 ordering (rename → create → relabel → retire)", () => {
+  test("scrambled rule order still emits the safe seq order", () => {
+    const plan = planFromRules(
+      [
+        rule({
+          op: "retire-or-delete-label",
+          match: { entity: "team-label", teamKey: "EX", where: { name: "bug" } },
+          to: { retired: true }, evidence: "retire",
+        }),
+        rule({
+          op: "relabel", match: { entity: "issue", where: { label: "bug" } },
+          to: { add: ["name:bug"], remove: ["l-team-bug"] }, evidence: "relabel",
+        }),
+        rule({
+          op: "create-workspace-label", match: { entity: "none", where: {} },
+          to: { name: "bug", color: "#e5484d" }, evidence: "create",
+        }),
+        rule({
+          op: "rename-label",
+          match: { entity: "team-label", teamKey: "EX", where: { name: "bug" } },
+          to: { name: "bug·old-EX" }, evidence: "rename",
+        }),
+      ],
+      TOY_CENSUS, META,
+    );
+    expect(plan.ops.map((o) => o.op)).toEqual([
+      "rename-label",
+      "create-workspace-label",
+      "relabel",
+      "retire-or-delete-label",
+    ]);
+    expect(plan.ops.map((o) => o.seq)).toEqual([1, 2, 3, 4]);
+  });
+});
+
 describe("--since-census guard", () => {
   test("stale census refused; fresh passes", async () => {
     const rulesPath = join(dir, "rules.json");

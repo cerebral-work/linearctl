@@ -88,14 +88,22 @@ workspaceId, rulesHash, warnings[]}}`, then one op per line:
 ```
 
 `from` is captured at census time and is the executor's drift anchor.
-The 19 ops: `create-workspace-label`, `relabel`, `retire-or-delete-label`,
-`set-state`, `enable-triage`, `archive-state`, `set-project-status`,
-`set-project-lead`, `set-project-target`, `add-project-team`,
-`remove-project-team`, `move-project-initiative`, `set-initiative-owner`,
-`archive-issue`, `archive-project`, `archive-initiative`, `move-issue-team`,
-`create-project-status`, `delete-team`.
+The 20 ops: `create-workspace-label`, `relabel`, `rename-label`,
+`retire-or-delete-label`, `set-state`, `enable-triage`, `archive-state`,
+`set-project-status`, `set-project-lead`, `set-project-target`,
+`add-project-team`, `remove-project-team`, `move-project-initiative`,
+`set-initiative-owner`, `archive-issue`, `archive-project`,
+`archive-initiative`, `move-issue-team`, `create-project-status`,
+`delete-team`.
 
 Notes per kind:
+- **`rename-label` exists because Linear enforces label-name uniqueness ACROSS
+  workspace and team scope** — a workspace `create-workspace-label` fails
+  while any team copy carries the name. The planner therefore orders phase 1
+  by kind regardless of rule order: renames → creates → relabels → retires.
+  `--check` preflights every create against ALL scopes (accounting for planned
+  renames) and reports a conflict as drift, instead of letting Linear reject
+  it mid-apply.
 - `archive-state` is **never** reversible (Linear has no unarchive): the
   planner coerces it to `reversible:false` and requires an approval id;
   `reversible:false` is allowed in phase 2 (states) or 6 (deletes) only.

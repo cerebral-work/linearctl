@@ -45,6 +45,7 @@ import { withRetry } from "../lib/retry.js";
 export const REORG_OPS = [
   "create-workspace-label",
   "relabel",
+  "rename-label",
   "retire-or-delete-label",
   "set-state",
   "enable-triage",
@@ -663,6 +664,13 @@ const M = {
     initiativeUpdate(id: $id, input: $input) { success } }`,
 };
 
+/** All-scopes labels by exact name — the --check create-conflict preflight. */
+const LABELS_BY_NAME_ALL_SCOPES_Q = /* GraphQL */ `
+  query ReorgLabelsByNameAllScopes($name: String!) {
+    issueLabels(filter: { name: { eq: $name } }, first: 250) { nodes { id name team { id key } } }
+  }
+`;
+
 /** One issue in a state? (archive-state precondition: only empty states.) */
 const ISSUES_IN_STATE_Q = /* GraphQL */ `
   query ReorgIssuesInState($id: String!) {
@@ -748,6 +756,24 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
         to: { add: op.to.remove ?? [], remove: op.to.add ?? [] },
         evidence: `rollback of seq ${op.seq}`,
       };
+    },
+  },
+
+  "rename-label": {
+    // IssueLabelUpdateInput.name — needed because Linear enforces label-name
+    // uniqueness ACROSS workspace and team scope: a workspace create fails
+    // while any team copy carries the name. Rename copies first, then create.
+    compareKeys: ["name"],
+    readState: (ctx, op) => readLabel(ctx, op.target.id),
+    expectedPost: (op) => ({ name: op.to.name }),
+    async apply(ctx, op) {
+      await mutate(ctx, "issueLabelUpdate", M.labelUpdate, {
+        id: op.target.id,
+        input: { name: op.to.name },
+      });
+    },
+    inverse(op) {
+      return { ...op, from: op.to, to: { name: op.from.name }, evidence: `rollback of seq ${op.seq}` };
     },
   },
 
@@ -1441,6 +1467,27 @@ export async function runPlan(
         });
       }
     }
+    // create-conflict preflight: a create-workspace-label fails at Linear if
+    // ANY label (any scope) still carries the name. Planned rename-label ops
+    // clear their targets' names, so they don't count as conflicts.
+    const renamedAway = new Set(
+      ops.filter((o) => o.op === "rename-label").map((o) => o.target.id),
+    );
+    for (const op of ops.filter((o) => o.op === "create-workspace-label")) {
+      const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+        ctx.client, LABELS_BY_NAME_ALL_SCOPES_Q, { name: op.to.name }, ctx.pace,
+      );
+      const conflicts = d.issueLabels.nodes.filter((l) => !renamedAway.has(l.id));
+      if (conflicts.length > 0) {
+        drifted.push(op.seq);
+        opts.onEvent?.({
+          kind: "drift",
+          detail: `DRIFT seq ${op.seq} [create-workspace-label] "${String(op.to.name)}": name still taken by ${conflicts
+            .map((l) => `${l.id}${l.team ? ` (team ${l.team.key})` : " (workspace)"}`)
+            .join(", ")} — plan a rename-label first`,
+        });
+      }
+    }
     opts.onEvent?.({
       kind: "budget",
       detail: `check: ${ops.length} op(s) pre-read live, ${drifted.length} drifted`,
@@ -2071,7 +2118,23 @@ export function planFromRules(
         );
     }
   }
-  return { meta, ops, warnings };
+  // Phase-1 ordering invariant: rename-label → create-workspace-label →
+  // relabel → retire-or-delete-label. Linear enforces label-name uniqueness
+  // across workspace AND team scope, so a create fails while any team copy
+  // carries the name; renames clear the names first. Stable within phases.
+  const PHASE1_RANK: Record<string, number> = {
+    "rename-label": 0,
+    "create-workspace-label": 1,
+    "relabel": 2,
+    "retire-or-delete-label": 3,
+  };
+  const ordered = [...ops].sort(
+    (a, b) =>
+      a.phase - b.phase ||
+      (a.phase === 1 ? (PHASE1_RANK[a.op] ?? 99) - (PHASE1_RANK[b.op] ?? 99) : 0),
+  );
+  ordered.forEach((o, i) => { o.seq = i + 1; });
+  return { meta, ops: ordered, warnings };
 }
 
 function selectTargets(
