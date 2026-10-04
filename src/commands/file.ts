@@ -1,3 +1,4 @@
+import { CliError, assertBatchSucceeded, refusedError, usageError } from "../lib/errors.js";
 import { resolveProject, UUID_RE } from "../core/projects.js";
 import { makeClient } from "../client.js";
 import { createIssue, addRelations } from "../core/issues.js";
@@ -36,8 +37,14 @@ export interface FileOptions {
  * can exhaust the window (spec §7 T6, CER-1141). Mirrors `update --stdin`.
  */
 async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOptions): Promise<void> {
-  const items = parseFileBatchSpec(await readStdin());
-  if (items.length === 0) throw new Error("--stdin: no issues in the plan.");
+  const raw = await readStdin();
+  if (!raw) throw usageError("--stdin was empty.", "pipe the file: cat plan.json | linearctl file --stdin; add --apply to write.");
+  let items;
+  try { items = parseFileBatchSpec(raw); } catch (err) {
+    if (err instanceof SyntaxError) throw usageError("--stdin must contain a JSON array or NDJSON objects.");
+    throw err;
+  }
+  if (items.length === 0) throw usageError("--stdin: no issues in the plan.");
 
   // Validate project refs in dry-run so the preview is a reliable predictor
   // of what --apply will do (CER-1604). A non-UUID project ref that can't be
@@ -65,7 +72,7 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
   const apiKey = process.env.LINEAR_API_KEY as string;
   const quota = await fetchRateLimit(apiKey).catch(() => null);
   if (quota && (isExhausted(quota) || (quota.requests.remaining ?? Infinity) < items.length * 3)) {
-    throw new Error(
+    throw new CliError("rate_limit",
       `rate budget too low for a ${items.length}-issue batch ` +
         `(${quota.requests.remaining ?? "?"} requests remaining) — see \`linearctl ratelimit\`.`,
     );
@@ -80,6 +87,7 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
   const failed = outcomes.filter((o) => o.error);
   if (opts.json) {
     printJson({ apply: true, created: ok.length, failed: failed.length, outcomes });
+    assertBatchSucceeded(failed);
     return;
   }
   process.stdout.write(`created ${ok.length}/${outcomes.length} issue(s).\n`);
@@ -88,6 +96,7 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
     process.stdout.write(`failed ${failed.length}:\n`);
     for (const o of failed) process.stdout.write(`  ${o.title}: ${o.error}\n`);
   }
+  assertBatchSucceeded(failed);
 }
 
 /**
@@ -116,8 +125,8 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
     if (!team) team = await promptTeamKey(client);
     if (description === undefined) description = await promptOptionalText("Description");
   }
-  if (!title) throw new Error("file needs a <title>.");
-  if (!team) throw new Error("file needs --team <key> (e.g. CER).");
+  if (!title) throw usageError("file needs a <title>.");
+  if (!team) throw usageError("file needs --team <key> (e.g. CER).");
   const teamKey = team;
   const issueTitle = title;
 
@@ -129,7 +138,7 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
       const lines = dups.matches
         .map((m) => `  ${m.identifier} (${m.score.toFixed(2)})  ${m.title}`)
         .join("\n");
-      throw new Error(
+      throw refusedError(
         `${dups.matches.length} likely duplicate(s) found (use --force to file anyway):\n${lines}`,
       );
     }

@@ -1,3 +1,4 @@
+import { notFoundError } from "../lib/errors.js";
 import type { LinearClient, Team } from "@linear/sdk";
 
 /**
@@ -16,9 +17,21 @@ export async function resolveTeamByKey(
   const teams = await client.teams({ filter: { key: { eqIgnoreCase: k } } });
   const team = teams.nodes[0];
   if (!team) {
-    throw new Error(
-      `no team with key ${JSON.stringify(k)} — check the key in Linear (Settings → Teams).`,
+    const keys = await listTeamKeys(client);
+    throw notFoundError(
+      `no team with key ${JSON.stringify(k)} — available team keys: ${keys.join(", ") || "(none visible)"}; check Linear Settings → Teams.`,
     );
   }
   return team;
+}
+
+/** Exhaust the connection so hints do not omit teams beyond the first page. */
+export async function listTeamKeys(client: LinearClient): Promise<string[]> {
+  const page = await client.teams({ first: 100 });
+  const keys = page.nodes.map(t => t.key);
+  while (page.pageInfo?.hasNextPage) {
+    await page.fetchNext();
+    keys.push(...page.nodes.map(t => t.key));
+  }
+  return [...new Set(keys)].sort();
 }

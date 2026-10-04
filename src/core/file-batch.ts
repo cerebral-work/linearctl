@@ -1,3 +1,4 @@
+import { cliError, type ErrorKind, usageError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { createIssue, type CreatedIssue } from "./issues.js";
 
@@ -19,13 +20,13 @@ export function parseFileBatchSpec(raw: string): BatchFileItem[] {
   if (!text) return [];
   const coerce = (x: unknown, i: number): BatchFileItem => {
     if (typeof x !== "object" || x === null || typeof (x as BatchFileItem).title !== "string") {
-      throw new Error(`batch item ${i}: needs at least a string "title".`);
+      throw usageError(`batch item ${i}: needs at least a string "title".`);
     }
     return x as BatchFileItem;
   };
   if (text.startsWith("[")) {
     const arr = JSON.parse(text) as unknown;
-    if (!Array.isArray(arr)) throw new Error("batch spec must be a JSON array or NDJSON of objects.");
+    if (!Array.isArray(arr)) throw usageError("batch spec must be a JSON array or NDJSON of objects.");
     return arr.map(coerce);
   }
   return text
@@ -39,6 +40,7 @@ export interface BatchFileOutcome {
   team: string;
   created?: CreatedIssue;
   error?: string;
+  kind?: ErrorKind;
 }
 
 /**
@@ -58,7 +60,7 @@ export async function batchFileIssues(
   for (const [i, item] of items.entries()) {
     const team = item.team ?? defaultTeam;
     if (!team) {
-      outcomes.push({ title: item.title, team: "—", error: "no team (item.team or --team)" });
+      outcomes.push({ title: item.title, team: "—", error: "no team (item.team or --team)", kind: "usage" });
       continue;
     }
     try {
@@ -78,7 +80,8 @@ export async function batchFileIssues(
       outcomes.push({
         title: item.title,
         team,
-        error: err instanceof Error ? err.message : String(err),
+        error: cliError(err).message,
+        kind: cliError(err).kind,
       });
     }
     onProgress?.(i + 1, items.length);

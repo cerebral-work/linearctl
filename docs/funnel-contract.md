@@ -51,7 +51,9 @@ linearctl pull \
 
 Output is **JSON to stdout only** (no human-table path — use `search` for
 that). Logs/errors go to stderr. Exit `0` on success (including zero-result),
-`1` on error, `2` if the API rate limit is exhausted (see §4).
+`2` on usage errors, `3` on auth failures, `4` on missing resources, `5` on
+exhausted rate limits, `6` on refusal and `1` on other failures (see the
+[agent contract](agent-facility.md#headless-cli-contract)).
 
 ### JSON schema — `PullIssue`
 
@@ -168,11 +170,12 @@ issue's **own team** (case-insensitive name match). The state name comes from
 ```
 
 **Error → exit code:**
-- `1` — issue not found, state name not found on the team, or Linear reports
-  the mutation did not succeed. The error message lists the team's available
-  state names when the state isn't found.
-- `2` — (only from `ratelimit`; `update` does not gate, but the operator
-  SHOULD check §4 before a batch).
+- `2` — invalid arguments or plan.
+- `3` — authentication failure.
+- `4` — issue or workflow state not found (available state names are listed).
+- `5` — rate limited; probe quota before batching.
+- `6` — a write guard refused the operation (including a bulk dry-run).
+- `1` — other runtime or mutation failure.
 
 The operator may also set other fields in the same call (`--assignee`,
 `--priority`, `--label`, `--project`, `--milestone`, `--cycle`, `--parent`,
@@ -234,7 +237,8 @@ non-destructive (additive), so there is no `--apply` dry-run gate.
 ```
 
 **Error → exit code:**
-- `1` — issue not found, empty body, or Linear rejects the mutation.
+- `2` — empty body or invalid arguments; `3` — auth; `4` — issue not found;
+  `5` — rate limit; `6` — refusal; `1` — other mutation failure.
 
 **Equivalent Linear GraphQL:**
 
@@ -268,11 +272,11 @@ the binary with `op run` for CLI use.
 
 | Limiter | Whose | What linearctl does |
 |---|---|---|
-| Linear API complexity / `RATELIMITED` | Linear's | Still applies. The operator SHOULD probe headroom before a batch via `linearctl ratelimit` (exit `2` when exhausted) and back off on `RATELIMITED`. |
+| Linear API complexity / `RATELIMITED` | Linear's | Still applies. The operator SHOULD probe headroom before a batch via `linearctl ratelimit` (exit `5` when exhausted) and back off on `RATELIMITED`. |
 
 ```bash
 # before a reconcile batch:
-linearctl ratelimit --json  # exit 2 if exhausted → defer the run
+linearctl ratelimit --json  # exit 5 if exhausted → defer the run
 ```
 
 ### Non-goals (operator does these, not linearctl)
@@ -296,4 +300,4 @@ linearctl ratelimit --json  # exit 2 if exhausted → defer the run
 | TRANSITION fails + exits non-zero | `linearctl update INVALID-999 --state "X"` | exit `1`, stderr message |
 | COMMENT fails + exits non-zero | `linearctl comment INVALID-999 --body "x"` | exit `1`, stderr message |
 | No ANSI in piped JSON | `linearctl pull --team CER --json \| cat -v` | no `^[` sequences |
-| Rate-limit probe | `linearctl ratelimit --json` | returns remaining/reset; exit `2` when exhausted |
+| Rate-limit probe | `linearctl ratelimit --json` | returns remaining/reset; exit `5` when exhausted |

@@ -1,3 +1,4 @@
+import { usageError } from "./errors.js";
 /**
  * Parse a relative duration like `7d`, `24h`, `2w`, `30m`, `45s` into a past
  * {@link Date}. A bare integer is treated as days. Throws on malformed input.
@@ -8,7 +9,7 @@
 export function sinceToDate(spec: string, now: Date = new Date()): Date {
   const m = /^(\d+)\s*([smhdw]?)$/.exec(spec.trim());
   if (!m) {
-    throw new Error(
+    throw usageError(
       `invalid --since value: "${spec}" (expected e.g. 7d, 24h, 2w, 30m)`,
     );
   }

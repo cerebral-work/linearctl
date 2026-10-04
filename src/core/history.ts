@@ -1,3 +1,4 @@
+import { notFoundError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 
@@ -223,7 +224,7 @@ export async function history(
     >(HISTORY_QUERY, vars),
   );
   const issue = res.data?.issue;
-  if (!issue) throw new Error(`no issue matching ${JSON.stringify(id)}.`);
+  if (!issue) throw notFoundError(`no issue matching ${JSON.stringify(id)}.`);
 
   // Resolve label names once, only when label events exist.
   const labelIds = new Set<string>();

@@ -1,5 +1,61 @@
 # linearctl — Agent Facility (CER-1188)
 
+## Headless CLI contract
+
+`linearctl examples [command]` prints runnable Bash scripts from `examples/*.sh`.
+The scripts are embedded in the compiled binary and work without a source checkout.
+Set the resource variables named at the top of a script (for example `TEAM`,
+`ISSUE`, or `PLAN`) and `LINEAR_API_KEY` for API commands. Examples include a
+version check (>= 0.7.0), quota preflight, stdin bodies and re-reading after writes.
+The `examples` command itself never needs credentials or executes the scripts.
+
+| Exit | Kind | Meaning |
+|---|---|---|
+| 0 | success | Completed successfully, including an empty read result |
+| 2 | usage | Missing/invalid arguments, malformed plans, empty stdin |
+| 3 | auth | Missing or rejected credentials |
+| 4 | not_found | Referenced issue, project, team, label or other resource not found |
+| 5 | rate_limit | API rate limit or quota preflight exhausted |
+| 6 | refused | Dry-run write guard, duplicate check, or policy refusal |
+| 1 | other | Transport, server, filesystem or unexpected failure |
+
+An interrupted interactive prompt retains the conventional exit 130. Daemon
+signal shutdown remains exit 0. The table describes CLI invocations; MCP retains
+its protocol-level error reporting.
+
+With `--json`, a failure writes exactly one JSON error line to **stderr**:
+
+```json
+{"error":{"code":2,"kind":"usage","message":"--stdin was empty.","hint":"pipe the file: cat plan.json | linearctl update --stdin; add --apply to write."}}
+```
+
+Command-specific hints also show a correct form, concrete example and
+`linearctl examples <command>`. Unknown commands retain spelling suggestions and fail even with `--help`.
+Place `--json` after the subcommand (for example `linearctl whoami --json`).
+Unknown teams list accessible keys; unknown labels suggest the three closest
+available names and `linearctl label list --team <key>`. `project list` accepts
+an omitted `--team` and lists all accessible projects.
+
+Use `set -euo pipefail` in Bash so pipelines propagate failures. Send comment
+bodies through `--body -`, issue descriptions through `--desc -`, and plans
+through `cat plan.json | linearctl update --stdin`. Empty stdin fails before a
+mutation; some sandboxed shells do not deliver file redirects reliably.
+`update --stdin` requires `--apply` to write. A preview still goes to stdout,
+then exits **6**; explicitly handle that code when previewing. Single-issue
+`update <id> --state ...` continues to write immediately.
+
+Batch commands preserve outcome reports on stdout even if some writes fail.
+They exit with the common failure kind when all failures share one, otherwise
+1; unresolved issue references exit 4. Re-read successful writes and retry only
+failed rows. A failed batch is not automatically safe to replay in full.
+
+**Migration:** older binaries used 2 for exhausted quota and often 1 for usage,
+auth or lookup failures. Consumers must now use 5 for rate limits and 6 for
+write previews. Check `linearctl --version` and `linearctl --help` on the actual
+binary selected by PATH before relying on this contract. Version 0.7.0 is the
+minimum example baseline; the exit-code contract ships with this feature.
+
+
 > **Status:** WIP plan — phased. The M4 prerequisites have shipped: OAuth
 > `actor=app` scaffolding (CER-1148) and the `linearctl watch` + `linearctl
 > operator` daemon loop driver (CER-1149). This document is the plan the

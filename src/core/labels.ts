@@ -1,3 +1,4 @@
+import { notFoundError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { resolveTeamByKey } from "./teams.js";
@@ -134,7 +135,7 @@ export async function renameLabel(
   );
   const label = found.nodes[0];
   if (!label) {
-    throw new Error(`no label ${JSON.stringify(opts.from)} on team ${opts.teamKey}.`);
+    throw notFoundError(`no label ${JSON.stringify(opts.from)} on team ${opts.teamKey}.`);
   }
   const res = await withRetry(() => client.updateIssueLabel(label.id, { name: opts.to }));
   const updated = await res.issueLabel;

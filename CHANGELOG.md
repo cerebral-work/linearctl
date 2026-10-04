@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+* **cli:** standardize exits (0 success, 2 usage, 3 auth, 4 not found, 5 rate limit, 6 refused, 1 other); dry-run write previews and partial batch failures now return nonzero. JSON failures use one stderr envelope.
+
+### Agent tooling
+
+* **cli:** add command-specific invocation hints, team/label suggestions, and embedded `examples [command]` shell scripts.
+
 
 ### Features
 

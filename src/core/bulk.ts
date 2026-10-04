@@ -1,3 +1,4 @@
+import { notFoundError, usageError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { pickLabelIds } from "../lib/labels.js";
 import { withRetry } from "../lib/retry.js";
@@ -58,7 +59,7 @@ export function parseBulkSpec(raw: string): BulkSpecItem[] {
   if (!text) return [];
   if (text.startsWith("[")) {
     const arr = JSON.parse(text) as unknown;
-    if (!Array.isArray(arr)) throw new Error("bulk spec must be a JSON array or NDJSON of objects.");
+    if (!Array.isArray(arr)) throw usageError("bulk spec must be a JSON array or NDJSON of objects.");
     return arr.map((x, i) => coerce(x, i));
   }
   return text
@@ -71,7 +72,7 @@ export function parseBulkSpec(raw: string): BulkSpecItem[] {
 function coerce(x: unknown, i: number): BulkSpecItem {
   const o = x as Record<string, unknown>;
   if (!o || typeof o !== "object" || typeof o.id !== "string") {
-    throw new Error(`bulk spec item ${i} needs a string "id".`);
+    throw usageError(`bulk spec item ${i} needs a string "id".`);
   }
   return o as unknown as BulkSpecItem;
 }
@@ -84,13 +85,13 @@ async function resolveLabelMap(
 ): Promise<Map<string, string>> {
   const distinct = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
   if (distinct.length === 0) return new Map();
-  const nameOr = { or: distinct.map((n) => ({ name: { eqIgnoreCase: n } })) };
   // Scope to the involved teams (+ workspace-global labels) so a name can't
   // resolve to another team's label and get rejected ("LabelIds for incorrect team").
   const filter = teamKeys.length
-    ? { and: [{ or: [{ team: { key: { in: teamKeys } } }, { team: { null: true } }] }, nameOr] }
-    : nameOr;
+    ? { and: [{ or: [{ team: { key: { in: teamKeys } } }, { team: { null: true } }] }] }
+    : undefined;
   const labels = await withRetry(() => client.issueLabels({ filter }));
+  while (labels.pageInfo?.hasNextPage) await labels.fetchNext();
   // pickLabelIds throws (listing every miss) if any requested name is unmatched.
   const ids = pickLabelIds(labels.nodes, distinct);
   return new Map(distinct.map((n, idx) => [n.toLowerCase(), ids[idx]]));
@@ -130,7 +131,7 @@ async function resolveAssigneeMap(client: LinearClient, whos: string[]): Promise
       const u = users.nodes.find(
         (n) => n.email?.toLowerCase() === lc || n.displayName.toLowerCase() === lc || n.name.toLowerCase() === lc,
       );
-      if (!u) throw new Error(`no user matching ${JSON.stringify(w)} — try "me", an email, or a display name.`);
+      if (!u) throw notFoundError(`no user matching ${JSON.stringify(w)} — try "me", an email, or a display name.`);
       map.set(w, u.id);
     }
   }
@@ -149,7 +150,7 @@ async function resolveProjectMap(client: LinearClient, refs: string[]): Promise<
     for (const r of needName) {
       const lc = r.toLowerCase();
       const p = projects.nodes.find((n) => n.name.toLowerCase() === lc || n.slugId === r);
-      if (!p) throw new Error(`no project matching ${JSON.stringify(r)} — pass a project id, name, or slug.`);
+      if (!p) throw notFoundError(`no project matching ${JSON.stringify(r)} — pass a project id, name, or slug.`);
       map.set(r, p.id);
     }
   }

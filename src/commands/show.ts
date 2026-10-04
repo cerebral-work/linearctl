@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { getIssue, renderIssueDetail } from "../core/issues.js";
 import { printJson } from "../lib/output.js";
@@ -19,7 +20,7 @@ export async function show(id: string | undefined, opts: ShowOptions): Promise<v
   if (!id && isInteractive(opts.json)) {
     id = await promptIssuePick(client, "Show which issue?", opts.team);
   }
-  if (!id) throw new Error("show needs an <id> (e.g. CER-123).");
+  if (!id) throw usageError("show needs an <id> (e.g. CER-123).");
   const detail = await getIssue(client, id);
   if (opts.json) {
     printJson(detail);

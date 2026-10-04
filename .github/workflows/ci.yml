@@ -69,3 +69,11 @@ jobs:
         run: |
           bun run build
           ./dist/linearctl --version
+          ./dist/linearctl examples comment > "${RUNNER_TEMP}/linearctl-example.sh"
+          bash -n "${RUNNER_TEMP}/linearctl-example.sh"
+          grep -q -- "--body -" "${RUNNER_TEMP}/linearctl-example.sh"
+          status=0
+          ./dist/linearctl bogus --help > "${RUNNER_TEMP}/unknown-help.out" 2> "${RUNNER_TEMP}/unknown-help.err" || status=$?
+          test "$status" -eq 2
+          test ! -s "${RUNNER_TEMP}/unknown-help.out"
+          grep -q "unknown command 'bogus'" "${RUNNER_TEMP}/unknown-help.err"

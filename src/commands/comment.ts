@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { createComment } from "../core/issues.js";
 import { readStdinFor } from "../lib/io.js";
@@ -22,10 +23,10 @@ export async function comment(id: string, opts: CommentOptions): Promise<void> {
   } else if (opts.body) {
     body = opts.body;
   } else {
-    throw new Error("comment needs --body <markdown> (or --body - for stdin).");
+    throw usageError("comment needs --body <markdown> (or --body - for stdin).");
   }
   if (!body.trim()) {
-    throw new Error("comment body is empty.");
+    throw usageError("comment body is empty.");
   }
 
   const client = makeClient();

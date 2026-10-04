@@ -176,7 +176,10 @@ churn. See [`.linearctl/loop-recipes/README.md`](./.linearctl/loop-recipes/READM
 ## Commands
 
 All commands honor `--json`; mutating verbs are safe-by-default. Exit codes:
-`0` ok · `1` error · `2` rate-limited (pull) / not-found.
+`0` ok · `2` usage · `3` auth · `4` not found · `5` rate limited · `6` refused · `1` other.
+See [the agent contract](docs/agent-facility.md#headless-cli-contract) for JSON
+errors, dry-run semantics and migration. Run `linearctl examples [command]`
+for embedded shell examples.
 
 ### Read (15 commands)
 

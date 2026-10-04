@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { releaseNotes, renderReleaseNotes } from "../core/release-notes.js";
 import { sinceToDate } from "../lib/time.js";
@@ -15,7 +16,7 @@ export interface ReleaseNotesOptions {
 const parsePoint = (spec: string): Date => {
   if (/^\d{4}-\d{2}-\d{2}/.test(spec)) {
     const d = new Date(spec);
-    if (Number.isNaN(d.getTime())) throw new Error(`invalid date: ${JSON.stringify(spec)}`);
+    if (Number.isNaN(d.getTime())) throw usageError(`invalid date: ${JSON.stringify(spec)}`);
     return d;
   }
   return sinceToDate(spec);

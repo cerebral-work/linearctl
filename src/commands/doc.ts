@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { readFile } from "node:fs/promises";
 import { makeClient } from "../client.js";
 import { getProjectOverview, setProjectOverview } from "../core/projects.js";
@@ -93,7 +94,7 @@ export interface DocCreateOptions {
 
 /** `linearctl doc create <title> --project|--issue|--team --content <md|->`. */
 export async function docCreate(title: string, opts: DocCreateOptions): Promise<void> {
-  if (!opts.content) throw new Error("doc create needs --content <md> ('-' reads stdin).");
+  if (!opts.content) throw usageError("doc create needs --content <md> ('-' reads stdin).");
   const client = makeClient();
   const content = opts.content === "-" ? await readStdinFor("--content -") : opts.content;
   const doc = await createDocument(client, {

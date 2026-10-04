@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { usageError } from "./lib/errors.js";
+import { configureCli, addExamples } from "./lib/cli.js";
 import { Command } from "commander";
 import { whoami } from "./commands/whoami.js";
 import { digest } from "./commands/digest.js";
@@ -128,7 +130,7 @@ milestoneCmd
     const parentOpts = cmd.parent?.opts() ?? {};
     const project = parentOpts.project as string | undefined;
     const json = parentOpts.json as boolean | undefined;
-    if (!project) throw new Error("milestone create needs --project <ref>.");
+    if (!project) throw usageError("milestone create needs --project <ref>.");
     return milestoneCreate(name, { project, json, ...opts });
   });
 milestoneCmd
@@ -617,11 +619,5 @@ program
   .option("--focus <pane>", "initial pane: triage (first slice)")
   .action((opts) => tui(opts));
 
-program.parseAsync().catch((err: unknown) => {
-  // Ctrl-C inside an @inquirer prompt: exit quietly like any cancelled command.
-  if (err instanceof Error && err.name === "ExitPromptError") {
-    process.exit(130);
-  }
-  console.error(err instanceof Error ? `error: ${err.message}` : err);
-  process.exit(1);
-});
+addExamples(program);
+await configureCli(program)();

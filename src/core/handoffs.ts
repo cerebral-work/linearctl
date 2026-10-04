@@ -1,3 +1,4 @@
+import { CliError, type ErrorKind } from "../lib/errors.js";
 /**
  * CRUD over the linearctl handoff store — cross-session memory for what a
  * session landed, what it verified, and what the next session should do.
@@ -181,7 +182,7 @@ export function getHandoff(id: string, opts: { dir?: string } = {}): Handoff {
   const store = resolveStore(opts.dir);
   const file = join(store, `${id}.md`);
   if (!existsSync(file)) {
-    throw new HandoffError(`no handoff with id "${id}" (looked in ${store})`);
+    throw new HandoffError(`no handoff with id "${id}" (looked in ${store})`, "not_found");
   }
   const raw = readFileSync(file, "utf-8");
   const parsed = parseFrontmatter(raw);
@@ -206,7 +207,7 @@ export function createHandoff(input: NewHandoff, opts: { dir?: string; date?: st
   const store = resolveStore(opts.dir);
   const file = join(store, `${id}.md`);
   if (existsSync(file)) {
-    throw new HandoffError(`a handoff with id "${id}" already exists at ${file}`);
+    throw new HandoffError(`a handoff with id "${id}" already exists at ${file}`, "refused");
   }
   // Normalize once at the storage boundary: the canonical body has no
   // trailing newlines (serializeHandoff re-adds exactly one). Keeping the
@@ -268,7 +269,7 @@ export function listHandoffs(opts: { dir?: string } = {}): Handoff[] {
 export function resolveHandoff(id: string, opts: { dir?: string } = {}): Handoff {
   const handoff = getHandoff(id, opts);
   if (handoff.status === "resolved") {
-    throw new HandoffError(`handoff "${id}" is already resolved.`);
+    throw new HandoffError(`handoff "${id}" is already resolved.`, "refused");
   }
   const updated: Handoff = { ...handoff, status: "resolved" };
   const store = resolveStore(opts.dir);
@@ -278,9 +279,9 @@ export function resolveHandoff(id: string, opts: { dir?: string } = {}): Handoff
 }
 
 /** Error class for handoff store failures (missing, malformed, already-resolved). */
-export class HandoffError extends Error {
-  constructor(message: string) {
-    super(message);
+export class HandoffError extends CliError {
+  constructor(message: string, kind: ErrorKind = "usage") {
+    super(kind, message);
     this.name = "HandoffError";
   }
 }

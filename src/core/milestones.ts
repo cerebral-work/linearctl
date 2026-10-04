@@ -1,3 +1,4 @@
+import { notFoundError } from "../lib/errors.js";
 import type { LinearClient, ProjectMilestone } from "@linear/sdk";
 import { mapPool } from "../lib/pool.js";
 import { withRetry } from "../lib/retry.js";
@@ -91,7 +92,7 @@ export async function resolveMilestoneId(
     ? (await (await withRetry(() => client.project(projectId))).projectMilestones({ first: 100 })).nodes
     : (await withRetry(() => client.projectMilestones({ first: 250 }))).nodes;
   const m = nodes.find((n) => n.name.toLowerCase() === lc);
-  if (!m) throw new Error(`no milestone matching ${JSON.stringify(ref)}.`);
+  if (!m) throw notFoundError(`no milestone matching ${JSON.stringify(ref)}.`);
   return m.id;
 }
 
@@ -113,7 +114,7 @@ export async function deleteMilestone(
   apply: boolean,
 ): Promise<DeletedMilestone> {
   const milestone = await withRetry(() => client.projectMilestone(id));
-  if (!milestone) throw new Error(`no milestone with id ${JSON.stringify(id)}.`);
+  if (!milestone) throw notFoundError(`no milestone with id ${JSON.stringify(id)}.`);
   if (apply) {
     const res = await withRetry(() => client.deleteProjectMilestone(id));
     if (!res.success) throw new Error("Linear reported the milestone delete did not succeed.");
@@ -197,7 +198,7 @@ export async function updateMilestone(
   apply: boolean,
 ): Promise<UpdatedMilestone> {
   const milestone = await withRetry(() => client.projectMilestone(params.id));
-  if (!milestone) throw new Error(`no milestone with id ${JSON.stringify(params.id)}.`);
+  if (!milestone) throw notFoundError(`no milestone with id ${JSON.stringify(params.id)}.`);
 
   const beforeName = milestone.name;
   const beforeTargetDate = milestone.targetDate

@@ -1,3 +1,4 @@
+import { refusedError } from "../lib/errors.js";
 /**
  * Operator daemon core (CER-1149).
  *
@@ -221,7 +222,7 @@ export async function startOperator(opts: OperatorOptions = {}): Promise<Operato
     [QUEUE_HMAC_KEY_PREV_ENV, rawHmac.prevKey],
   ] as const) {
     if (val !== undefined && val.trim() === "") {
-      throw new Error(
+      throw refusedError(
         `operator: ${name} is set but EMPTY — refusing to start. ` +
           `Fix the secret (present-but-empty is a sync/rotation failure) or unset the variable.`,
       );

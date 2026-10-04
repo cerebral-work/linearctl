@@ -1,3 +1,4 @@
+import { usageError } from "../lib/errors.js";
 import { makeClient } from "../client.js";
 import { createIssue } from "../core/issues.js";
 import { listTemplates, loadTemplate } from "../core/templates.js";
@@ -48,7 +49,7 @@ export interface TemplateFileOptions {
 
 /** `linearctl template file <name> --team KEY --var key=value...` */
 export async function templateFile(name: string, opts: TemplateFileOptions): Promise<void> {
-  if (!opts.team) throw new Error("template file needs --team <key>.");
+  if (!opts.team) throw usageError("template file needs --team <key>.");
   const t = loadTemplate(name);
   const vars = parseVarFlags(opts.var ?? []);
   for (const [k, v] of Object.entries(vars)) {

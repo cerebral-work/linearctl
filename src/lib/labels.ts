@@ -1,3 +1,5 @@
+import { closestNames } from "./closest.js";
+import { notFoundError } from "./errors.js";
 /** A label as far as resolution cares — `{ id, name }` from `issueLabels`. */
 export interface NamedLabel {
   id: string;
@@ -14,6 +16,7 @@ export interface NamedLabel {
 export function pickLabelIds(
   available: NamedLabel[],
   requested: string[],
+  teamKey?: string,
 ): string[] {
   if (requested.length === 0) return [];
   const byName = new Map(available.map((l) => [l.name.toLowerCase(), l.id]));
@@ -25,9 +28,10 @@ export function pickLabelIds(
     else missing.push(name);
   }
   if (missing.length) {
-    throw new Error(
-      `unknown label(s): ${missing.map((m) => JSON.stringify(m)).join(", ")} — ` +
-        `create them in Linear or check spelling.`,
+    const closest = closestNames(missing, available.map(l => l.name));
+    throw notFoundError(
+      `unknown label(s): ${missing.map(m => JSON.stringify(m)).join(", ")}.`,
+      `List labels: linearctl label list --team ${teamKey ?? "<key>"}; closest: ${closest.map(n => JSON.stringify(n)).join(", ") || "(none available)"}.`,
     );
   }
   return ids;

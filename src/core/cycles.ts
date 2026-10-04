@@ -1,3 +1,4 @@
+import { notFoundError, usageError } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { LinearDocument } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
@@ -43,15 +44,15 @@ export async function resolveCycleId(
     ),
   );
   const team = res.data?.teams.nodes[0];
-  if (!team) throw new Error(`no team matching ${JSON.stringify(teamKey)} for --cycle.`);
+  if (!team) throw notFoundError(`no team matching ${JSON.stringify(teamKey)} for --cycle.`);
   const all = team.cycles.nodes;
   if (!all.length && !team.activeCycle) {
-    throw new Error(`team ${teamKey} has no cycles (cycles may be disabled).`);
+    throw notFoundError(`team ${teamKey} has no cycles (cycles may be disabled).`);
   }
 
   if (lc === "current" || lc === "active") {
     if (!team.activeCycle) {
-      throw new Error(`team ${teamKey} has no active cycle right now — use 'next' or a cycle number.`);
+      throw notFoundError(`team ${teamKey} has no active cycle right now — use 'next' or a cycle number.`);
     }
     return team.activeCycle.id;
   }
@@ -60,19 +61,19 @@ export async function resolveCycleId(
     const future = all
       .filter((c) => new Date(c.startsAt).getTime() > now)
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-    if (!future.length) throw new Error(`team ${teamKey} has no upcoming cycle.`);
+    if (!future.length) throw notFoundError(`team ${teamKey} has no upcoming cycle.`);
     return future[0].id;
   }
   const num = Number(lc);
   if (!Number.isInteger(num)) {
-    throw new Error(
+    throw usageError(
       `--cycle ${JSON.stringify(ref)} is not a number, 'current', 'next', 'none', or a cycle id.`,
     );
   }
   const match =
     all.find((c) => c.number === num) ??
     (team.activeCycle?.number === num ? team.activeCycle : undefined);
-  if (!match) throw new Error(`team ${teamKey} has no cycle number ${num}.`);
+  if (!match) throw notFoundError(`team ${teamKey} has no cycle number ${num}.`);
   return match.id;
 }
 
@@ -182,7 +183,7 @@ export async function cycleReview(
     >(TEAM_CYCLES_QUERY, vars),
   );
   const team = res.data?.teams.nodes[0];
-  if (!team) throw new Error(`no team matching ${JSON.stringify(opts.teamKey)}.`);
+  if (!team) throw notFoundError(`no team matching ${JSON.stringify(opts.teamKey)}.`);
   const previous = team.cycles.nodes[0] ?? null;
   const cycle = opts.previous ? previous : team.activeCycle;
   if (!cycle) {

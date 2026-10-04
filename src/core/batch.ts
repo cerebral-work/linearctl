@@ -1,3 +1,4 @@
+import { cliError, type ErrorKind } from "../lib/errors.js";
 import type { LinearClient } from "@linear/sdk";
 import { withRetry } from "../lib/retry.js";
 import { mapPool } from "../lib/pool.js";
@@ -35,7 +36,7 @@ export interface BatchUpdateItem {
 export interface BatchResult {
   total: number;
   succeeded: number;
-  failed: { ref: string; error: string }[];
+  failed: { ref: string; error: string; kind?: ErrorKind }[];
 }
 
 /**
@@ -99,7 +100,7 @@ export async function batchUpdateIssues(
     chunks.push(items.slice(i, i + MUTATION_CHUNK));
   }
 
-  const failed: { ref: string; error: string }[] = [];
+  const failed: { ref: string; error: string; kind?: ErrorKind }[] = [];
   let succeeded = 0;
 
   await mapPool(chunks, CONCURRENCY, async (chunk) => {
@@ -123,8 +124,9 @@ export async function batchUpdateIssues(
         else failed.push({ ref: it.ref, error: "issueUpdate returned success=false" });
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      for (const it of chunk) failed.push({ ref: it.ref, error: msg });
+      const failure = cliError(err);
+      const msg = failure.message;
+      for (const it of chunk) failed.push({ ref: it.ref, error: msg, kind: failure.kind });
     }
   });
 

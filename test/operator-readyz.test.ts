@@ -328,9 +328,9 @@ describe("linearctl operator --health", () => {
     expect(stdout).toContain("--role");
   }, 15_000);
 
-  test("--health + --check together is rejected with an explicit error (exit 1)", async () => {
+  test("--health + --check together is rejected with an explicit error (exit 2)", async () => {
     const { code, stderr } = await runHealthMutex();
-    expect(code).toBe(1);
+    expect(code).toBe(2);
     expect(stderr).toMatch(/mutually exclusive/i);
   }, 15_000);
 });

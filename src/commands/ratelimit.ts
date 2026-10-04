@@ -1,3 +1,4 @@
+import { CliError } from "../lib/errors.js";
 import { printJson } from "../lib/output.js";
 import { fetchRateLimit, isExhausted, type RateLimitAxis } from "../core/ratelimit.js";
 
@@ -16,16 +17,13 @@ export interface RatelimitOptions {
 
 /**
  * `linearctl ratelimit` — probe org-level API quota before a batch run (T18).
- * Exits 2 when either axis is exhausted so `&&`-chains abort cleanly.
+ * Exits 5 when either axis is exhausted so `&&`-chains abort cleanly.
  * See docs/spec.md §7 item 7.
  */
 export async function ratelimit(opts: RatelimitOptions): Promise<void> {
   const apiKey = process.env.LINEAR_API_KEY;
   if (!apiKey) {
-    console.error(
-      "error: LINEAR_API_KEY is not set — see README.md → Authentication.",
-    );
-    process.exit(1);
+    throw new CliError("auth", "LINEAR_API_KEY is not set.");
   }
   const info = await fetchRateLimit(apiKey);
 
@@ -36,5 +34,5 @@ export async function ratelimit(opts: RatelimitOptions): Promise<void> {
       renderAxis("requests", info.requests) + renderAxis("complexity", info.complexity),
     );
   }
-  if (isExhausted(info)) process.exit(2);
+  if (isExhausted(info)) throw new CliError("rate_limit", "Linear API quota exhausted.");
 }
