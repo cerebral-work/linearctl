@@ -189,6 +189,8 @@ All commands honor `--json`; mutating verbs are safe-by-default. Exit codes:
 `file` · `update` · `close` · `comment` · `project` · `milestone create` ·
 `doc` · `link` · `label` · `park` · `template`
 
+`backup` writes a verifiable read-only dump of the workspace to a local directory; `backup --verify <dir>` checks one (see [`docs/features/backup.md`](./docs/features/backup.md)).
+
 ### Loops + MCP
 
 `loops lint` · `mcp serve`
