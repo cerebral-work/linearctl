@@ -74,9 +74,15 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N   # inverse op
 labels, project, cycle, archived — the planner needs them for issue ops),
 labels with per-label issue counts, projects, initiatives. Everything
 paginates; `--team` scopes teams/issues/projects, `--limit` caps the smoke
-path. Note: under `--limit`, per-label issue counts and the `--team` project
-filter are computed over the CAPPED issue/project sets (counts are lower
-bounds) — fine for smoke, never for a plan's census.
+path. `--limit` bounds **teams, issues and projects only** — labels and
+initiatives are always fetched in full — so a capped census is cheaper but
+not cheap. The cap is applied while paging, not after a full scan, which is
+what keeps the smoke path quick. Note: under `--limit`, per-label issue
+counts and the `--team` project filter are computed over the CAPPED
+issue/project sets (counts are lower bounds) — fine for smoke, never for a
+plan's census. A capped census sets `partial: true` and says so on stderr,
+and `reorg plan` preserves that flag; a `0`, negative or non-numeric
+`--limit` exits 2.
 
 ## Plan file
 
