@@ -16,18 +16,27 @@ export const refusedError = (message: string, hint = "") => new CliError("refuse
 /** Map SDK / HTTP failures at the boundary; do not dump request headers or bodies. */
 export function cliError(err: unknown): CliError {
   if (err instanceof CliError) return err;
-  const e = (err ?? {}) as { status?: number; type?: string; code?: string; name?: string;
-    errors?: Array<{ extensions?: { type?: string; code?: string } }> };
-  const types = [e.type, e.code, ...(e.errors ?? []).flatMap(g => [g.extensions?.type, g.extensions?.code])].join(" ");
-  const message = err instanceof Error ? err.message : String(err);
+  const e = (err ?? {}) as { status?: number; type?: string; code?: string; name?: string; message?: unknown; userError?: boolean;
+    errors?: Array<{ message?: unknown; type?: string; userError?: boolean; extensions?: { type?: string; code?: string; userError?: boolean } }> };
+  const types = [e.type, e.code, ...(e.errors ?? []).flatMap(g => [g.type, g.extensions?.type, g.extensions?.code])].join(" ");
+  const message = typeof e.message === "string" ? e.message : String(err);
+  // Read only the first structured GraphQL diagnostic, never SDK query/variables/raw.
+  // The SDK flattens extensions.userError onto each LinearGraphQLError.
+  const first = e.errors?.[0];
+  const userError = first?.userError ?? first?.extensions?.userError ?? e.userError;
+  const detail = typeof first?.message === "string" && first.message.trim() ? first.message : message;
+  const summary = detail.split(/\r?\n|: \{"(?:response|request)"/)[0].trim();
+  const usageMessage = `${summary && summary !== "[object Object]" ? summary : "Linear rejected an invalid input."}${typeof userError === "boolean" ? ` (userError=${userError})` : ""}`;
   if (e.status === 429 || /ratelimit|rate_limit/i.test(types) || /ratelimited|rate limit|too many requests/i.test(message))
     return new CliError("rate_limit", "Linear API rate limit exhausted.", "Wait for quota to reset; check linearctl ratelimit --json.");
   if (e.status === 401 || /authentication|unauthenticated|invalid_api_key/i.test(types))
     return new CliError("auth", "Linear authentication failed.", "Set a valid LINEAR_API_KEY in the environment.");
   if (e.status === 404 || /entitynotfound|not_found/i.test(types))
     return notFoundError("Requested resource was not found.");
-  if (/invalidinput|invalid_input|userinput|bad_user_input/i.test(types)) return usageError("Linear rejected an invalid input.");
   if (e.status === 403 || /forbidden|permission/i.test(types)) return refusedError("Permission denied for this operation.");
+  if (/Missing duplicate relation|Issues can only be moved to a duplicate state when a duplicate issue relation exists/i.test(detail))
+    return usageError(usageMessage, "Use linearctl close <id> --duplicate-of <canonical>, or linearctl update <id> --duplicate-of <canonical> to create the relation first.");
+  if (/invalid[ _]?input|user[ _]?input|user[ _]?error|bad_user_input/i.test(types) || userError === true) return usageError(usageMessage);
   if (e.name === "GuardrailError") return refusedError(message);
   // SDK messages may contain a serialized GraphQL request. Keep only its summary.
   return new CliError("other", message.split(/\n|: \{"response"/)[0]);

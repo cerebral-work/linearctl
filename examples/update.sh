@@ -20,3 +20,7 @@ if [ "${APPLY:-0}" = 1 ]; then
   cat "$PLAN" | linearctl update --stdin --apply --json
   linearctl show "$ISSUE" --json
 fi
+
+# Single-issue duplicate relation (writes immediately; no --stdin / --apply):
+# linearctl update "$ISSUE" --duplicate-of "${CANONICAL:?Set canonical issue}" --json
+# To create the relation AND close in the duplicate state, use close --duplicate-of.

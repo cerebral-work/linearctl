@@ -210,6 +210,7 @@ program
   .option("--parent <id>", "re-parent under this issue (id or identifier)")
   .option("--blocked-by <id...>", "add issue(s) that block this one")
   .option("--related-to <id...>", "add issue(s) as related")
+  .option("--duplicate-of <canonical>", "create and verify a duplicate relation to the canonical issue")
   .option("--title <text>", "replace the issue title")
   .option("--desc <markdown>", "replace the description (markdown; '-' reads stdin)")
   .option(
@@ -222,9 +223,10 @@ program
 
 program
   .command("close")
-  .description("Close an issue (move it to the team's completed state).")
+  .description("Close an issue (completed by default; duplicate state with --duplicate-of).")
   .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
   .option("--team <key...>", "scope the interactive picker to team key(s)")
+  .option("--duplicate-of <canonical>", "create the duplicate relation, then close in the team's duplicate-type state")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
 

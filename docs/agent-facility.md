@@ -29,6 +29,11 @@ With `--json`, a failure writes exactly one JSON error line to **stderr**:
 {"error":{"code":2,"kind":"usage","message":"--stdin was empty.","hint":"pipe the file: cat plan.json | linearctl update --stdin; add --apply to write."}}
 ```
 
+Linear user-input failures preserve the first GraphQL diagnostic and its
+`userError` marker (when supplied) in both human output and the JSON message,
+with kind `usage` and exit 2. SDK query/variables/request dumps are excluded;
+the configured API key is redacted.
+
 Command-specific hints also show a correct form, concrete example and
 `linearctl examples <command>`. Unknown commands retain spelling suggestions and fail even with `--help`.
 Place `--json` after the subcommand (for example `linearctl whoami --json`).
