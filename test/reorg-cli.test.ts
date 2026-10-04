@@ -164,6 +164,26 @@ function rule(over: Partial<ReorgRule>): ReorgRule {
 }
 
 describe("issue selectors", () => {
+  test("the label filter EXCLUDES non-carriers (not just matches everything)", () => {
+    const census = {
+      ...TOY_CENSUS,
+      issues: [
+        ...TOY_CENSUS.issues,
+        { id: "i-2", identifier: "EX-2", teamId: "t-ex", teamKey: "EX", stateId: "s-todo", labelIds: [], projectId: "p-1", cycleId: null, archived: false },
+      ],
+    };
+    const plan = planFromRules(
+      [rule({ match: { entity: "issue", where: { label: "bug" } } })],
+      census, META,
+    );
+    expect(plan.ops.map((o) => o.target.identifier)).toEqual(["EX-1"]); // EX-2 excluded
+    const byId = planFromRules(
+      [rule({ match: { entity: "issue", where: { labelId: "l-team-bug" } } })],
+      census, META,
+    );
+    expect(byId.ops.map((o) => o.target.identifier)).toEqual(["EX-1"]);
+  });
+
   test("by label NAME (any census label with the name counts) + team, in combination", () => {
     const plan = planFromRules(
       [rule({ match: { entity: "issue", where: { label: "bug", teamKey: "EX" } }, batchKey: "ws-bug" })],
@@ -193,7 +213,25 @@ describe("by-id selection + duplicate refusal", () => {
       ...TOY_CENSUS.projects,
       { ...TOY_CENSUS.projects[0], id: "p-2" }, // same name "Toy Project", second id
     ],
+    initiatives: [
+      ...TOY_CENSUS.initiatives,
+      { id: "i-dup-2", name: "[DUP] old thing", archivedAt: null }, // duplicate name
+    ],
   };
+  test("name match hitting two initiatives refuses; id selects exactly one", () => {
+    expect(() =>
+      planFromRules(
+        [rule({ op: "archive-initiative", match: { entity: "initiative", where: { name: "[DUP] old thing" } }, to: { archived: true } })],
+        dupCensus, META,
+      ),
+    ).toThrow("matches 2 initiatives");
+    const plan = planFromRules(
+      [rule({ op: "archive-initiative", match: { entity: "initiative", where: { id: "i-dup-2" } }, to: { archived: true } })],
+      dupCensus, META,
+    );
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].target.id).toBe("i-dup-2");
+  });
   test("name match hitting two projects refuses; id selects exactly one", () => {
     expect(() =>
       planFromRules(
@@ -261,6 +299,31 @@ describe("planner warnings + coercion", () => {
     );
     expect(plan.ops[0].reversible).toBe(false);
     expect(plan.ops[0].approval).toBe("deck-ready");
+  });
+  test("warning suppressed when a remove-project-team rule covers the project+team", () => {
+    const census = {
+      ...TOY_CENSUS,
+      teams: [
+        ...TOY_CENSUS.teams,
+        { id: "t-old", key: "OLD", name: "Old", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
+      ],
+      projects: [
+        { ...TOY_CENSUS.projects[0], teams: { nodes: [{ id: "t-ex", key: "EX" }, { id: "t-old", key: "OLD" }] } },
+      ],
+    };
+    const rules: ReorgRule[] = [
+      rule({
+        phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+        match: { entity: "team", where: { key: "OLD" } }, to: {},
+      }),
+      rule({
+        phase: 5, op: "remove-project-team",
+        match: { entity: "project", where: { id: "p-1" } },
+        to: { teamId: "t-old" },
+      }),
+    ];
+    const plan = planFromRules(rules, census, META);
+    expect(plan.warnings.some((w) => w.includes("Toy Project"))).toBe(false);
   });
 });
 

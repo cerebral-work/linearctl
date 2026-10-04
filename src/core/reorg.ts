@@ -1069,11 +1069,14 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "remove-project-team": {
     // to.teamIds is NEVER trusted — the removal membership is computed from a
     // LIVE read at apply time (a blind replace could drop a team added after
-    // the census).
+    // the census). The computed set is journaled via to.teamIdsComputed so the
+    // verify compares what was actually written.
     compareKeys: ["teamIds"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
     expectedPost: (op) => ({
-      teamIds: sortedStrings(op.from.teamIds).filter((t) => t !== op.to.teamId),
+      teamIds: Array.isArray(op.to.teamIdsComputed)
+        ? sortedStrings(op.to.teamIdsComputed)
+        : sortedStrings(op.from.teamIds).filter((t) => t !== op.to.teamId),
     }),
     async apply(ctx, op) {
       const live = await readProject(ctx, op.target.id);
@@ -1082,6 +1085,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
         id: op.target.id,
         input: { teamIds: next },
       });
+      op.to.teamIdsComputed = next;
     },
     inverse(op) {
       return {
@@ -2112,9 +2116,17 @@ export function planFromRules(
     }
     for (const p of censusData.projects) {
       const stillOn = (p.teams?.nodes ?? []).filter((t) => deletedIds.has(t.id));
-      if (stillOn.length > 0)
+      // suppressed when the same plan already removes that team from this
+      // project (by-id remove-project-team rule)
+      const covered = new Set(
+        rules
+          .filter((r) => r.op === "remove-project-team" && typeof r.match.where.id === "string")
+          .map((r) => `${String(r.match.where.id)}:${String(r.to.teamId)}`),
+      );
+      const uncovered = stillOn.filter((t) => !covered.has(`${p.id}:${t.id}`));
+      if (uncovered.length > 0)
         warnings.push(
-          `project "${p.name}" still lists to-be-deleted team(s) ${stillOn.map((t) => t.key).join(", ")} (phase 5 must remove them)`,
+          `project "${p.name}" still lists to-be-deleted team(s) ${uncovered.map((t) => t.key).join(", ")} (phase 5 must remove them)`,
         );
     }
   }

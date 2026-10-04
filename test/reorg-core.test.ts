@@ -63,6 +63,9 @@ interface FakeBackend {
   readCalls: number;
   /** ReorgTeamProjects calls — the pagination test asserts the second page. */
   projectProbeCalls: number;
+  /** Invoked after each ReorgProjectState read — tests mutate state between
+   *  the drift pre-read and the apply-time live read. */
+  projectReadHook?: (projectId: string) => void;
   createdLabelSeq: number;
 }
 
@@ -104,7 +107,7 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgProjectState")) {
       be.readCalls++;
       const p = be.projects.get(vars.id as string);
-      return ok({
+      const resp = ok({
         project: p
           ? {
               id: p.id, name: p.name,
@@ -116,6 +119,9 @@ function fakeClient(be: FakeBackend): LinearClient {
             }
           : null,
       });
+      // after the response is fixed — a mutation here lands on the NEXT read
+      be.projectReadHook?.(vars.id as string);
+      return resp;
     }
     if (query.includes("ReorgInitiativeState")) {
       be.readCalls++;
@@ -1220,6 +1226,69 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       journalPath: join(dir, "j2.jsonl"), pace: fastPace(),
     });
     expect(cleared.drifted).toEqual([]);
+  });
+});
+
+describe("round-1 review test pins", () => {
+  test("labelRef prefers the journal-created id over a live same-name label", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.labels.set("l-live", { id: "l-live", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    const j = join(dir, "j.jsonl");
+    // a create landed earlier in THIS plan (journal carries the created id)
+    journalAppend(j, {
+      seq: 1, phase: 1, op: "create-workspace-label", at: "a", ok: true,
+      original: baseOp({
+        seq: 1, op: "create-workspace-label",
+        target: { type: "label", id: "new:bug", identifier: "bug" },
+        from: { labelId: null }, to: { name: "bug", labelId: "l-journaled" },
+      }),
+    });
+    const result = await applyPlan(be, [baseOp({
+      seq: 2, op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:bug"], remove: [] },
+    })], j);
+    expect(result.applied).toBe(1);
+    expect(be.issues.get("i-1")!.labelIds).toContain("l-journaled");
+    expect(be.issues.get("i-1")!.labelIds).not.toContain("l-live");
+  });
+
+  test("rename-label drift anchor: refuses when the live name differs from from.name", async () => {
+    const be = freshBackend();
+    be.labels.set("l-t", { id: "l-t", name: "renamed-elsewhere", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    await expect(applyPlan(be, [baseOp({
+      op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      from: { name: "bug" }, to: { name: "bug·old-EX" },
+    })], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("remove-project-team reads membership LIVE at apply (a post-drift addition survives)", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1", "t-2"], initiativeIds: [] });
+    // after the drift pre-read, t-4 joins the project (a teammate's action);
+    // the apply-time live read must see it and keep it
+    let reads = 0;
+    be.projectReadHook = (id) => {
+      if (id === "p-1" && ++reads === 1)
+        be.projects.get("p-1")!.teamIds = ["t-1", "t-2", "t-4"];
+    };
+    const op = baseOp({
+      op: "remove-project-team", target: { type: "project", id: "p-1", identifier: "P" },
+      from: { teamIds: ["t-1", "t-2"] }, to: { teamId: "t-2" },
+    });
+    const result = await applyPlan(be, [op], join(dir, "j.jsonl"));
+    expect(result.applied).toBe(1);
+    expect(be.projects.get("p-1")!.teamIds).toEqual(["t-1", "t-4"]); // t-2 out, t-4 kept
+  });
+
+  test("swallowed set-initiative-owner write fails via expectedPost", async () => {
+    const be = freshBackend();
+    be.swallowWrites = true;
+    be.initiatives.set("in-1", { id: "in-1", name: "I", archivedAt: null, ownerId: null });
+    await expect(applyPlan(be, [baseOp({
+      op: "set-initiative-owner", target: { type: "initiative", id: "in-1", identifier: "I" },
+      from: { ownerId: null }, to: { ownerId: "u-9" },
+    })], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
   });
 });
 
