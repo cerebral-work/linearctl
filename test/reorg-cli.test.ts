@@ -46,6 +46,7 @@ const TOY_CENSUS: CensusData = {
   ],
   initiatives: [{ id: "i-dup", name: "[DUP] old thing", archivedAt: null }],
   generatedAt: "2026-10-04T00:00:00Z",
+  partial: false,
   rateBudget: { limit: 2500, remaining: 2000 },
 };
 

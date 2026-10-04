@@ -1845,6 +1845,13 @@ export interface CensusData {
   initiatives: ReorgInitiativeNode[];
   generatedAt: string;
   rateBudget: { limit: number; remaining: number };
+  /**
+   * True when `--limit` capped what was fetched, so every count here is a
+   * lower bound rather than a total. The cap is applied while paging (a
+   * deliberate smoke-path cheapness), so a consumer cannot tell a capped
+   * census from a small workspace without this flag.
+   */
+  partial: boolean;
 }
 
 interface Page<T> {
@@ -1878,10 +1885,15 @@ async function paged<T>(
     const next = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
     // A cursor that does not advance would loop forever.
     after = next !== null && next === after ? null : next;
+    // Stop fetching as soon as the cap is met. Unlike a user-facing listing,
+    // census `--limit` is a smoke-test cap on what is FETCHED: it exists to
+    // keep a probe cheap against the shared request budget, and `--help`
+    // documents the resulting counts as lower bounds. Draining every page
+    // first would defeat the flag — a capped census went from ~2s to >120s
+    // and burned 1000+ requests. Page-bound is correct here, by design.
+    if (limit !== undefined && out.length >= limit) return out.slice(0, limit);
   } while (after);
-  // Truncate only after the full scan: stopping at the first page that
-  // satisfies `limit` caps an arbitrary page-bound subset.
-  return limit !== undefined ? out.slice(0, limit) : out;
+  return out;
 }
 
 const CENSUS_ISSUES_Q = /* GraphQL */ `
@@ -2038,6 +2050,7 @@ export async function census(
     initiatives,
     generatedAt: new Date().toISOString(),
     rateBudget: pace.tracker.snapshot,
+    partial: opts.limit !== undefined,
   };
 }
 

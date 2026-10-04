@@ -87,14 +87,42 @@ describe("reorg census pagination", () => {
     expect(reads.issues).toBe(2);
   });
 
-  test("a limit no longer stops the scan at a page boundary", async () => {
+  test("a limit stops fetching at the page that satisfies it (smoke cap)", async () => {
     const { client, reads } = stubClient(
       censusPages({ issues: [[issue("a"), issue("b")], [issue("c")], [issue("d")]] }),
     );
     const data = await census(client, { limit: 2 }, fastPace());
     expect(data.issues).toHaveLength(2);
-    // The old early return read one page; the cap must come after a full scan.
-    expect(reads.issues).toBe(3);
+    // The cap exists to keep a probe cheap against the shared request budget,
+    // so it must NOT drain the remaining pages first.
+    expect(reads.issues).toBe(1);
+  });
+
+  test("--limit 5 costs at most two page requests, not a full scan", async () => {
+    // Ten pages available; a 5-row cap must not walk them.
+    const pages = Array.from({ length: 10 }, (_, p) =>
+      Array.from({ length: 4 }, (_, i) => issue(`i${p * 4 + i}`)),
+    );
+    const { client, reads } = stubClient(censusPages({ issues: pages }));
+    const data = await census(client, { limit: 5 }, fastPace());
+    expect(data.issues).toHaveLength(5);
+    expect(reads.issues).toBeLessThanOrEqual(2);
+  });
+
+  test("a capped census is marked partial; an uncapped one is not", async () => {
+    const capped = await census(
+      stubClient(censusPages({ issues: [[issue("a"), issue("b")]] })).client,
+      { limit: 1 },
+      fastPace(),
+    );
+    expect(capped.partial).toBe(true);
+
+    const full = await census(
+      stubClient(censusPages({ issues: [[issue("a")]] })).client,
+      {},
+      fastPace(),
+    );
+    expect(full.partial).toBe(false);
   });
 
   test("a limit above the total returns everything", async () => {
