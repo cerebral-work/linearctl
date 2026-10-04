@@ -7,6 +7,7 @@ import {
   verifyBackup,
 } from "../core/backup.js";
 import { printJson } from "../lib/output.js";
+import { refusedError, usageError } from "../lib/errors.js";
 import pkg from "../../package.json";
 
 export interface BackupOptions {
@@ -26,15 +27,14 @@ export interface BackupOptions {
 }
 
 function usage(msg: string): never {
-  console.error(`error: ${msg}`);
-  process.exit(3);
+  throw usageError(msg);
 }
 
 /**
  * `linearctl backup --out <dir>` — read-only dump of the workspace to
  * `<dir>/linear-<UTC>/`. `linearctl backup --verify <dir>` — integrity and
- * drift check of an existing dump. Exit codes: 0 ok · 1 error or hash/count
- * mismatch · 2 live drift beyond --tolerance · 3 usage.
+ * drift check of an existing dump. Uses the shared CLI exit contract;
+ * verification mismatches and live drift are refused (6).
  */
 export async function backup(opts: BackupOptions): Promise<void> {
   try {
@@ -59,7 +59,13 @@ export async function backup(opts: BackupOptions): Promise<void> {
         console.log(lines.length ? lines.join("\n") : "verify: clean");
         console.log(`exit ${result.exitCode}`);
       }
-      process.exit(result.exitCode);
+      if (result.exitCode !== 0) {
+        throw refusedError(
+          "Backup verification failed: integrity mismatch or live drift.",
+          "Inspect the verification report on stdout; do not use this dump until discrepancies are resolved.",
+        );
+      }
+      return;
     }
 
     if (!opts.out) usage("--out <dir> is required (or use --verify <dir>)");

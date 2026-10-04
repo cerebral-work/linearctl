@@ -841,7 +841,7 @@ export interface VerifyOptions {
 }
 
 export interface VerifyResult {
-  exitCode: 0 | 1 | 2;
+  exitCode: 0 | 6;
   hashMismatches: string[];
   countMismatches: string[];
   integrity: string[];
@@ -910,7 +910,7 @@ export async function verifyBackup(dir: string, opts: VerifyOptions = {}): Promi
   const integrityFails = manifest.partial ? [] : res.integrity;
 
   if (res.hashMismatches.length || res.countMismatches.length || integrityFails.length) {
-    res.exitCode = 1;
+    res.exitCode = 6;
     return res;
   }
 
@@ -974,7 +974,7 @@ export async function verifyBackup(dir: string, opts: VerifyOptions = {}): Promi
     if (mutable.length && edited) res.notes.push(`${ident}: edited since the dump (${mutable.join(", ")}); not counted as drift`);
     else if (mutable.length) res.sampleMismatches.push(`${ident}: ${mutable.join(", ")} differ with no newer live updatedAt`);
   }
-  if (res.drift.length || res.sampleMismatches.length) res.exitCode = 2;
+  if (res.drift.length || res.sampleMismatches.length) res.exitCode = 6;
   return res;
 }
 

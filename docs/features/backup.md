@@ -69,8 +69,24 @@ drift per entity as a fraction (default `0.02`).
 Live-drift semantics: step 3 is the only place `--tolerance` applies. Edits made
 after the dump are expected on a live workspace and never fail the sample.
 
-Exit codes: `0` ok · `1` hash, count or reference mismatch (or runtime error) ·
-`2` live drift beyond tolerance, or a sampled issue differs · `3` usage.
+Exit codes follow the [agent contract](../agent-facility.md#headless-cli-contract):
+`0` clean/success · `2` usage · `3` missing/rejected credentials · `4` API resource
+not found · `5` exhausted rate limit · `6` refused (hash, count, reference or sample
+mismatch, live drift beyond tolerance, or permission denial) · `1` other runtime error.
+A missing manifest is invalid verification input (`2` usage).
+
+With `--json`, verification reports remain on stdout, including `exitCode: 6`
+when discrepancies are found. Every failure emits the shared
+`{"error":{"code":6,"kind":"refused","message":"...","hint":"..."}}`
+envelope on stderr (with the appropriate code/kind for other failures).
+Inspect the report arrays to distinguish integrity failures from live drift;
+do not infer the discrepancy type from exit 6 alone.
+
+**Migration from 0.8.0:** verification integrity mismatch moves `1 → 6`, live
+drift/sample mismatch `2 → 6`, and usage `3 → 2`. Auth stays `3`; generic runtime
+failures stay `1`. Consumers must continue treating every nonzero result as a
+failed verification before encrypting/uploading. This change ships after 0.8.0;
+check the installed binary's contract before interpreting codes.
 
 ### Teams the key cannot list
 
