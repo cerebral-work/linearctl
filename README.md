@@ -198,6 +198,12 @@ for embedded shell examples.
 
 `loops lint` · `mcp serve`
 
+### Reorg
+
+`reorg census` · `reorg plan` · `reorg apply` · `reorg verify` · `reorg rollback`
+— plan-file-driven workspace reorganization, dry-run by default with a
+journaled, per-write-verified executor. See [`docs/features/reorg.md`](./docs/features/reorg.md).
+
 Full reference: [`docs/spec.md` §6](./docs/spec.md). Tooling rationale:
 [`docs/decisions.md`](./docs/decisions.md).
 
