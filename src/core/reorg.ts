@@ -453,6 +453,9 @@ interface ReorgStateNode {
   name: string;
   type: string;
   archivedAt?: string | null;
+  /** Set on INHERITED states (sub-team views of a parent team's state). */
+  inheritedFrom?: { id: string } | null;
+  team?: { id: string; key: string } | null;
 }
 
 interface ReorgProjectNode {
@@ -504,7 +507,7 @@ const LABEL_STATE_Q = /* GraphQL */ `
 
 const STATE_STATE_Q = /* GraphQL */ `
   query ReorgStateState($id: String!) {
-    workflowState(id: $id) { id name type archivedAt }
+    workflowState(id: $id) { id name type archivedAt inheritedFrom { id } }
   }
 `;
 
@@ -645,7 +648,7 @@ const LABELS_BY_NAME_CI_Q = /* GraphQL */ `
 /** A team's parent and sub-teams (label-name uniqueness spans the family). */
 const TEAM_FAMILY_Q = /* GraphQL */ `
   query ReorgTeamFamily($id: String!) {
-    team(id: $id) { id key parent { id } children { nodes { id } } }
+    team(id: $id) { id key parent { id } children { id } }
   }
 `;
 
@@ -656,12 +659,12 @@ interface TeamFamily {
 
 async function readTeamFamily(ctx: OpCtx, teamId: string): Promise<TeamFamily> {
   const d = await reorgRaw<{
-    team: { parent?: { id: string } | null; children?: { nodes: { id: string }[] } | null } | null;
+    team: { parent?: { id: string } | null; children?: { id: string }[] | null } | null;
   }>(ctx.client, TEAM_FAMILY_Q, { id: teamId }, ctx.pace);
   if (!d.team) throw new Error(`team ${teamId} not found`);
   return {
     parentId: d.team.parent?.id ?? null,
-    childIds: (d.team.children?.nodes ?? []).map((c) => c.id),
+    childIds: (d.team.children ?? []).map((c) => c.id),
   };
 }
 
@@ -720,6 +723,7 @@ async function destLabelProblem(
   destTeamId: string,
 ): Promise<Map<string, string>> {
   const problems = new Map<string, string>();
+  labelIds = labelIds.filter((id) => !id.startsWith(PLANNED_REF_PREFIX));
   if (labelIds.length === 0) return problems;
   const [family, d] = await Promise.all([
     readTeamFamily(ctx, destTeamId),
@@ -787,7 +791,10 @@ async function readState(ctx: OpCtx, id: string): Promise<Record<string, unknown
     ctx.client, STATE_STATE_Q, { id }, ctx.pace,
   );
   if (!d.workflowState) throw new Error(`state ${id} not found`);
-  return { archived: d.workflowState.archivedAt != null };
+  return {
+    archived: d.workflowState.archivedAt != null,
+    inheritedFromId: d.workflowState.inheritedFrom?.id ?? null,
+  };
 }
 
 async function readProject(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
@@ -1553,7 +1560,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
 export async function assertNoInheritedWrites(ctx: OpCtx, op: ReorgOp): Promise<void> {
   const mapped = isRecord(op.to.labelMapResolved) ? Object.values(op.to.labelMapResolved).map(String) : [];
   const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds), ...mapped]
-    .filter((id) => !id.startsWith(LABEL_REF_PREFIX) && !id.startsWith(CREATED_REF_PREFIX)); // refs resolve elsewhere
+    .filter((id) => !id.startsWith(LABEL_REF_PREFIX) && !id.startsWith(CREATED_REF_PREFIX) && !id.startsWith(PLANNED_REF_PREFIX)); // refs resolve elsewhere
   if (written.length === 0) return;
   const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
     ctx.client,
@@ -1649,10 +1656,98 @@ export async function assertMovePreconditions(
   }
 }
 
+/** Every workflow state with its owner link: inherited views are found by
+ *  scanning (WorkflowStateFilter has no inheritedFrom comparator). */
+const STATE_VIEWS_Q = /* GraphQL */ `
+  query ReorgStateViews($first: Int!, $after: String) {
+    workflowStates(first: $first, after: $after) {
+      nodes { id name archivedAt inheritedFrom { id } team { id key } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+/** Live inherited views of an owner state (archiving the owner archives all of
+ *  them at once). Strict paging: a partial scan must not pass for complete. */
+async function inheritedStateViews(ctx: OpCtx, ownerId: string): Promise<ReorgStateNode[]> {
+  const all = await paged<ReorgStateNode>(
+    ctx.client, ctx.pace, STATE_VIEWS_Q, "workflowStates", {}, undefined, true,
+  );
+  return all.filter((st) => st.inheritedFrom?.id === ownerId && st.archivedAt == null);
+}
+
+/** Workflow states inherit like labels: Linear archives an owner state together
+ *  with every inherited view, and a view cannot be archived on its own. */
+async function assertStateOwner(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const live = await readState(ctx, op.target.id);
+  if (live.inheritedFromId)
+    throw new Error(
+      `archive-state ${op.target.identifier}: inherited view (child of ${String(live.inheritedFromId)}) — act on the owner state`,
+    );
+}
+
+/** create-team-label: the name must be free across the destination team, its
+ *  parent, its sub-teams and the workspace. `planned` (--check) lets a
+ *  lower-seq planned rename-label count as freeing the name. */
+async function assertCreateTeamLabelFree(ctx: OpCtx, op: ReorgOp, planned?: ReorgOp[]): Promise<void> {
+  const name = String(op.to.name);
+  const freed = planned ? plannedRenameFrees(planned, op.seq, name) : new Set<string>();
+  const conflicts = await findLabelNameConflicts(ctx, op.target.id, name, freed);
+  if (conflicts.length > 0)
+    throw new Error(
+      `seq ${op.seq} [create-team-label] "${name}": name taken by ${describeConflicts(conflicts)} ` +
+        `(label names are unique across a team, its parent, its sub-teams and the workspace) — plan a rename-label with a lower seq first`,
+    );
+}
+
+/** --check: the move op as apply will see it. created:<seq> refs resolve from
+ *  the journal; a ref to a lower-seq PLANNED create becomes a `planned:<seq>`
+ *  placeholder (not yet scope-checkable); anything else refuses. */
+function withCheckResolvedLabelMap(op: ReorgOp, journal: JournalRecord[], planned: ReorgOp[]): ReorgOp {
+  if (!hasLabelMap(op) || isRecord(op.to.labelMapResolved)) return op;
+  const resolved: Record<string, string> = {};
+  for (const [src, ref] of Object.entries(op.to.labelMap as Record<string, unknown>)) {
+    const r = String(ref);
+    try {
+      resolved[src] = resolveCreatedRef(r, journal, op.seq);
+    } catch (err) {
+      const n = Number(r.slice(CREATED_REF_PREFIX.length));
+      if (r.startsWith(CREATED_REF_PREFIX) && n < op.seq && planned.some((o) => o.seq === n && CREATE_LABEL_OPS.has(o.op))) {
+        resolved[src] = `${PLANNED_REF_PREFIX}${n}`;
+      } else {
+        throw new Error(`seq ${op.seq} [move-issue-team] labelMap ${src} -> ${r}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  return { ...op, to: { ...op.to, labelMapResolved: resolved } };
+}
+
+const PLANNED_REF_PREFIX = "planned:";
+
 /** Only empty states may be archived (plan §2c) — live read, refuse loudly
  *  instead of discovering Linear's refusal mid-phase. Archived issues count:
  *  they still reference the state. */
 async function assertStateEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  await assertStateOwner(ctx, op);
+  const views = await inheritedStateViews(ctx, op.target.id);
+  if (views.length > 0) {
+    ctx.onEvent?.({
+      kind: "info",
+      detail: `archive-state ${op.target.identifier}: will also archive ${views.length} inherited view(s): ${views
+        .map((v) => `${v.team?.key ?? "?"}/${v.name}`)
+        .join(", ")}`,
+    });
+    for (const v of views) {
+      const dv = await reorgRaw<{ issues: { nodes: { id: string; identifier?: string }[] } }>(
+        ctx.client, ISSUES_IN_STATE_Q, { id: v.id }, ctx.pace,
+      );
+      if (dv.issues.nodes.length > 0)
+        throw new Error(
+          `archive-state ${op.target.identifier}: inherited view ${v.team?.key ?? "?"}/${v.name} still holds issue(s) ` +
+            `(${dv.issues.nodes.map((n) => n.identifier ?? n.id).join(", ")}) — move them first`,
+        );
+    }
+  }
   const d = await reorgRaw<{ issues: { nodes: { id: string; identifier?: string; archivedAt?: string | null }[] } }>(
     ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
   );
@@ -1702,9 +1797,13 @@ export async function assertOpPreconditions(
   ctx: OpCtx,
   op: ReorgOp,
   journal: JournalRecord[],
+  /** --check only: the whole plan, so planned lower-seq renames and creates count. */
+  planned?: ReorgOp[],
 ): Promise<void> {
+  if (op.op === "move-issue-team" && planned) op = withCheckResolvedLabelMap(op, journal, planned);
   if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
+  if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op, planned);
   if (op.op === "archive-state") await assertStateEmpty(ctx, op);
   if (op.op === "delete-team") await assertTeamEmpty(ctx, op);
 }
@@ -1902,6 +2001,11 @@ async function executeOne(
   }
 
   // 2. op-specific preconditions (live reads)
+  if (op.target.type === "state" && liveBefore.inheritedFromId)
+    throw new Error(
+      `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited state view ` +
+        `(child of ${String(liveBefore.inheritedFromId)}) — act on the owner state`,
+    );
   if (op.target.type === "label" && liveBefore.inheritedFromId)
     throw new Error(
       `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited label ` +
@@ -1910,14 +2014,7 @@ async function executeOne(
   if (op.op === "relabel" || op.op === "move-issue-team")
     await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
-  if (op.op === "create-team-label") {
-    const conflicts = await findLabelNameConflicts(ctx, op.target.id, String(op.to.name), new Set());
-    if (conflicts.length > 0)
-      throw new Error(
-        `seq ${op.seq} [create-team-label] "${String(op.to.name)}": name taken by ${describeConflicts(conflicts)} ` +
-          `(label names are unique across a team, its parent, its sub-teams and the workspace) — plan a rename-label first`,
-      );
-  }
+  if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op);
 
   // 3. write
   await def.apply(ctx, op);
@@ -2063,7 +2160,7 @@ export async function runPlan(
           // precondition READS apply would run before its first write: a
           // refusal here is its own finding class, distinct from drift
           try {
-            await assertOpPreconditions(ctx, op, journal);
+            await assertOpPreconditions(ctx, op, journal, plan.ops);
           } catch (err) {
             refused.push(op.seq);
             opts.onEvent?.({
@@ -2109,60 +2206,6 @@ export async function runPlan(
         });
       }
     }
-    // create-team-label: the name must be free across the destination team, its
-    // parent, its sub-teams and the workspace, unless a LOWER-seq planned
-    // rename-label moves the holder off it.
-    for (const op of ops.filter((o) => o.op === "create-team-label")) {
-      try {
-        const conflicts = await findLabelNameConflicts(
-          ctx, op.target.id, String(op.to.name), plannedRenameFrees(plan.ops, op.seq, String(op.to.name)),
-        );
-        if (conflicts.length > 0) {
-          if (!drifted.includes(op.seq)) drifted.push(op.seq);
-          opts.onEvent?.({
-            kind: "drift",
-            detail: `DRIFT seq ${op.seq} [create-team-label] "${String(op.to.name)}": name taken by ${describeConflicts(conflicts)} — plan a rename-label with a lower seq first`,
-          });
-        }
-      } catch (err) {
-        drifted.push(op.seq);
-        opts.onEvent?.({
-          kind: "drift",
-          detail: `DRIFT seq ${op.seq} [create-team-label] "${String(op.to.name)}": read failed: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
-    }
-    // move labelMap: every created:<seq> ref must resolve to a journaled or
-    // lower-seq planned create, and plain destination ids must be usable in
-    // the destination team.
-    for (const op of ops.filter((o) => o.op === "move-issue-team" && hasLabelMap(o))) {
-      const problems: string[] = [];
-      const plain: string[] = [];
-      for (const [src, ref] of Object.entries(op.to.labelMap as Record<string, unknown>)) {
-        const r = String(ref);
-        if (!r.startsWith(CREATED_REF_PREFIX)) { plain.push(r); continue; }
-        try {
-          resolveCreatedRef(r, journal, op.seq);
-        } catch (err) {
-          const n = Number(r.slice(CREATED_REF_PREFIX.length));
-          const planned = plan.ops.find((o) => o.seq === n && CREATE_LABEL_OPS.has(o.op));
-          if (!(planned && n < op.seq)) problems.push(`${src} -> ${r}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      try {
-        if (plain.length && typeof op.to.teamId === "string")
-          for (const why of (await destLabelProblem(ctx, [...new Set(plain)], op.to.teamId)).values()) problems.push(why);
-      } catch (err) {
-        problems.push(`read failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      if (problems.length > 0) {
-        if (!drifted.includes(op.seq)) drifted.push(op.seq);
-        opts.onEvent?.({
-          kind: "drift",
-          detail: `DRIFT seq ${op.seq} [move-issue-team] ${op.target.identifier}: labelMap: ${problems.join("; ")}`,
-        });
-      }
-    }
     opts.onEvent?.({
       kind: "budget",
       detail: `check: ${ops.length} op(s) pre-read live, ${drifted.length} drifted, ${refused.length} would be refused`,
@@ -2179,6 +2222,21 @@ export async function runPlan(
         kind: "dry",
         detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: ${JSON.stringify(op.from)} → ${JSON.stringify(op.to)}${irreversibleNote}`,
       });
+      if (op.op === "archive-state") {
+        // read-only: an owner state takes its inherited views with it
+        try {
+          const views = await inheritedStateViews(ctx, op.target.id);
+          if (views.length > 0)
+            opts.onEvent?.({
+              kind: "info",
+              detail: `  seq ${op.seq} archive-state ${op.target.identifier}: will also archive ${views.length} inherited view(s): ${views
+                .map((v) => `${v.team?.key ?? "?"}/${v.name}`)
+                .join(", ")}`,
+            });
+        } catch (err) {
+          opts.onEvent?.({ kind: "info", detail: `  seq ${op.seq} archive-state: inherited-view lookup failed (${err instanceof Error ? err.message : String(err)})` });
+        }
+      }
     }
     opts.onEvent?.({
       kind: "budget",

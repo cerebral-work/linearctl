@@ -17,6 +17,7 @@ import {
   journalAppend,
   journalOkSeqs,
   journalPhaseVerified,
+  journalPhaseVerifiedAcross,
   journalRead,
   parsePlanFile,
   projectStatusPosition,
@@ -57,7 +58,7 @@ function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
   if (l.inheritedFrom) return be.labels.get(l.inheritedFrom)?.retiredAt ?? null;
   return null;
 }
-interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
+interface FakeState { id: string; name: string; type: string; archivedAt: string | null; inheritedFrom?: string | null; teamKey?: string }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; archived?: boolean; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
 interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean; parentId?: string | null }
@@ -159,7 +160,20 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgStateState")) {
       be.readCalls++;
       const s = be.states.get(vars.id as string);
-      return ok({ workflowState: s ? { id: s.id, name: s.name, type: s.type, archivedAt: s.archivedAt } : null });
+      return ok({ workflowState: s ? { id: s.id, name: s.name, type: s.type, archivedAt: s.archivedAt, inheritedFrom: s.inheritedFrom ? { id: s.inheritedFrom } : null } : null });
+    }
+    if (query.includes("ReorgStateViews")) {
+      be.readCalls++;
+      return ok({
+        workflowStates: {
+          nodes: [...be.states.values()].map((s) => ({
+            id: s.id, name: s.name, archivedAt: s.archivedAt,
+            inheritedFrom: s.inheritedFrom ? { id: s.inheritedFrom } : null,
+            team: s.teamKey ? { id: `t-${s.teamKey}`, key: s.teamKey } : null,
+          })),
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      });
     }
     if (query.includes("ReorgProjectState")) {
       be.readCalls++;
@@ -204,7 +218,7 @@ function fakeClient(be: FakeBackend): LinearClient {
           ? {
               id: t.id, key: t.key,
               parent: t.parentId ? { id: t.parentId } : null,
-              children: { nodes: [...be.teams.values()].filter((c) => c.parentId === t.id).map((c) => ({ id: c.id })) },
+              children: [...be.teams.values()].filter((c) => c.parentId === t.id).map((c) => ({ id: c.id })),
             }
           : null,
       });
@@ -2248,7 +2262,10 @@ describe("guarded paging and refusal messages", () => {
     });
     await expect(applyPlan(be, [op], join(dir, "j.jsonl"), { allowIrreversible: true }))
       .rejects.toThrow(/archived: EX-1\)\. Linear may allow archiving .* refuses conservatively/);
+  });
+});
 
+// ---------------------------------------------------------------------------
 // Team-label carry-over: create-team-label, move labelMap, prior journals
 // ---------------------------------------------------------------------------
 
@@ -2319,8 +2336,13 @@ describe("team-label carry-over", () => {
       ];
       for (const [team, name] of cases) {
         const { r, lines } = await events(be, [createOp(1, team, name)]);
-        expect(r.drifted).toEqual([1]);
-        expect(lines.join("\n")).toContain("name taken by");
+        // the destination's OWN label is drift (absence anchor); the rest are refusals
+        expect(r.drifted.length + r.refused.length).toBeGreaterThan(0);
+        expect(lines.join("\n")).toMatch(/REFUSE|DRIFT/);
+        if (name !== "shared" || team !== "t-p") {
+          expect(r.refused).toEqual([1]);
+          expect(lines.join("\n")).toContain("name taken by");
+        }
       }
     });
 
@@ -2340,8 +2362,9 @@ describe("team-label carry-over", () => {
       });
       const ok = await events(be, [rename(1), createOp(2, "t-p", "bug")]);
       expect(ok.r.drifted).toEqual([]);
+      expect(ok.r.refused).toEqual([]);
       const late = await events(be, [createOp(1, "t-p", "bug"), rename(2)]);
-      expect(late.r.drifted).toEqual([1]);
+      expect(late.r.refused).toEqual([1]);
 
       const j = join(dir, "j.jsonl");
       const res = await applyPlan(be, [rename(1), createOp(2, "t-p", "bug")], j);
@@ -2468,12 +2491,17 @@ describe("team-label carry-over", () => {
 
     test("--check flags an unresolvable created ref and an out-of-scope plain destination; accepts a lower-seq planned create", async () => {
       const be = backend();
+      green(join(dir, "chk.jsonl"));
       const bad = await events(be, [moveWith(2, { [L_SRC_BUG]: "created:1" })]);
-      expect(bad.r.drifted).toContain(2);
+      expect(bad.r.refused).toContain(2);
+      expect(bad.lines.join("\n")).toContain("no ok create-label journal record");
       const scope = await events(be, [moveWith(2, { [L_SRC_BUG]: L_UNRELATED })]);
+      expect(scope.r.refused).toContain(2);
       expect(scope.lines.join("\n")).toContain("outside the destination team's scope");
+      // gates are green and the ref is a lower-seq planned create: nothing to refuse
       const good = await events(be, [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })]);
       expect(good.r.drifted).toEqual([]);
+      expect(good.r.refused).toEqual([]);
     });
   });
 
@@ -2556,11 +2584,14 @@ describe("team-label carry-over", () => {
       await expect(applyPlan(be, [move()], join(dir, "cur.jsonl"), { priorJournalPaths: [join(dir, "nope.jsonl")] })).rejects.toThrow("does not exist");
     });
 
-    test("journalPhaseVerified: latest marker per phase wins", () => {
-      expect(journalPhaseVerified([mk(1, "2026-10-05T00:00:01Z", true), mk(1, "2026-10-05T00:00:02Z", false)], 1)).toBe(false);
-      expect(journalPhaseVerified([mk(1, "2026-10-05T00:00:02Z", false), mk(1, "2026-10-05T00:00:01Z", true)], 1)).toBe(false);
-      expect(journalPhaseVerified([mk(1, "2026-10-05T00:00:01Z", false), mk(1, "2026-10-05T00:00:02Z", true)], 1)).toBe(true);
-      expect(journalPhaseVerified([], 1)).toBe(false);
+    test("journalPhaseVerifiedAcross: file order within a journal, timestamp across journals", () => {
+      const a = (ok: boolean, at: string) => [mk(1, at, ok)];
+      expect(journalPhaseVerifiedAcross([a(true, "2026-10-05T00:00:01Z"), a(false, "2026-10-05T00:00:02Z")], 1)).toBe(false);
+      // an older red in a later-listed journal does not beat a newer green elsewhere
+      expect(journalPhaseVerifiedAcross([a(true, "2026-10-05T00:00:09Z"), a(false, "2026-10-05T00:00:02Z")], 1)).toBe(true);
+      // inside ONE journal the later line wins even if its timestamp is older
+      expect(journalPhaseVerifiedAcross([[mk(1, "2026-10-05T00:00:05Z", true), mk(1, "2026-10-05T00:00:01Z", false)]], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([], 1)).toBe(false);
     });
   });
 
@@ -2570,5 +2601,59 @@ describe("team-label carry-over", () => {
     expect(() => parsePlanFile(write(moveWith(1, { a: 5 as unknown as string })))).toThrow("labelMap");
     expect(() => parsePlanFile(write(createOp(1, "t-b", "")))).toThrow("to.name");
     expect(parsePlanFile(write(createOp(1, "t-b", "x"))).ops).toHaveLength(1);
+  });
+});
+
+describe("archive-state and inherited workflow states", () => {
+  function stateBackend(): FakeBackend {
+    const be = freshBackend();
+    be.states.set("s-owner", { id: "s-owner", name: "Review", type: "started", archivedAt: null, teamKey: "PPP" });
+    be.states.set("s-view", { id: "s-view", name: "Review", type: "started", archivedAt: null, inheritedFrom: "s-owner", teamKey: "SSS" });
+    return be;
+  }
+  const archive = (id: string, ident: string) =>
+    baseOp({
+      phase: 2, op: "archive-state", reversible: false, approval: "deck-1",
+      target: { type: "state", id, identifier: ident }, from: { archived: false }, to: { archived: true },
+    });
+  const run = async (be: FakeBackend, ops: ReorgOp[], extra: Partial<Parameters<typeof runPlan>[2]>) => {
+    const lines: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith(ops), {
+      apply: false, resume: false, allowIrreversible: true, journalPath: join(dir, "s.jsonl"),
+      pace: fastPace(), onEvent: (e) => lines.push(e.detail), ...extra,
+    });
+    return { r, lines: lines.join("\n") };
+  };
+
+  test("an inherited view refuses on apply, with no write", async () => {
+    const be = stateBackend();
+    await expect(applyPlan(be, [archive("s-view", "SSS/Review")], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("act on the owner state");
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check reports an inherited view as REFUSE", async () => {
+    const be = stateBackend();
+    const { r, lines } = await run(be, [archive("s-view", "SSS/Review")], { check: true });
+    expect(r.refused).toEqual([1]);
+    expect(lines).toContain("act on the owner state");
+  });
+
+  test("--check and the plain dry run list the inherited views an owner archive takes with it", async () => {
+    const be = stateBackend();
+    const chk = await run(be, [archive("s-owner", "PPP/Review")], { check: true });
+    expect(chk.r.refused).toEqual([]);
+    expect(chk.lines).toContain("will also archive 1 inherited view(s): SSS/Review");
+    const dry = await run(be, [archive("s-owner", "PPP/Review")], {});
+    expect(dry.lines).toContain("will also archive 1 inherited view(s): SSS/Review");
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("an owner whose inherited view still holds issues refuses naming the view", async () => {
+    const be = stateBackend();
+    be.issues.set("i-1", { ...ISSUE_1, stateId: "s-view", labelIds: [] });
+    await expect(applyPlan(be, [archive("s-owner", "PPP/Review")], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("inherited view SSS/Review still holds issue(s)");
+    expect(be.mutationCalls).toEqual([]);
   });
 });
