@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { LinearClient } from "@linear/sdk";
 import { buildSchema, parse, typeFromAST, validateInputValue } from "graphql";
 import {
+  OP_REGISTRY,
   RateTracker,
   ReorgMismatch,
   RollbackRefused,
@@ -230,19 +231,25 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgLabelsByNameCI")) {
       be.readCalls++;
-      const want = String(vars.name).toLowerCase();
-      const nodes = [...be.labels.values()].filter((l) => labelName(be, l).toLowerCase() === want);
+      // Honour the comparator the query ACTUALLY carries: eq is exact,
+      // eqIgnoreCase is case-folded (critic round 1: reverting the query to
+      // eq must turn a test red).
+      const ci = query.includes("eqIgnoreCase");
+      const want = String(vars.name);
+      const nodes = [...be.labels.values()].filter((l) =>
+        ci ? labelName(be, l).toLowerCase() === want.toLowerCase()
+           : labelName(be, l) === want);
       return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null, inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null })) } });
     }
     if (query.includes("ReorgFindWsLabel")) {
       be.readCalls++;
-      const nodes = [...be.labels.values()].filter((l) => l.name === vars.name && l.teamId == null);
+      // Honour the comparator the query carries (same rule as above).
+      const ci = query.includes("eqIgnoreCase");
+      const want = String(vars.name);
+      const nodes = [...be.labels.values()].filter((l) =>
+        (ci ? labelName(be, l).toLowerCase() === want.toLowerCase()
+            : labelName(be, l) === want) && l.teamId == null);
       return ok({ issueLabels: { nodes } });
-    }
-    if (query.includes("ReorgLabelsByNameAllScopes")) {
-      be.readCalls++;
-      const nodes = [...be.labels.values()].filter((l) => labelName(be, l) === vars.name);
-      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null, inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null })) } });
     }
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
@@ -375,8 +382,9 @@ function fakeClient(be: FakeBackend): LinearClient {
           be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: t.id, teamKey: t.key });
           return;
         }
-        // Linear enforces label-name uniqueness ACROSS workspace + team scope
-        if ([...be.labels.values()].some((l) => labelName(be, l) === input.name))
+        // Linear enforces label-name uniqueness ACROSS workspace + team scope,
+        // CASE-INSENSITIVELY (probe: workspace 'blocked' refused by TOD 'Blocked')
+        if ([...be.labels.values()].some((l) => labelName(be, l).toLowerCase() === input.name.toLowerCase()))
           throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
       });
@@ -1875,6 +1883,103 @@ describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
     const line = events.find((d) => d.includes("DRIFT seq 2"));
     expect(line).toBeDefined();
     expect(line).toContain("11111111-1111-4111-8111-1111111110c1");
+  });
+
+  test("case-insensitive preflight: TOD 'Security' blocks the 'security' create (red when case-sensitive)", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toContain(2); // Linear's uniqueness is case-insensitive
+  });
+
+  test("apply refusal on a case-variant names the case-insensitivity in the error", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    await expect(applyPlan(be, [baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    })], join(dir, "j.jsonl"))).rejects.toThrow(/case-insensitive/);
+    // The refusal names BOTH spellings (critic round 1).
+    await expect(applyPlan(be, [baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    })], join(dir, "j.jsonl"))).rejects.toThrow(/"Security"/);
+  });
+
+  test("absence anchor is case-insensitive: workspace 'Security' is found for a 'security' create", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111002", { id: "11111111-1111-4111-8111-111111111002", name: "Security", retiredAt: null, teamId: null, teamKey: null });
+    const op = baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    // readState runs FIND_WS_LABEL_Q: red when that query reverts to eq
+    // (the fake honours the comparator the query carries).
+    const state = await OP_REGISTRY["create-workspace-label"].readState(
+      { client: fakeClient(be), pace: fastPace() }, op,
+    );
+    expect(state.labelId).toBe("11111111-1111-4111-8111-111111111002");
+  });
+
+  test("a HIGHER-seq rename does not free the name", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const lateRename = baseOp({
+      seq: 5, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "TOD/Security" },
+      from: { name: "Security" }, to: { name: "blocking" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([create, lateRename]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toContain(2);
+  });
+
+  test("a lower-seq rename to a CASE-VARIANT of the same name does not free it", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    const rename = baseOp({
+      seq: 1, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "TOD/Security" },
+      from: { name: "Security" }, to: { name: "SECURITY" },
+    });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([rename, create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toContain(2);
+  });
+
+  test("a lower-seq rename to a DIFFERENT name frees it", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    const rename = baseOp({
+      seq: 1, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "TOD/Security" },
+      from: { name: "Security" }, to: { name: "blocking" },
+    });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([rename, create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).not.toContain(2);
   });
 });
 
