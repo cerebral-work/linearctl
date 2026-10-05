@@ -1205,6 +1205,30 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
  *  (c) phase 2 verified green (destination state predictable);
  *  (d) the issue's cycleId was captured in op.from (journaled first).
  */
+/**
+ * Refuse when an op WRITES an inherited label id onto an issue (to.add /
+ * to.reapplyLabelIds). Removing a child id from an issue is allowed — the
+ * write ban is on the label object itself and on ADDING inherited labels.
+ */
+export async function assertNoInheritedWrites(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds)];
+  if (written.length === 0) return;
+  const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+    ctx.client,
+    `query ReorgLabelScopes($ids: [ID!]!) {
+      issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } inheritedFrom { id } } }
+    }`,
+    { ids: written },
+    ctx.pace,
+  );
+  for (const l of d.issueLabels.nodes) {
+    if (l.inheritedFrom?.id)
+      throw new Error(
+        `seq ${op.seq} [${op.op}]: would write inherited label "${l.name}" (${l.id}), child of ${l.inheritedFrom.id} — write the owner instead`,
+      );
+  }
+}
+
 export async function assertMovePreconditions(
   ctx: OpCtx,
   op: ReorgOp,
@@ -1229,7 +1253,7 @@ export async function assertMovePreconditions(
     const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
       ctx.client,
       `query ReorgLabelScopes($ids: [ID!]!) {
-        issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } } }
+        issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } inheritedFrom { id } } }
       }`,
       { ids: labelIds },
       ctx.pace,
@@ -1369,6 +1393,8 @@ async function executeOne(
       `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited label ` +
         `(child of ${String(liveBefore.inheritedFromId)}) — Linear refuses writes on it; target the owner`,
     );
+  if (op.op === "relabel" || op.op === "move-issue-team")
+    await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
 
   // 3. write
@@ -1481,6 +1507,18 @@ export async function runPlan(
             detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: inherited label (child of ${String(live.inheritedFromId)}) — target the owner`,
           });
           continue;
+        }
+        if (op.op === "relabel" || op.op === "move-issue-team") {
+          try {
+            await assertNoInheritedWrites(ctx, op);
+          } catch (err) {
+            drifted.push(op.seq);
+            opts.onEvent?.({
+              kind: "drift",
+              detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            continue;
+          }
         }
         const drift = compareState(op.from, live, def.compareKeys);
         if (drift.length) {
@@ -2165,9 +2203,23 @@ export async function census(
   }));
   const workspaceLabels = withCounts.filter((l) => l.team == null);
   const teamLabelsAll = withCounts.filter((l) => l.team != null);
-  const teamLabels = opts.teamKeys?.length
+  const scoped = opts.teamKeys?.length
     ? teamLabelsAll.filter((l) => opts.teamKeys!.includes(l.teamKey ?? ""))
     : teamLabelsAll;
+  // Owners of in-scope inherited labels are ALWAYS included, even when the
+  // owner sits outside the team filter — the planner's owner grouping,
+  // refusal lookup and child mapping silently break without them.
+  const have = new Set(scoped.map((l) => l.id));
+  const neededOwners = new Set(
+    scoped.map((l) => l.inheritedFromId).filter((x): x is string => Boolean(x)),
+  );
+  for (const l of teamLabelsAll) {
+    if (neededOwners.has(l.id) && !have.has(l.id)) {
+      scoped.push(l);
+      have.add(l.id);
+    }
+  }
+  const teamLabels = scoped;
 
   const projectsAll = await paged<ReorgProjectNode>(
     client, pace, CENSUS_PROJECTS_Q, "projects", {}, opts.limit,
@@ -2249,7 +2301,11 @@ export function assertFromAnchors(ops: ReorgOp[]): void {
     "delete-team": [],
   };
   for (const op of ops) {
-    const missing = (REQUIRED_FROM[op.op] ?? []).filter((k) => !(k in op.from));
+    if (!(op.op in REQUIRED_FROM))
+      throw new Error(
+        `plan op seq ${op.seq}: unknown op kind "${op.op}" — add its from-field requirements to REQUIRED_FROM`,
+      );
+    const missing = REQUIRED_FROM[op.op].filter((k) => !(k in op.from));
     if (missing.length)
       throw new Error(
         `plan op seq ${op.seq} [${op.op}] ${op.target.identifier}: from is missing ${missing.join(", ")} ` +
@@ -2364,6 +2420,10 @@ export function planFromRules(
   const childrenOf = new Map<string, string[]>();
   for (const l of censusData.teamLabels) {
     if (!l.inheritedFromId) continue;
+    if (!labelById.has(l.inheritedFromId))
+      throw new Error(
+        `census carries inherited label ${l.name} (${l.id}) without its owner ${l.inheritedFromId} — re-run the census (owners are always included now)`,
+      );
     const arr = childrenOf.get(l.inheritedFromId) ?? [];
     arr.push(l.id);
     childrenOf.set(l.inheritedFromId, arr);
@@ -2375,7 +2435,10 @@ export function planFromRules(
     op.to.remove = sortedStrings(op.to.remove).map((rid) => {
       const kids = childrenOf.get(rid);
       if (!kids) return rid;
-      return kids.find((k) => issue.labelIds.includes(k)) ?? rid;
+      // prefer the child belonging to the issue's own team (a sub-team issue
+      // carries its team's child), then any carried child, then the id as-is
+      const ownTeam = kids.find((k) => labelById.get(k)?.team?.id === issue.teamId);
+      return ownTeam ?? kids.find((k) => issue.labelIds.includes(k)) ?? rid;
     });
   }
 
@@ -2408,14 +2471,16 @@ function selectTargets(
 
   switch (rule.match.entity) {
     case "none": {
-      // creation ops — the target does not exist; one synthetic target per rule
+      // creation ops — the target does not exist; one synthetic target per rule.
+      // The from anchor keys the kind: labels anchor labelId, statuses statusId.
+      const key = rule.op === "create-project-status" ? "statusId" : "labelId";
       return [{
         target: {
-          type: "label",
+          type: rule.op === "create-project-status" ? "project" : "label",
           id: `new:${String(rule.to.name ?? "unnamed")}`,
           identifier: String(rule.to.name ?? "unnamed"),
         },
-        from: { labelId: null },
+        from: { [key]: null },
       }];
     }
     case "team": {

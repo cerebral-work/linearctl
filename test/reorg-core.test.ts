@@ -11,6 +11,7 @@ import {
   assertFreshBackup,
   assertFromAnchors,
   assertMovePreconditions,
+  census,
   estimateRequests,
   journalAppend,
   journalOkSeqs,
@@ -176,7 +177,8 @@ function fakeClient(be: FakeBackend): LinearClient {
       return ok({
         issueLabels: {
           nodes: ids.map((id) => be.labels.get(id)).filter(Boolean).map((l) => ({
-            id: l!.id, name: l!.name, team: l!.teamId ? { id: l!.teamId, key: l!.teamKey } : null,
+            id: l!.id, name: labelName(be, l!), team: l!.teamId ? { id: l!.teamId, key: l!.teamKey } : null,
+            inheritedFrom: l!.inheritedFrom ? { id: l!.inheritedFrom } : null,
           })),
         },
       });
@@ -1572,6 +1574,55 @@ describe("from-completeness invariant", () => {
       from: { retired: false, name: "x", inheritedFromId: null }, to: { name: "y" },
     });
     expect(() => assertFromAnchors([good])).not.toThrow();
+  });
+});
+
+describe("census capture (CER-2353 round 1)", () => {
+  /** Minimal census stub: one page per connection, canned rows. */
+  function censusStub(): LinearClient {
+    const rawRequest = async (query: string) => {
+      const page = (nodes: unknown[]) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: null } });
+      if (query.includes("ReorgCensusTeams"))
+        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
+      if (query.includes("ReorgCensusLabels"))
+        return { data: { issueLabels: page([
+          { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
+          { id: "l-child", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, inheritedFrom: { id: "l-owner" } },
+        ]) } };
+      if (query.includes("ReorgCensusIssues")) return { data: { issues: page([]) } };
+      if (query.includes("ReorgCensusProjects")) return { data: { projects: page([]) } };
+      if (query.includes("ReorgCensusInitiatives")) return { data: { initiatives: page([]) } };
+      if (query.includes("ReorgOrg")) return { data: { organization: { id: "w", urlKey: "toy" } } };
+      throw new Error("unhandled " + query.slice(0, 60));
+    };
+    return { client: { rawRequest } } as unknown as LinearClient;
+  }
+
+  test("captures inheritedFrom on labels and parent on teams", async () => {
+    const d = await census(censusStub(), {}, fastPace());
+    expect(d.teams[0].parent).toEqual({ id: "t-parent", key: "PAR" });
+    const child = d.teamLabels.find((l) => l.id === "l-child");
+    expect(child?.inheritedFromId).toBe("l-owner");
+  });
+
+  test("--team scope still includes the owners of in-scope inherited labels", async () => {
+    // EX has the inherited child; its owner sits in PAR (outside the filter)
+    const d = await census(censusStub(), { teamKeys: ["EX"] }, fastPace());
+    const ids = d.teamLabels.map((l) => l.id).sort();
+    expect(ids).toEqual(["l-child", "l-owner"]);
+  });
+});
+
+describe("written-label guard + team-aware child mapping (round 1)", () => {
+  test("relabel ADDING an inherited child id is refused before the write", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    await expect(applyPlan(be, [baseOp({
+      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+    })], join(dir, "j.jsonl"))).rejects.toThrow(/write inherited label/);
+    expect(be.mutationCalls).toEqual([]);
   });
 });
 
