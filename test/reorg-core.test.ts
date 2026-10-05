@@ -40,7 +40,12 @@ interface FakeIssue {
   teamKey: string;
   archived: boolean;
 }
-interface FakeLabel { id: string; name: string; retiredAt: string | null; teamId: string | null; teamKey: string | null }
+interface FakeLabel { id: string; name: string; retiredAt: string | null; teamId: string | null; teamKey: string | null; inheritedFrom?: string | null }
+
+/** Inherited labels mirror the owner's name (Linear propagates a parent rename). */
+function labelName(be: FakeBackend, l: FakeLabel): string {
+  return l.inheritedFrom ? (be.labels.get(l.inheritedFrom)?.name ?? l.name) : l.name;
+}
 interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
@@ -98,7 +103,15 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelState")) {
       be.readCalls++;
       const l = be.labels.get(vars.id as string);
-      return ok({ issueLabel: l ? { id: l.id, name: l.name, retiredAt: l.retiredAt, team: l.teamId ? { id: l.teamId, key: l.teamKey } : null } : null });
+      return ok({
+        issueLabel: l
+          ? {
+              id: l.id, name: labelName(be, l), retiredAt: l.retiredAt,
+              team: l.teamId ? { id: l.teamId, key: l.teamKey } : null,
+              inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null,
+            }
+          : null,
+      });
     }
     if (query.includes("ReorgStateState")) {
       be.readCalls++;
@@ -146,8 +159,8 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgLabelsByNameAllScopes")) {
       be.readCalls++;
-      const nodes = [...be.labels.values()].filter((l) => l.name === vars.name);
-      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: l.name, team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
+      const nodes = [...be.labels.values()].filter((l) => labelName(be, l) === vars.name);
+      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
     }
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
@@ -245,7 +258,7 @@ function fakeClient(be: FakeBackend): LinearClient {
       return W("issueLabelCreate", () => {
         const input = vars.input as { name: string; description?: string };
         // Linear enforces label-name uniqueness ACROSS workspace + team scope
-        if ([...be.labels.values()].some((l) => l.name === input.name))
+        if ([...be.labels.values()].some((l) => labelName(be, l) === input.name))
           throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
         const id = `l-new-${++be.createdLabelSeq}`;
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
@@ -253,6 +266,9 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelUpdate"))
       return W("issueLabelUpdate", () => {
         const l = be.labels.get(vars.id as string)!;
+        // Linear refuses writes on inherited (sub-team) labels outright
+        if (l.inheritedFrom)
+          throw new Error("Cannot update inherited labels, please update the parent label instead.");
         const input = vars.input as { retiredAt?: string | null; name?: string };
         if ("retiredAt" in input) l.retiredAt = input.retiredAt ?? null;
         if (typeof input.name === "string") l.name = input.name;
@@ -1447,6 +1463,64 @@ describe("round-1 review test pins", () => {
       op: "set-initiative-owner", target: { type: "initiative", id: "in-1", identifier: "I" },
       from: { ownerId: null }, to: { ownerId: "u-9" },
     })], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
+  });
+});
+
+describe("inherited labels (CER-2353)", () => {
+  const OWNER = { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" };
+  const CHILD = { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" };
+
+  test("fake models Linear: a write to an inherited label is refused (guard first, API as backstop)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    // a direct executor path (drift passes: name matches) — the API refusal is the backstop
+    const op = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { name: "security" }, to: { name: "security·old-SUB" },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label/i);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("apply refuses an inherited target BEFORE any write (executor guard)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    const op = baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { retired: false }, to: { retired: true },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label.*target the owner/s);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check flags an inherited target as drift", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    const op = baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { retired: false }, to: { retired: true },
+    });
+    const result = await runPlan(fakeClient(be), planWith([op]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toEqual([1]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("parent rename propagates to the child's reflected name", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    await applyPlan(be, [baseOp({
+      op: "rename-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      from: { name: "security" }, to: { name: "security·old-EX" },
+    })], join(dir, "j.jsonl"));
+    // child reads now reflect the parent's new name (Linear propagation)
+    expect(labelName(be, be.labels.get("l-child")!)).toBe("security·old-EX");
   });
 });
 
