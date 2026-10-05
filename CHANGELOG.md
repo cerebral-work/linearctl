@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.1](https://github.com/cerebral-work/linearctl/compare/v0.9.0...v0.9.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **reorg:** correct GraphQL variable types and filterless lookups ([11cec47](https://github.com/cerebral-work/linearctl/commit/11cec471c5be9ee4a54a2475e9ce09d02a09d0f3))
+* **reorg:** correct GraphQL variable types and filterless lookups ([25382b6](https://github.com/cerebral-work/linearctl/commit/25382b65a308262366dc42dd148b9fcb3a34f7c8))
+* **reorg:** validate generated documents, guard probe paging, name archived blockers ([02808e2](https://github.com/cerebral-work/linearctl/commit/02808e235fdf8cda6de55c11903a3466acde75f3))
+
 ## [0.9.0](https://github.com/cerebral-work/linearctl/compare/v0.8.0...v0.9.0) (2026-10-05)
 
 
