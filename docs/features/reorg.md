@@ -231,6 +231,35 @@ the owner state"; `REFUSE` under `--check`). For an owner state, the dry run
 and `--check` list the inherited views that will archive with it, and the
 executor refuses while any of those views still holds issues.
 
+## Superseded ops in verify
+
+`verify` compares each journaled op's expected end state with the live target.
+When a later op (seq order) that is journaled ok changes the same key of the
+same target, only that last op is checked against live; an earlier one is
+reported as `superseded by seq N`, counts as ok, and is listed separately
+(`SUPERSEDED ...` lines, `superseded` in the JSON and the report file), never
+dropped. An op that is only partly superseded is still checked on its other
+keys. A later op that is not journaled ok supersedes nothing.
+
+Rules:
+
+- Later ops come from every ok journal row (deduped by seq), not only the
+  plan file being verified, so a later op journaled from another plan counts.
+  A plan op with no ok row is still reported as failed.
+- Superseding is per key. An archive supersedes only what it sets (`archived`,
+  and `trashed` for projects): an earlier move or project-team change is still
+  checked against the archived target. An archive, unarchive, re-archive chain
+  checks only the last archive. Only a delete (target gone) supersedes every
+  key of earlier ops on that target.
+- A create's identity is the label it created (journaled label id, else the
+  case-insensitive name), not its team. Creates of different labels in one
+  team never supersede each other; only a later rename, retire or delete of
+  that label supersedes its create.
+- A later op in a different phase supersedes only when that phase's latest
+  verify marker is green (current journal, then prior journals, by the gate
+  rule below). Otherwise the earlier op is checked normally. Later ops in the
+  same phase are checked in the same run, so they may supersede.
+
 ## Prior journals
 
 `apply`, `--check` and `verify` accept `--prior-journal <file>` (repeatable).

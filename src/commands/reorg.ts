@@ -205,16 +205,17 @@ export async function reorgVerify(opts: ReorgVerifyOptions): Promise<void> {
   const phase = Number.parseInt(opts.phase, 10);
   const journalPath = opts.journal ?? `${opts.plan}.applied.jsonl`;
   const client = makeClient();
-  const { ok, failures, gateGreen } = await verifyPhase(client, plan, phase, {
+  const { ok, failures, gateGreen, superseded } = await verifyPhase(client, plan, phase, {
     journalPath,
     priorJournalPaths: opts.priorJournal,
     pace: makePace(),
     reportPath: opts.report ?? `${journalPath}.verify-phase-${phase}.json`,
   });
   if (opts.json) {
-    printJson({ ok, failures, gateGreen });
+    printJson({ ok, failures, gateGreen, superseded });
   } else {
     for (const f of failures) process.stdout.write(`FAIL ${f}\n`);
+    for (const sp of superseded) process.stdout.write(`SUPERSEDED ${sp}\n`);
     process.stdout.write(ok ? `phase ${phase} verified ✓\n` : `phase ${phase}: ${failures.length} failure(s)\n`);
     if (opts.priorJournal?.length)
       process.stdout.write(`phase ${phase} gate across journals: ${gateGreen ? "green" : "RED"}\n`);
