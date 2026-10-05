@@ -45,6 +45,7 @@ import { withRetry } from "../lib/retry.js";
 
 export const REORG_OPS = [
   "create-workspace-label",
+  "create-team-label",
   "relabel",
   "rename-label",
   "retire-or-delete-label",
@@ -158,6 +159,14 @@ export function parsePlanFile(path: string): ReorgPlan {
     assertArchiveProjectNotTrash(o.op, o.to, where);
     if (typeof o.evidence !== "string") throw new Error(`${where}: evidence required`);
     if (typeof o.reversible !== "boolean") throw new Error(`${where}: reversible required`);
+    if (o.op === "create-team-label" && (typeof o.to.name !== "string" || !o.to.name))
+      throw new Error(`${where}: create-team-label needs to.name`);
+    if (o.op === "move-issue-team" && "labelMap" in o.to) {
+      const lm = o.to.labelMap;
+      if (!lm || typeof lm !== "object" || Array.isArray(lm) ||
+          Object.values(lm as Record<string, unknown>).some((v) => typeof v !== "string" || !v))
+        throw new Error(`${where}: move-issue-team to.labelMap must map source label ids to a label id or created:<seq>`);
+    }
     if (o.op === "archive-state" && o.reversible !== false)
       throw new Error(`${where}: archive-state is never reversible (Linear has no unarchive) — reversible:false + approval required`);
     if (o.reversible === false) {
@@ -337,12 +346,43 @@ export function journalOkSeqs(records: JournalRecord[]): Set<number> {
   return ok;
 }
 
-/** True when the journal carries a green verify marker for the phase. */
+/** True when the LATEST verify marker for the phase is green (file order: a
+ *  later red revokes an earlier green). */
 export function journalPhaseVerified(records: JournalRecord[], phase: number): boolean {
-  // The LATEST marker for the phase decides: a later red revokes an earlier green.
   let latest: JournalRecord | undefined;
   for (const r of records) if (r.seq === "verify" && r.phase === phase) latest = r;
   return latest?.ok === true;
+}
+
+/** Latest verify marker for the phase in ONE journal (file order), or undefined. */
+function latestMarker(records: JournalRecord[], phase: number): JournalRecord | undefined {
+  let latest: JournalRecord | undefined;
+  for (const r of records) if (r.seq === "verify" && r.phase === phase) latest = r;
+  return latest;
+}
+
+/** Gate across journals, with no clock involved: if the CURRENT journal has any
+ *  verify marker for the phase, its latest (file order) decides alone. Prior
+ *  journals are consulted only when the current one has none, and then every
+ *  prior journal that has a marker must end green (any red fails). */
+export function journalPhaseVerifiedAcross(
+  prior: JournalRecord[][],
+  current: JournalRecord[],
+  phase: number,
+): boolean {
+  const cur = latestMarker(current, phase);
+  if (cur) return cur.ok === true;
+  const marks = prior.map((j) => latestMarker(j, phase)).filter((m): m is JournalRecord => m !== undefined);
+  return marks.length > 0 && marks.every((m) => m.ok === true);
+}
+
+/** Verify markers only, one list per journal, from journals this run must not
+ *  own: read-only gate input. Their ops are never resumed, rolled back or written. */
+export function loadPriorMarkers(paths: string[] | undefined): JournalRecord[][] {
+  return (paths ?? []).map((p) => {
+    if (!existsSync(p)) throw new Error(`--prior-journal ${p} does not exist`);
+    return journalRead(p).filter((r) => r.seq === "verify");
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +421,8 @@ interface OpCtx {
   /** Injectable sleep so tests run instantly. */
   sleep?: (ms: number) => Promise<void>;
   onEvent?: (ev: { kind: string; detail: string }) => void;
+  /** Verify markers from prior journals (read-only phase-gate input). */
+  priorMarkers?: JournalRecord[][];
 }
 
 /** Linear's read API can lag a just-acknowledged write; a post-write re-read
@@ -416,6 +458,9 @@ interface ReorgStateNode {
   name: string;
   type: string;
   archivedAt?: string | null;
+  /** Set on INHERITED states (sub-team views of a parent team's state). */
+  inheritedFrom?: { id: string } | null;
+  team?: { id: string; key: string } | null;
 }
 
 interface ReorgProjectNode {
@@ -467,7 +512,7 @@ const LABEL_STATE_Q = /* GraphQL */ `
 
 const STATE_STATE_Q = /* GraphQL */ `
   query ReorgStateState($id: String!) {
-    workflowState(id: $id) { id name type archivedAt }
+    workflowState(id: $id) { id name type archivedAt inheritedFrom { id } }
   }
 `;
 
@@ -560,7 +605,164 @@ async function resolveOpLabelRefs(
   for (const key of ["add", "remove", "reapplyLabelIds"] as const) {
     if (key in to) to[key] = await resolveArr(to[key]);
   }
+  if (isRecord(to.labelMap)) {
+    const resolved: Record<string, string> = {};
+    for (const [src, ref] of Object.entries(to.labelMap)) {
+      resolved[src] = resolveCreatedRef(String(ref), journal, op.seq);
+    }
+    to.labelMapResolved = resolved;
+  }
   return { ...op, to };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+const CREATED_REF_PREFIX = "created:";
+const CREATE_LABEL_OPS = new Set<string>(["create-workspace-label", "create-team-label"]);
+
+/** A labelMap destination: a label id as-is, or `created:<seq>` → the id the
+ *  journal recorded when that create op landed. Anything else unresolved
+ *  throws (no guesses, no fabrication). */
+export function resolveCreatedRef(ref: string, journal: JournalRecord[], forSeq: number): string {
+  if (!ref.startsWith(CREATED_REF_PREFIX)) return ref;
+  const n = Number(ref.slice(CREATED_REF_PREFIX.length));
+  if (!Number.isInteger(n)) throw new Error(`labelMap ref "${ref}" is not created:<seq>`);
+  if (n >= forSeq) throw new Error(`labelMap ref "${ref}" must point at a lower seq than ${forSeq}`);
+  for (const r of journal) {
+    if (
+      r.ok && r.seq === n && typeof r.op === "string" && CREATE_LABEL_OPS.has(r.op) &&
+      typeof r.original?.to.labelId === "string"
+    ) {
+      return r.original.to.labelId;
+    }
+  }
+  throw new Error(`labelMap ref "${ref}": no ok create-label journal record for seq ${n} (apply it first)`);
+}
+
+/** All labels carrying a name (case-insensitive), any scope. */
+const LABELS_BY_NAME_CI_Q = /* GraphQL */ `
+  query ReorgLabelsByNameCI($name: String!) {
+    issueLabels(filter: { name: { eqIgnoreCase: $name } }, first: 250) {
+      nodes { id name team { id key } inheritedFrom { id } }
+    }
+  }
+`;
+
+/** A team's parent and sub-teams (label-name uniqueness spans the family). */
+const TEAM_FAMILY_Q = /* GraphQL */ `
+  query ReorgTeamFamily($id: String!) {
+    team(id: $id) { id key parent { id key } children { id } }
+  }
+`;
+
+interface TeamFamily {
+  key: string;
+  parentId: string | null;
+  parentKey: string | null;
+  childIds: string[];
+}
+
+async function readTeamFamily(ctx: OpCtx, teamId: string): Promise<TeamFamily> {
+  const d = await reorgRaw<{
+    team: { key?: string; parent?: { id: string; key?: string } | null; children?: { id: string }[] | null } | null;
+  }>(ctx.client, TEAM_FAMILY_Q, { id: teamId }, ctx.pace);
+  if (!d.team) throw new Error(`team ${teamId} not found`);
+  return {
+    key: d.team.key ?? teamId,
+    parentId: d.team.parent?.id ?? null,
+    parentKey: d.team.parent?.key ?? null,
+    childIds: (d.team.children ?? []).map((c) => c.id),
+  };
+}
+
+/**
+ * Names a create-team-label cannot take: any label of that name (case-
+ * insensitive) owned by the destination team, its parent, any of its sub-
+ * teams, or the workspace. `freed` holds label ids a lower-seq rename has
+ * already moved off the name (journaled ones show up renamed in the live read
+ * anyway; planned ones are passed in by --check); their inherited views go
+ * with them.
+ */
+export async function findLabelNameConflicts(
+  ctx: OpCtx,
+  teamId: string,
+  name: string,
+  freed: Set<string>,
+): Promise<ReorgLabelNode[]> {
+  const [family, d] = await Promise.all([
+    readTeamFamily(ctx, teamId),
+    reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+      ctx.client, LABELS_BY_NAME_CI_Q, { name }, ctx.pace,
+    ),
+  ]);
+  const scope = new Set<string>([teamId, ...family.childIds, ...(family.parentId ? [family.parentId] : [])]);
+  return d.issueLabels.nodes.filter(
+    (l) =>
+      l.name.toLowerCase() === name.toLowerCase() &&
+      (l.team == null || scope.has(l.team.id)) &&
+      !freed.has(l.id) &&
+      !(l.inheritedFrom && freed.has(l.inheritedFrom.id)),
+  );
+}
+
+function describeConflicts(ls: ReorgLabelNode[]): string {
+  return ls.map((l) => `${l.id}${l.team ? ` (team ${l.team.key})` : " (workspace)"}`).join(", ");
+}
+
+/** Ids of rename-label ops, strictly lower seq than `seq`, that move a label
+ *  off `name` (a rename to the same name frees nothing). */
+function plannedRenameFrees(ops: ReorgOp[], seq: number, name: string): Set<string> {
+  const freed = new Set<string>();
+  for (const o of ops) {
+    if (o.op !== "rename-label" || o.seq >= seq) continue;
+    if (typeof o.to.name === "string" && o.to.name.toLowerCase() === name.toLowerCase()) continue;
+    freed.add(o.target.id);
+  }
+  return freed;
+}
+
+/** Scope check for a labelMap destination: it must be usable on an issue in
+ *  `destTeamId` — workspace, owned by that team, or owned by its parent
+ *  (a parent's labels are inherited by its sub-teams). Returns a reason or null. */
+async function destLabelProblem(
+  ctx: OpCtx,
+  labelIds: string[],
+  destTeamId: string,
+): Promise<Map<string, string>> {
+  const problems = new Map<string, string>();
+  labelIds = labelIds.filter((id) => !id.startsWith(PLANNED_REF_PREFIX));
+  if (labelIds.length === 0) return problems;
+  const [family, d] = await Promise.all([
+    readTeamFamily(ctx, destTeamId),
+    reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+      ctx.client, LABEL_SCOPES_Q, { ids: labelIds }, ctx.pace,
+    ),
+  ]);
+  const byId = new Map(d.issueLabels.nodes.map((l) => [l.id, l] as const));
+  for (const id of labelIds) {
+    const l = byId.get(id);
+    if (!l) problems.set(id, `destination label ${id} does not exist`);
+    else if (l.inheritedFrom?.id)
+      problems.set(id, `destination label "${l.name}" (${id}) is inherited from ${l.inheritedFrom.id} — map to the owner`);
+    else if (l.team != null && l.team.id !== destTeamId && l.team.id !== family.parentId)
+      problems.set(id, `destination label "${l.name}" (${id}) belongs to team ${l.team.key}, outside the destination team's scope`);
+  }
+  return problems;
+}
+
+const LABEL_SCOPES_Q = /* GraphQL */ `query ReorgLabelScopes($ids: [ID!]!) {
+  issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } inheritedFrom { id } } }
+}`;
+
+/** The destination for one live source label: keyed by its own id, else by
+ *  the owner id when it is an inherited view. */
+function mapDestFor(
+  map: Record<string, string>,
+  l: { id: string; inheritedFrom?: { id: string } | null },
+): string | undefined {
+  return map[l.id] ?? (l.inheritedFrom ? map[l.inheritedFrom.id] : undefined);
 }
 
 async function readIssue(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
@@ -598,7 +800,10 @@ async function readState(ctx: OpCtx, id: string): Promise<Record<string, unknown
     ctx.client, STATE_STATE_Q, { id }, ctx.pace,
   );
   if (!d.workflowState) throw new Error(`state ${id} not found`);
-  return { archived: d.workflowState.archivedAt != null };
+  return {
+    archived: d.workflowState.archivedAt != null,
+    inheritedFromId: d.workflowState.inheritedFrom?.id ?? null,
+  };
 }
 
 async function readProject(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
@@ -674,6 +879,8 @@ const M = {
     issueLabelCreate(input: $input) { success } }`,
   labelUpdate: /* GraphQL */ `mutation ReorgLabelUpdate($id: String!, $input: IssueLabelUpdateInput!) {
     issueLabelUpdate(id: $id, input: $input) { success } }`,
+  labelRestore: /* GraphQL */ `mutation ReorgLabelRestore($id: String!) {
+    issueLabelRestore(id: $id) { success } }`,
   labelDelete: /* GraphQL */ `mutation ReorgLabelDelete($id: String!) {
     issueLabelDelete(id: $id) { success } }`,
   stateArchive: /* GraphQL */ `mutation ReorgStateArchive($id: String!) {
@@ -789,6 +996,42 @@ const TEAM_LABELS_Q = /* GraphQL */ `
   }
 `;
 
+function hasLabelMap(op: ReorgOp): boolean {
+  return isRecord(op.to.labelMap) && Object.keys(op.to.labelMap).length > 0;
+}
+
+/**
+ * The exact label set a labelMap move must leave on the issue: live labels
+ * that remain valid in the destination (workspace, or owned by the destination
+ * team or its parent), plus the mapped replacement of each team label the issue
+ * carries (keyed by the label id, or its owner id for an inherited view), plus
+ * to.reapplyLabelIds. Mapping entries for labels the issue does not carry add
+ * nothing.
+ */
+async function computeMoveLabelSet(ctx: OpCtx, op: ReorgOp): Promise<string[]> {
+  const live = await readIssue(ctx, op.target.id);
+  const ids = sortedStrings(live.labelIds);
+  const out = new Set<string>(sortedStrings(op.to.reapplyLabelIds));
+  const map = (isRecord(op.to.labelMapResolved) ? op.to.labelMapResolved : {}) as Record<string, string>;
+  if (ids.length > 0) {
+    const [family, d] = await Promise.all([
+      readTeamFamily(ctx, String(op.to.teamId)),
+      reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+        ctx.client, LABEL_SCOPES_Q, { ids }, ctx.pace,
+      ),
+    ]);
+    for (const l of d.issueLabels.nodes) {
+      const dest = mapDestFor(map, l);
+      if (dest) out.add(dest);
+      else if (
+        l.team == null ||
+        (!l.inheritedFrom && (l.team.id === op.to.teamId || l.team.id === family.parentId))
+      ) out.add(l.id);
+    }
+  }
+  return [...out].sort();
+}
+
 export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   "create-workspace-label": {
     compareKeys: ["labelId"],
@@ -818,6 +1061,53 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       op.to.labelId = live.labelId; // journal `after` carries the created id
     },
     inverse: () => null, // inverse of create is delete — irreversible; retire by hand
+  },
+
+  "create-team-label": {
+    // target is the DESTINATION team. from.labelId null is the absence anchor:
+    // a label of that name already OWNED by the team is drift (no dup create).
+    // Cross-scope conflicts (parent / sub-team / workspace) are a precondition.
+    compareKeys: ["labelId"],
+    async readState(ctx, op) {
+      const name = String(op.to.name ?? "").toLowerCase();
+      const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+        ctx.client, LABELS_BY_NAME_CI_Q, { name: op.to.name }, ctx.pace,
+      );
+      const own = d.issueLabels.nodes.find(
+        (l) => l.team?.id === op.target.id && !l.inheritedFrom && l.name.toLowerCase() === name,
+      );
+      return { labelId: own?.id ?? null };
+    },
+    expectedPost(op) {
+      return { labelId: op.to.labelId ?? null };
+    },
+    async apply(ctx, op) {
+      await mutate(ctx, "issueLabelCreate", M.labelCreate, {
+        input: {
+          name: op.to.name,
+          teamId: op.target.id,
+          color: op.to.color ?? "#999999",
+          ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
+        },
+      });
+      const live = await OP_REGISTRY["create-team-label"].readState(ctx, op);
+      if (typeof live.labelId !== "string")
+        throw new Error(`created team label "${String(op.to.name)}" not found on re-read`);
+      op.to.labelId = live.labelId; // journal carries the created id for created:<seq> refs
+    },
+    inverse(op) {
+      if (typeof op.to.labelId !== "string") return null; // never created by this journal
+      // retire (reversible), never delete: the label may already sit on issues
+      return {
+        ...op,
+        op: "retire-or-delete-label",
+        target: { type: "label", id: op.to.labelId, identifier: `${op.target.identifier}/${String(op.to.name)}` },
+        from: { retired: false },
+        to: { retired: true },
+        reversible: true,
+        evidence: `rollback of seq ${op.seq}`,
+      };
+    },
   },
 
   "relabel": {
@@ -1116,13 +1406,21 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       };
     },
     async apply(ctx, op) {
+      // labelMap moves send the EXACT final label set (a team move drops team
+      // labels, and a label of another team cannot be added beforehand); it is
+      // computed once from live state and journaled as to.labelIdsComputed.
+      if (!Array.isArray(op.to.labelIdsComputed) && hasLabelMap(op))
+        op.to.labelIdsComputed = await computeMoveLabelSet(ctx, op);
+      const exact = Array.isArray(op.to.labelIdsComputed);
       await mutate(ctx, "issueUpdate", M.issueUpdate, {
         id: op.target.id,
         input: {
           teamId: op.to.teamId,
           // The move drops team labels; the mapped workspace replacements are
           // re-sent in the same input (precondition a).
-          addedLabelIds: op.to.reapplyLabelIds ?? [],
+          ...(exact
+            ? { labelIds: sortedStrings(op.to.labelIdsComputed) }
+            : { addedLabelIds: op.to.reapplyLabelIds ?? [] }),
           // Destination state sent in the same input when the plan maps one.
           ...(op.to.stateId ? { stateId: op.to.stateId } : {}),
         },
@@ -1131,12 +1429,16 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     inverse(op) {
       // Move back to the original team. The identifier changes AGAIN (the old
       // one keeps resolving) — recorded in the identifier map, not restored.
+      // A labelMap move restores the exact source label set recorded before it.
+      const restore = hasLabelMap(op)
+        ? { reapplyLabelIds: [], labelIdsComputed: sortedStrings(op.from.labelIds) }
+        : { reapplyLabelIds: op.from.labelIds ?? [] };
       return {
         ...op,
         from: op.to,
         to: {
           teamId: op.from.teamId,
-          reapplyLabelIds: op.from.labelIds ?? [],
+          ...restore,
           ...(op.from.stateId ? { stateId: op.from.stateId } : {}),
         },
         evidence: `rollback of seq ${op.seq} (identifier changes again; see identifier-map)`,
@@ -1267,8 +1569,9 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
  * write ban is on the label object itself and on ADDING inherited labels.
  */
 export async function assertNoInheritedWrites(ctx: OpCtx, op: ReorgOp): Promise<void> {
-  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds)]
-    .filter((id) => !id.startsWith(LABEL_REF_PREFIX)); // name: refs resolve workspace-scoped only
+  const mapped = isRecord(op.to.labelMapResolved) ? Object.values(op.to.labelMapResolved).map(String) : [];
+  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds), ...mapped]
+    .filter((id) => !id.startsWith(LABEL_REF_PREFIX) && !id.startsWith(CREATED_REF_PREFIX) && !id.startsWith(PLANNED_REF_PREFIX)); // refs resolve elsewhere
   if (written.length === 0) return;
   const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
     ctx.client,
@@ -1294,16 +1597,19 @@ export async function assertMovePreconditions(
   const fail = (why: string): never => {
     throw new Error(`move-issue-team seq ${op.seq} precondition: ${why}`);
   };
-  if (!journalPhaseVerified(journal, 1))
+  const prior = ctx.priorMarkers ?? [];
+  if (!journalPhaseVerifiedAcross(prior, journal, 1))
     fail("(a) phase-1 verify is not green in the journal");
-  if (!Array.isArray(op.to.reapplyLabelIds))
+  if (!Array.isArray(op.to.reapplyLabelIds) && !hasLabelMap(op))
     fail("(a) to.reapplyLabelIds missing — the mapped workspace labels must be re-sent in the move input");
-  if (!journalPhaseVerified(journal, 2))
+  if (!journalPhaseVerifiedAcross(prior, journal, 2))
     fail("(c) phase-2 verify is not green in the journal");
   if (!("cycleId" in op.from)) fail("(d) from.cycleId not captured at census");
 
-  // (a) live label check: every TEAM-scoped label on the issue must already
-  // have been swapped for a workspace replacement by a journaled relabel.
+  // (a) live label check: every TEAM-scoped label on the issue must either
+  // already have been swapped for a workspace replacement by a journaled
+  // relabel, or be carried over via to.labelMap to a label usable in the
+  // destination team (own, its parent's, or workspace).
   const live = await readIssue(ctx, op.target.id);
   const labelIds = sortedStrings(live.labelIds);
   if (labelIds.length > 0) {
@@ -1317,6 +1623,8 @@ export async function assertMovePreconditions(
     );
     const teamScoped = d.issueLabels.nodes.filter((l) => l.team != null);
     const reapply = new Set(sortedStrings(op.to.reapplyLabelIds));
+    const labelMap = (isRecord(op.to.labelMapResolved) ? op.to.labelMapResolved : {}) as Record<string, string>;
+    const mappedDest = new Map<string, string>(); // label id on the issue -> destination id
     for (const l of teamScoped) {
       const swapped = journal.some(
         (r) =>
@@ -1326,11 +1634,23 @@ export async function assertMovePreconditions(
           sortedStrings(r.original.to.remove).includes(l.id) &&
           sortedStrings(r.original.to.add).every((a) => reapply.has(a)),
       );
-      if (!swapped)
-        fail(
-          `(a) team label "${l.name}" (${l.id}) is live on ${op.target.identifier} with no ` +
-            `journaled relabel to a workspace replacement — phase 1 is incomplete for this issue`,
-        );
+      if (swapped) continue;
+      const dest = mapDestFor(labelMap, l);
+      if (dest) {
+        mappedDest.set(l.id, dest);
+        continue;
+      }
+      fail(
+        `(a) team label "${l.name}" (${l.id}) is live on ${op.target.identifier} with no ` +
+          `journaled relabel to a workspace replacement and no to.labelMap entry — phase 1 is incomplete for this issue`,
+      );
+    }
+    if (mappedDest.size > 0 && typeof op.to.teamId === "string") {
+      const problems = await destLabelProblem(ctx, [...new Set(mappedDest.values())], op.to.teamId);
+      for (const [src, dest] of mappedDest) {
+        const why = problems.get(dest);
+        if (why) fail(`(a) labelMap ${src} -> ${dest}: ${why}`);
+      }
     }
   }
 
@@ -1347,10 +1667,119 @@ export async function assertMovePreconditions(
   }
 }
 
+/** Every workflow state with its owner link: inherited views are found by
+ *  scanning (WorkflowStateFilter has no inheritedFrom comparator). */
+const STATE_VIEWS_Q = /* GraphQL */ `
+  query ReorgStateViews($first: Int!, $after: String) {
+    workflowStates(first: $first, after: $after) {
+      nodes { id name archivedAt inheritedFrom { id } team { id key } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+/** Live inherited views of an owner state (archiving the owner archives all of
+ *  them at once). Strict paging: a partial scan must not pass for complete. */
+async function inheritedStateViews(ctx: OpCtx, ownerId: string): Promise<ReorgStateNode[]> {
+  const all = await paged<ReorgStateNode>(
+    ctx.client, ctx.pace, STATE_VIEWS_Q, "workflowStates", {}, undefined, true,
+  );
+  return all.filter((st) => st.inheritedFrom?.id === ownerId && st.archivedAt == null);
+}
+
+/** Workflow states inherit like labels: Linear archives an owner state together
+ *  with every inherited view, and a view cannot be archived on its own. */
+async function assertStateOwner(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const live = await readState(ctx, op.target.id);
+  if (live.inheritedFromId)
+    throw new Error(
+      `archive-state ${op.target.identifier}: inherited view (child of ${String(live.inheritedFromId)}) — act on the owner state`,
+    );
+}
+
+/** A labelMap `created:<seq>` that names a create-team-label must target the
+ *  move's destination team or its parent (workspace creates are fine anywhere).
+ *  Reads only; throws naming both teams. `planned` is the plan's op list. */
+async function assertLabelMapTeams(ctx: OpCtx, op: ReorgOp, planned: ReorgOp[]): Promise<void> {
+  if (op.op !== "move-issue-team" || !hasLabelMap(op) || typeof op.to.teamId !== "string") return;
+  let family: TeamFamily | null = null;
+  for (const [src, ref] of Object.entries(op.to.labelMap as Record<string, unknown>)) {
+    const r = String(ref);
+    if (!r.startsWith(CREATED_REF_PREFIX)) continue;
+    const create = planned.find((o) => o.seq === Number(r.slice(CREATED_REF_PREFIX.length)));
+    if (!create || create.op !== "create-team-label") continue;
+    family ??= await readTeamFamily(ctx, op.to.teamId);
+    if (create.target.id !== op.to.teamId && create.target.id !== family.parentId)
+      throw new Error(
+        `seq ${op.seq} [move-issue-team] labelMap ${src} -> ${r}: create-team-label seq ${create.seq} targets team ` +
+          `${create.target.identifier}, but the move's destination is ${family.key}` +
+          `${family.parentKey ? ` (parent ${family.parentKey})` : ""} — the label must belong to the destination team or its parent`,
+      );
+  }
+}
+
+/** create-team-label: the name must be free across the destination team, its
+ *  parent, its sub-teams and the workspace. `planned` (--check) lets a
+ *  lower-seq planned rename-label count as freeing the name. */
+async function assertCreateTeamLabelFree(ctx: OpCtx, op: ReorgOp, planned?: ReorgOp[]): Promise<void> {
+  const name = String(op.to.name);
+  const freed = planned ? plannedRenameFrees(planned, op.seq, name) : new Set<string>();
+  const conflicts = await findLabelNameConflicts(ctx, op.target.id, name, freed);
+  if (conflicts.length > 0)
+    throw new Error(
+      `seq ${op.seq} [create-team-label] "${name}": name taken by ${describeConflicts(conflicts)} ` +
+        `(label names are unique across a team, its parent, its sub-teams and the workspace) — plan a rename-label with a lower seq first`,
+    );
+}
+
+/** --check: the move op as apply will see it. created:<seq> refs resolve from
+ *  the journal; a ref to a lower-seq PLANNED create becomes a `planned:<seq>`
+ *  placeholder (not yet scope-checkable); anything else refuses. */
+function withCheckResolvedLabelMap(op: ReorgOp, journal: JournalRecord[], planned: ReorgOp[]): ReorgOp {
+  if (!hasLabelMap(op) || isRecord(op.to.labelMapResolved)) return op;
+  const resolved: Record<string, string> = {};
+  for (const [src, ref] of Object.entries(op.to.labelMap as Record<string, unknown>)) {
+    const r = String(ref);
+    try {
+      resolved[src] = resolveCreatedRef(r, journal, op.seq);
+    } catch (err) {
+      const n = Number(r.slice(CREATED_REF_PREFIX.length));
+      if (r.startsWith(CREATED_REF_PREFIX) && n < op.seq && planned.some((o) => o.seq === n && CREATE_LABEL_OPS.has(o.op))) {
+        resolved[src] = `${PLANNED_REF_PREFIX}${n}`;
+      } else {
+        throw new Error(`seq ${op.seq} [move-issue-team] labelMap ${src} -> ${r}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  return { ...op, to: { ...op.to, labelMapResolved: resolved } };
+}
+
+const PLANNED_REF_PREFIX = "planned:";
+
 /** Only empty states may be archived (plan §2c) — live read, refuse loudly
  *  instead of discovering Linear's refusal mid-phase. Archived issues count:
  *  they still reference the state. */
 async function assertStateEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  await assertStateOwner(ctx, op);
+  const views = await inheritedStateViews(ctx, op.target.id);
+  if (views.length > 0) {
+    ctx.onEvent?.({
+      kind: "info",
+      detail: `archive-state ${op.target.identifier}: will also archive ${views.length} inherited view(s): ${views
+        .map((v) => `${v.team?.key ?? "?"}/${v.name}`)
+        .join(", ")}`,
+    });
+    for (const v of views) {
+      const dv = await reorgRaw<{ issues: { nodes: { id: string; identifier?: string }[] } }>(
+        ctx.client, ISSUES_IN_STATE_Q, { id: v.id }, ctx.pace,
+      );
+      if (dv.issues.nodes.length > 0)
+        throw new Error(
+          `archive-state ${op.target.identifier}: inherited view ${v.team?.key ?? "?"}/${v.name} still holds issue(s) ` +
+            `(${dv.issues.nodes.map((n) => n.identifier ?? n.id).join(", ")}) — move them first`,
+        );
+    }
+  }
   const d = await reorgRaw<{ issues: { nodes: { id: string; identifier?: string; archivedAt?: string | null }[] } }>(
     ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
   );
@@ -1400,9 +1829,16 @@ export async function assertOpPreconditions(
   ctx: OpCtx,
   op: ReorgOp,
   journal: JournalRecord[],
+  /** --check only: the whole plan, so planned lower-seq renames and creates count. */
+  planned?: ReorgOp[],
 ): Promise<void> {
+  if (op.op === "move-issue-team" && planned) {
+    await assertLabelMapTeams(ctx, op, planned);
+    op = withCheckResolvedLabelMap(op, journal, planned);
+  }
   if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
+  if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op, planned);
   if (op.op === "archive-state") await assertStateEmpty(ctx, op);
   if (op.op === "delete-team") await assertTeamEmpty(ctx, op);
 }
@@ -1470,6 +1906,10 @@ export interface ApplyOptions {
   maxOps?: number;
   allowIrreversible: boolean;
   journalPath: string;
+  /** Journals from earlier runs whose verify markers count for the phase gates
+   *  (latest marker per phase wins across all journals). Read-only: their ops
+   *  are never resumed, rolled back or written to. */
+  priorJournalPaths?: string[];
   backupRecordPath?: string;
   pace: { bucket: TokenBucket; tracker: RateTracker };
   onEvent?: (ev: { kind: string; detail: string }) => void;
@@ -1530,6 +1970,28 @@ async function readUntilMatches(
   return { live, bad };
 }
 
+/** Re-read an issue's labels (with the read-lag backoff) until they equal
+ *  `want`; returns the last labels seen. */
+async function readLabelsUntil(
+  ctx: OpCtx,
+  op: ReorgOp,
+  want: string[],
+  first: Record<string, unknown>,
+): Promise<string[]> {
+  const delays = ctx.verifyDelaysMs ?? DEFAULT_VERIFY_DELAYS_MS;
+  const sleep = ctx.sleep ?? realSleep;
+  let got = sortedStrings(first.labelIds);
+  for (let n = 0; JSON.stringify(got) !== JSON.stringify(want) && n < delays.length; n++) {
+    ctx.onEvent?.({
+      kind: "verify-retry",
+      detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: labels differ after write; retry ${n + 1}/${delays.length} in ${delays[n]}ms`,
+    });
+    await sleep(delays[n]);
+    got = sortedStrings((await readIssue(ctx, op.target.id)).labelIds);
+  }
+  return got;
+}
+
 /** One op end-to-end: drift pre-read → preconditions → write → expected-state
  *  verify (never vacuous) → journal. Shared by runPlan and rollbackPhase. */
 async function executeOne(
@@ -1574,6 +2036,11 @@ async function executeOne(
   }
 
   // 2. op-specific preconditions (live reads)
+  if (op.target.type === "state" && liveBefore.inheritedFromId)
+    throw new Error(
+      `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited state view ` +
+        `(child of ${String(liveBefore.inheritedFromId)}) — act on the owner state`,
+    );
   if (op.target.type === "label" && liveBefore.inheritedFromId)
     throw new Error(
       `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited label ` +
@@ -1582,6 +2049,7 @@ async function executeOne(
   if (op.op === "relabel" || op.op === "move-issue-team")
     await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
+  if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op);
 
   // 3. write
   await def.apply(ctx, op);
@@ -1610,6 +2078,14 @@ async function executeOne(
 
   // 5. move-issue-team post-checks: labels re-applied; destination state
   if (op.op === "move-issue-team" && liveAfter) {
+    if (Array.isArray(op.to.labelIdsComputed)) {
+      // labelMap move: the issue must carry EXACTLY the computed set
+      const want = sortedStrings(op.to.labelIdsComputed);
+      const got = await readLabelsUntil(ctx, op, want, liveAfter);
+      if (JSON.stringify(got) !== JSON.stringify(want))
+        throw new ReorgMismatch(op.seq, { expected: { labelIds: want }, actual: { labelIds: got } });
+      liveAfter.labelIds = got;
+    }
     const reapply = sortedStrings(op.to.reapplyLabelIds);
     const afterLabels = sortedStrings(liveAfter.labelIds);
     const missing = reapply.filter((l) => !afterLabels.includes(l));
@@ -1684,6 +2160,7 @@ export async function runPlan(
     verifyDelaysMs: opts.verifyDelaysMs,
     sleep: opts.sleep,
     onEvent: opts.onEvent,
+    priorMarkers: loadPriorMarkers(opts.priorJournalPaths),
   };
 
   // --check: dry-run PLUS a live drift pre-read per target; no writes.
@@ -1718,7 +2195,7 @@ export async function runPlan(
           // precondition READS apply would run before its first write: a
           // refusal here is its own finding class, distinct from drift
           try {
-            await assertOpPreconditions(ctx, op, journal);
+            await assertOpPreconditions(ctx, op, journal, plan.ops);
           } catch (err) {
             refused.push(op.seq);
             opts.onEvent?.({
@@ -1780,6 +2257,21 @@ export async function runPlan(
         kind: "dry",
         detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: ${JSON.stringify(op.from)} → ${JSON.stringify(op.to)}${irreversibleNote}`,
       });
+      if (op.op === "archive-state") {
+        // read-only: an owner state takes its inherited views with it
+        try {
+          const views = await inheritedStateViews(ctx, op.target.id);
+          if (views.length > 0)
+            opts.onEvent?.({
+              kind: "info",
+              detail: `  seq ${op.seq} archive-state ${op.target.identifier}: will also archive ${views.length} inherited view(s): ${views
+                .map((v) => `${v.team?.key ?? "?"}/${v.name}`)
+                .join(", ")}`,
+            });
+        } catch (err) {
+          opts.onEvent?.({ kind: "info", detail: `  seq ${op.seq} archive-state: inherited-view lookup failed (${err instanceof Error ? err.message : String(err)})` });
+        }
+      }
     }
     opts.onEvent?.({
       kind: "budget",
@@ -1800,6 +2292,10 @@ export async function runPlan(
         .join(", ")}); ` +
         `re-run with --allow-irreversible after the deck approvals are confirmed`,
     );
+
+  // Before ANY write: a labelMap that points at a create in the wrong team is a
+  // plan defect, and the create (an earlier op) must not land for it.
+  for (const m of plan.ops) await assertLabelMapTeams(ctx, m, plan.ops);
 
   let applied = 0;
   let i = 0;
@@ -2012,8 +2508,14 @@ export async function verifyPhase(
   client: LinearClient,
   plan: ReorgPlan,
   phase: number,
-  opts: { journalPath: string; pace: ApplyOptions["pace"]; reportPath?: string },
-): Promise<{ ok: boolean; failures: string[] }> {
+  opts: {
+    journalPath: string;
+    pace: ApplyOptions["pace"];
+    reportPath?: string;
+    /** Earlier journals whose verify markers feed `gateGreen` (read-only). */
+    priorJournalPaths?: string[];
+  },
+): Promise<{ ok: boolean; failures: string[]; gateGreen: boolean }> {
   const ops = plan.ops.filter((o) => o.phase === phase);
   const journal = journalRead(opts.journalPath);
   const okSeqs = journalOkSeqs(journal);
@@ -2043,6 +2545,11 @@ export async function verifyPhase(
         continue;
       }
       const bad = compareState(expected, live, def.compareKeys);
+      if (effective.op === "move-issue-team" && Array.isArray(effective.to.labelIdsComputed)) {
+        const want = sortedStrings(effective.to.labelIdsComputed);
+        if (JSON.stringify(sortedStrings(live.labelIds)) !== JSON.stringify(want))
+          bad.push(`labelIds: expected=${JSON.stringify(want)} actual=${JSON.stringify(sortedStrings(live.labelIds))}`);
+      }
       for (const b of bad)
         failures.push(`seq ${op.seq} [${op.op}] ${op.target.identifier}: ${b}`);
     } catch (err) {
@@ -2058,15 +2565,28 @@ export async function verifyPhase(
   const ok = failures.length === 0;
   const report = { phase, ok, ops: ops.length, failures, at: new Date().toISOString() };
   if (opts.reportPath) writeFsync(opts.reportPath, JSON.stringify(report, null, 2) + "\n", "w");
-  journalAppend(opts.journalPath, { seq: "verify", phase, ok, at: report.at });
-  return { ok, failures };
+  const marker: JournalRecord = { seq: "verify", phase, ok, at: report.at };
+  journalAppend(opts.journalPath, marker);
+  // what the phase gate reads after this run: latest marker across all journals
+  const gateGreen = journalPhaseVerifiedAcross(loadPriorMarkers(opts.priorJournalPaths), [...journal, marker], phase);
+  return { ok, failures, gateGreen };
 }
 
 // ---------------------------------------------------------------------------
 // Rollback — inverse ops in reverse journal order, same per-write verify
 // ---------------------------------------------------------------------------
 
+/** Retirement status of a set of labels (rollback of a labelMap move). */
+const LABELS_RETIRED_Q = /* GraphQL */ `
+  query ReorgLabelsRetired($ids: [ID!]!) {
+    issueLabels(filter: { id: { in: $ids } }, includeArchived: true, first: 250) { nodes { id name retiredAt } }
+  }
+`;
+
 export interface RollbackOptions {
+  /** A labelMap move's source labels may have been retired since; restore them
+   *  (verified) before moving back instead of refusing. */
+  restoreRetired?: boolean;
   pace: ApplyOptions["pace"];
   onEvent?: ApplyOptions["onEvent"];
   /** Write the inverse ops. Default false: preview only, zero mutation calls. */
@@ -2107,7 +2627,13 @@ function withJournaledState(rec: JournalRecord, orig: ReorgOp): ReorgOp {
     return out;
   };
   const st = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : undefined);
-  return { ...orig, from: fill(orig.from, st(rec.before)), to: fill(orig.to, st(rec.after)) };
+  const out = { ...orig, from: fill(orig.from, st(rec.before)), to: fill(orig.to, st(rec.after)) };
+  // A labelMap move restores the source labels the journal recorded BEFORE it
+  // (the live truth), not the census copy in the plan.
+  const before = st(rec.before);
+  if (orig.op === "move-issue-team" && hasLabelMap(orig) && Array.isArray(before?.labelIds))
+    out.from = { ...out.from, labelIds: sortedStrings(before.labelIds) };
+  return out;
 }
 
 export async function rollbackPhase(
@@ -2134,7 +2660,7 @@ export async function rollbackPhase(
 
   // Pass 1: build and validate every inverse before any write, so a journal
   // that cannot be inverted refuses the whole rollback instead of half of it.
-  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp }[] = [];
+  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp; restore: { id: string; name: string }[] }[] = [];
   for (const rec of journal) {
     const orig = rec.original;
     if (rec.alreadyApplied && !opts.includeAlreadyApplied) {
@@ -2161,7 +2687,23 @@ export async function rollbackPhase(
         `cannot invert ${orig.op}: field ${missing.map((k) => `"${k}"`).join(", ")} was recorded by neither the plan nor the journal`,
         { expected: { missingFields: missing }, actual: "not recorded" },
       );
-    steps.push({ rec, orig, inv });
+    // The source labels a labelMap move restores must be usable: a label retired
+    // since the move cannot be re-applied. Refuse (or restore with the flag).
+    let restore: { id: string; name: string }[] = [];
+    if (inv.op === "move-issue-team" && Array.isArray(inv.to.labelIdsComputed) && inv.to.labelIdsComputed.length > 0) {
+      const d = await reorgRaw<{ issueLabels: { nodes: { id: string; name: string; retiredAt?: string | null }[] } }>(
+        ctx.client, LABELS_RETIRED_Q, { ids: sortedStrings(inv.to.labelIdsComputed) }, ctx.pace,
+      );
+      restore = d.issueLabels.nodes.filter((l) => l.retiredAt != null).map((l) => ({ id: l.id, name: l.name }));
+      if (restore.length > 0 && !opts.restoreRetired)
+        throw new RollbackRefused(
+          Number(rec.seq),
+          `source label(s) retired since the move: ${restore.map((l) => `"${l.name}" (${l.id})`).join(", ")} — ` +
+            `restore them (issueLabelRestore) or re-run with --restore-retired`,
+          { expected: { retired: false }, actual: { retired: restore.map((l) => l.id) } },
+        );
+    }
+    steps.push({ rec, orig, inv, restore });
   }
 
   // Live pre-read: the target must be in the state the journal says the forward
@@ -2213,7 +2755,7 @@ export async function rollbackPhase(
     }
   }
 
-  for (const { rec, orig, inv } of steps) {
+  for (const { rec, orig, inv, restore } of steps) {
     planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
     // (remove-project-team rolls back via add-project-team).
@@ -2229,8 +2771,17 @@ export async function rollbackPhase(
       }
     }
     if (!write) {
+      for (const l of restore)
+        opts.onEvent?.({ kind: "rollback", detail: `would restore retired label "${l.name}" (${l.id}) first` });
       opts.onEvent?.({ kind: "rollback", detail: `would revert ${intent}` });
       continue;
+    }
+    for (const l of restore) {
+      await mutate(ctx, "issueLabelRestore", M.labelRestore, { id: l.id });
+      const back = await readLabel(ctx, l.id);
+      if (back.retired !== false)
+        throw new ReorgMismatch(inv.seq, { expected: { label: l.id, retired: false }, actual: { retired: back.retired } });
+      opts.onEvent?.({ kind: "rollback", detail: `restored retired label "${l.name}" (${l.id})` });
     }
 
     await invDef.apply(ctx, inv);
@@ -2250,6 +2801,12 @@ export async function rollbackPhase(
           expected: pick(expected, invDef.compareKeys),
           actual: pick(live, invDef.compareKeys),
         });
+      if (inv.op === "move-issue-team" && Array.isArray(inv.to.labelIdsComputed)) {
+        const want = sortedStrings(inv.to.labelIdsComputed);
+        const got = await readLabelsUntil(ctx, inv, want, live);
+        if (JSON.stringify(got) !== JSON.stringify(want))
+          throw new ReorgMismatch(inv.seq, { expected: { labelIds: want }, actual: { labelIds: got } });
+      }
     }
     rolledBack++;
     opts.onEvent?.({ kind: "rollback", detail: `reverted ${intent}` });
@@ -2552,6 +3109,10 @@ export interface ReorgRule {
   reversible?: boolean;
   approval?: string;
   batchKey?: string;
+  /** create-label rules only: a local name a move rule's `to.labelMap` can
+   *  reference as `created:<ref>`; the planner rewrites it to `created:<seq>`
+   *  once the final op order is fixed. */
+  ref?: string;
 }
 
 /**
@@ -2562,6 +3123,7 @@ export interface ReorgRule {
 export function assertFromAnchors(ops: ReorgOp[]): void {
   const REQUIRED_FROM: Record<string, string[]> = {
     "create-workspace-label": ["labelId"],
+    "create-team-label": ["labelId"],
     "relabel": ["labelIds"],
     "rename-label": ["name", "retired"],
     "retire-or-delete-label": ["retired"],
@@ -2614,6 +3176,7 @@ export function planFromRules(
     [...censusData.workspaceLabels, ...censusData.teamLabels].map((l) => [l.id, l] as const),
   );
   let seq = 0;
+  const refSeq = new Map<string, number>(); // rule ref -> index in `ops`
   for (const rule of rules) {
     // Writes target owner labels only — a rule naming an inherited label id is
     // refused at plan time (Linear: "Cannot update inherited labels").
@@ -2639,6 +3202,14 @@ export function planFromRules(
         `archive-state rule needs an approval id (no unarchive exists): ${rule.evidence}`,
       );
     assertArchiveProjectNotTrash(rule.op, rule.to, `rule "${rule.evidence}"`);
+    if (rule.op === "create-team-label") {
+      if (rule.match.entity !== "team")
+        throw new Error(`create-team-label rule needs match.entity "team" (the destination team): ${rule.evidence}`);
+      if (typeof rule.to.name !== "string" || !rule.to.name)
+        throw new Error(`create-team-label rule needs to.name: ${rule.evidence}`);
+      if (targets.length !== 1 && rule.ref)
+        throw new Error(`create-team-label rule with ref "${rule.ref}" matched ${targets.length} teams — a ref names exactly one op`);
+    }
     for (const t of targets) {
       seq++;
       const to = { ...rule.to };
@@ -2646,12 +3217,18 @@ export function planFromRules(
         const current = sortedStrings(t.from.teamIds);
         to.teamIds = [...new Set([...current, to.teamId])].sort();
       }
+      if (rule.ref) {
+        if (refSeq.has(rule.ref)) throw new Error(`duplicate rule ref "${rule.ref}"`);
+        refSeq.set(rule.ref, ops.length);
+      }
       ops.push({
         seq,
         phase: rule.phase,
         op: rule.op,
         target: t.target,
-        from: t.from,
+        // creation-by-team: the target is the existing team, the absence
+        // anchor is the (not yet created) label
+        from: rule.op === "create-team-label" ? { labelId: null } : t.from,
         to,
         evidence: rule.evidence,
         reversible: rule.op === "archive-state" ? false : (rule.reversible ?? true),
@@ -2740,7 +3317,51 @@ export function planFromRules(
       a.phase - b.phase ||
       (a.phase === 1 ? (PHASE1_RANK[a.op] ?? 99) - (PHASE1_RANK[b.op] ?? 99) : 0),
   );
+  // Phase-5 ordering invariant: rename-label → create-team-label →
+  // add-project-team → move-issue-team. Only these four kinds are reordered,
+  // among the slots they already occupy; every other op keeps its place.
+  const PHASE5_RANK: Record<string, number> = {
+    "rename-label": 0,
+    "create-team-label": 1,
+    "add-project-team": 2,
+    "move-issue-team": 3,
+  };
+  const slots = ordered.flatMap((o, i) => (o.phase === 5 && o.op in PHASE5_RANK ? [i] : []));
+  const sorted = slots
+    .map((i) => ordered[i])
+    .sort((a, b) => PHASE5_RANK[a.op] - PHASE5_RANK[b.op]);
+  slots.forEach((slot, k) => { ordered[slot] = sorted[k]; });
   ordered.forEach((o, i) => { o.seq = i + 1; });
+
+  // labelMap: prune each move's map to the labels that issue carries (by id or
+  // an inherited child of the key), then rewrite created:<rule ref> to the
+  // final created:<seq>. A ref must point at an earlier create op.
+  const refToOp = new Map<string, ReorgOp>();
+  for (const [ref, idx] of refSeq) refToOp.set(ref, ops[idx]);
+  for (const op of ordered) {
+    if (op.op !== "move-issue-team" || !isRecord(op.to.labelMap)) continue;
+    const carried = new Set(sortedStrings(op.from.labelIds));
+    const next: Record<string, string> = {};
+    for (const [src, ref] of Object.entries(op.to.labelMap)) {
+      let r = String(ref);
+      if (r.startsWith(CREATED_REF_PREFIX) && !/^created:\d+$/.test(r)) {
+        const target = refToOp.get(r.slice(CREATED_REF_PREFIX.length));
+        if (!target) throw new Error(`labelMap ref "${r}" names no create-team-label rule ref`);
+        if (target.seq >= op.seq) throw new Error(`labelMap ref "${r}" resolves to seq ${target.seq}, not before the move at seq ${op.seq}`);
+        r = `${CREATED_REF_PREFIX}${target.seq}`;
+        const dest = censusData.teams.find((t) => t.id === op.to.teamId);
+        if (dest && target.target.id !== dest.id && target.target.id !== dest.parent?.id)
+          throw new Error(
+            `labelMap ref "${ref}": create-team-label targets team ${target.target.identifier}, but the move's destination is ` +
+              `${dest.key}${dest.parent ? ` (parent ${dest.parent.key})` : ""} — the label must belong to the destination team or its parent`,
+          );
+      }
+      const onIssue = carried.has(src) || (childrenOf.get(src) ?? []).some((k) => carried.has(k));
+      if (onIssue) next[src] = r;
+    }
+    op.to.labelMap = next;
+    if (Object.keys(next).length === 0 && !Array.isArray(op.to.reapplyLabelIds)) op.to.reapplyLabelIds = [];
+  }
   return { meta, ops: ordered, warnings };
 }
 

@@ -143,6 +143,7 @@ export interface ReorgApplyOptions {
   allowIrreversible?: boolean;
   backupRecord?: string;
   journal?: string;
+  priorJournal?: string[];
 }
 
 export async function reorgApply(planPath: string, opts: ReorgApplyOptions): Promise<void> {
@@ -158,6 +159,7 @@ export async function reorgApply(planPath: string, opts: ReorgApplyOptions): Pro
       maxOps: opts.maxOps !== undefined ? Number.parseInt(opts.maxOps, 10) : undefined,
       allowIrreversible: opts.allowIrreversible === true,
       journalPath,
+      priorJournalPaths: opts.priorJournal,
       backupRecordPath: opts.backupRecord,
       pace: makePace(),
       onEvent: (ev) => process.stdout.write(`${ev.detail}\n`),
@@ -194,6 +196,7 @@ export interface ReorgVerifyOptions {
   phase: string;
   journal?: string;
   report?: string;
+  priorJournal?: string[];
   json?: boolean;
 }
 
@@ -202,16 +205,19 @@ export async function reorgVerify(opts: ReorgVerifyOptions): Promise<void> {
   const phase = Number.parseInt(opts.phase, 10);
   const journalPath = opts.journal ?? `${opts.plan}.applied.jsonl`;
   const client = makeClient();
-  const { ok, failures } = await verifyPhase(client, plan, phase, {
+  const { ok, failures, gateGreen } = await verifyPhase(client, plan, phase, {
     journalPath,
+    priorJournalPaths: opts.priorJournal,
     pace: makePace(),
     reportPath: opts.report ?? `${journalPath}.verify-phase-${phase}.json`,
   });
   if (opts.json) {
-    printJson({ ok, failures });
+    printJson({ ok, failures, gateGreen });
   } else {
     for (const f of failures) process.stdout.write(`FAIL ${f}\n`);
     process.stdout.write(ok ? `phase ${phase} verified ✓\n` : `phase ${phase}: ${failures.length} failure(s)\n`);
+    if (opts.priorJournal?.length)
+      process.stdout.write(`phase ${phase} gate across journals: ${gateGreen ? "green" : "RED"}\n`);
   }
   if (!ok) process.exit(1);
 }
@@ -221,6 +227,7 @@ export interface ReorgRollbackOptions {
   apply?: boolean;
   check?: boolean;
   includeAlreadyApplied?: boolean;
+  restoreRetired?: boolean;
   json?: boolean;
 }
 
@@ -232,6 +239,7 @@ export async function reorgRollback(journalPath: string, opts: ReorgRollbackOpti
       apply: opts.apply === true,
       check: opts.check === true,
       includeAlreadyApplied: opts.includeAlreadyApplied === true,
+      restoreRetired: opts.restoreRetired === true,
       // --json keeps stdout a single document; progress goes to stderr
       onEvent: (ev) => (opts.json ? process.stderr : process.stdout).write(`${ev.detail}\n`),
     });

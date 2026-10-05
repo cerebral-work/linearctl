@@ -538,3 +538,120 @@ describe("--since-census guard", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Planner: create-team-label rules, labelMap rules, phase-5 ordering
+// ---------------------------------------------------------------------------
+
+describe("team-label carry-over planning", () => {
+  const CENSUS: CensusData = {
+    ...TOY_CENSUS,
+    teams: [
+      ...TOY_CENSUS.teams,
+      { id: "t-bb", key: "BBB", name: "Dest", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
+    ],
+    issues: [
+      ...TOY_CENSUS.issues,
+      { id: "i-2", identifier: "EX-2", teamId: "t-ex", teamKey: "EX", stateId: "s-todo", labelIds: [], projectId: "p-1", cycleId: null, archived: false },
+    ],
+  };
+  const createRule = (over: Partial<ReorgRule> = {}): ReorgRule => ({
+    phase: 5, op: "create-team-label",
+    match: { entity: "team", where: { key: "BBB" } },
+    to: { name: "bug", color: "#ff0000" }, evidence: "carry bug", ref: "bug",
+    ...over,
+  });
+  const moveRule = (labelMap: Record<string, string>, over: Partial<ReorgRule> = {}): ReorgRule => ({
+    phase: 5, op: "move-issue-team",
+    match: { entity: "issue", where: { teamKey: "EX" } },
+    to: { teamId: "t-bb", labelMap }, evidence: "fold", ...over,
+  });
+  const addProject: ReorgRule = {
+    phase: 5, op: "add-project-team",
+    match: { entity: "project", where: { id: "p-1" } },
+    to: { teamId: "t-bb" }, evidence: "membership",
+  };
+  const rename: ReorgRule = {
+    phase: 5, op: "rename-label",
+    match: { entity: "team-label", where: { name: "bug" }, teamKey: "EX" },
+    to: { name: "bug·old-ex" }, evidence: "free the name",
+  };
+
+  test("rules in reverse order are planned rename -> create-team-label -> add-project-team -> move", () => {
+    const plan = planFromRules(
+      [moveRule({ "l-team-bug": "created:bug" }), addProject, createRule(), rename],
+      CENSUS, META,
+    );
+    expect(plan.ops.map((o) => o.op)).toEqual([
+      "rename-label", "create-team-label", "add-project-team", "move-issue-team", "move-issue-team",
+    ]);
+    expect(plan.ops.map((o) => o.seq)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("create-team-label targets the destination team with a null labelId anchor", () => {
+    const plan = planFromRules([createRule()], CENSUS, META);
+    expect(plan.ops[0].target).toEqual({ type: "team", id: "t-bb", identifier: "BBB" });
+    expect(plan.ops[0].from).toEqual({ labelId: null });
+  });
+
+  test("created:<ref> becomes created:<seq>, and each move's map is pruned to the labels its issue carries", () => {
+    const plan = planFromRules(
+      [moveRule({ "l-team-bug": "created:bug", "l-not-carried": "created:bug" }), createRule()],
+      CENSUS, META,
+    );
+    const create = plan.ops.find((o) => o.op === "create-team-label")!;
+    const moves = plan.ops.filter((o) => o.op === "move-issue-team");
+    const carrier = moves.find((o) => o.target.identifier === "EX-1")!;
+    const bare = moves.find((o) => o.target.identifier === "EX-2")!;
+    expect(carrier.to.labelMap).toEqual({ "l-team-bug": `created:${create.seq}` });
+    expect(bare.to.labelMap).toEqual({});
+    expect(bare.to.reapplyLabelIds).toEqual([]);
+    expect(create.seq).toBeLessThan(carrier.seq);
+  });
+
+  test("an unknown ref is refused even on an entry no issue carries", () => {
+    expect(() =>
+      planFromRules([moveRule({ "l-not-carried": "created:ghost" }), createRule()], CENSUS, META),
+    ).toThrow('names no create-team-label rule ref');
+  });
+
+  test("a ref to a create in a team that is neither the destination nor its parent is refused", () => {
+    const census = {
+      ...CENSUS,
+      teams: [...CENSUS.teams, { id: "t-cc", key: "CCC", name: "Other", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } }],
+    };
+    expect(() =>
+      planFromRules(
+        [createRule({ match: { entity: "team", where: { key: "CCC" } } }), moveRule({ "l-team-bug": "created:bug" })],
+        census, META,
+      ),
+    ).toThrow("targets team CCC, but the move's destination is BBB");
+    // the destination's parent is fine
+    const withParent = {
+      ...CENSUS,
+      teams: CENSUS.teams.map((t) => (t.key === "BBB" ? { ...t, parent: { id: "t-ex", key: "EX" } } : t)),
+    };
+    expect(() =>
+      planFromRules(
+        [createRule({ match: { entity: "team", where: { key: "EX" } } }), moveRule({ "l-team-bug": "created:bug" })],
+        withParent, META,
+      ),
+    ).not.toThrow();
+  });
+
+  test("a create-team-label rule must name a team and a label name", () => {
+    expect(() => planFromRules([createRule({ match: { entity: "project", where: { id: "p-1" } } })], CENSUS, META)).toThrow('entity "team"');
+    expect(() => planFromRules([createRule({ to: {} })], CENSUS, META)).toThrow("to.name");
+  });
+
+  test("a plan with these ops survives a write/parse round trip", async () => {
+    const censusPath = join(dir, "census.json");
+    writeFileSync(censusPath, JSON.stringify(CENSUS));
+    const rulesPath = join(dir, "rules.json");
+    writeFileSync(rulesPath, JSON.stringify([createRule(), moveRule({ "l-team-bug": "created:bug" })]));
+    const out = join(dir, "p.jsonl");
+    await reorgPlan({ rules: rulesPath, census: censusPath, out });
+    const parsed = parsePlanFile(out);
+    expect(parsed.ops.map((o) => o.op)).toEqual(["create-team-label", "move-issue-team", "move-issue-team"]);
+  });
+});

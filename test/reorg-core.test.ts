@@ -17,6 +17,7 @@ import {
   journalAppend,
   journalOkSeqs,
   journalPhaseVerified,
+  journalPhaseVerifiedAcross,
   journalRead,
   parsePlanFile,
   projectStatusPosition,
@@ -57,10 +58,10 @@ function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
   if (l.inheritedFrom) return be.labels.get(l.inheritedFrom)?.retiredAt ?? null;
   return null;
 }
-interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
+interface FakeState { id: string; name: string; type: string; archivedAt: string | null; inheritedFrom?: string | null; teamKey?: string }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; archived?: boolean; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
-interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean }
+interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean; parentId?: string | null }
 
 interface FakeBackend {
   issues: Map<string, FakeIssue>;
@@ -159,7 +160,20 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgStateState")) {
       be.readCalls++;
       const s = be.states.get(vars.id as string);
-      return ok({ workflowState: s ? { id: s.id, name: s.name, type: s.type, archivedAt: s.archivedAt } : null });
+      return ok({ workflowState: s ? { id: s.id, name: s.name, type: s.type, archivedAt: s.archivedAt, inheritedFrom: s.inheritedFrom ? { id: s.inheritedFrom } : null } : null });
+    }
+    if (query.includes("ReorgStateViews")) {
+      be.readCalls++;
+      return ok({
+        workflowStates: {
+          nodes: [...be.states.values()].map((s) => ({
+            id: s.id, name: s.name, archivedAt: s.archivedAt,
+            inheritedFrom: s.inheritedFrom ? { id: s.inheritedFrom } : null,
+            team: s.teamKey ? { id: `t-${s.teamKey}`, key: s.teamKey } : null,
+          })),
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      });
     }
     if (query.includes("ReorgProjectState")) {
       be.readCalls++;
@@ -195,6 +209,30 @@ function fakeClient(be: FakeBackend): LinearClient {
       be.readCalls++;
       const t = be.teams.get(vars.id as string);
       return ok({ team: t && !t.deleted ? { id: t.id, key: t.key, triageEnabled: t.triageEnabled } : null });
+    }
+    if (query.includes("ReorgLabelsRetired")) {
+      be.readCalls++;
+      const ids = vars.ids as string[];
+      return ok({ issueLabels: { nodes: ids.map((id) => be.labels.get(id)).filter(Boolean).map((l) => ({ id: l!.id, name: labelName(be, l!), retiredAt: labelRetired(be, l!) })) } });
+    }
+    if (query.includes("ReorgTeamFamily")) {
+      be.readCalls++;
+      const t = be.teams.get(vars.id as string);
+      return ok({
+        team: t
+          ? {
+              id: t.id, key: t.key,
+              parent: t.parentId ? { id: t.parentId } : null,
+              children: [...be.teams.values()].filter((c) => c.parentId === t.id).map((c) => ({ id: c.id })),
+            }
+          : null,
+      });
+    }
+    if (query.includes("ReorgLabelsByNameCI")) {
+      be.readCalls++;
+      const want = String(vars.name).toLowerCase();
+      const nodes = [...be.labels.values()].filter((l) => labelName(be, l).toLowerCase() === want);
+      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null, inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null })) } });
     }
     if (query.includes("ReorgFindWsLabel")) {
       be.readCalls++;
@@ -292,8 +330,22 @@ function fakeClient(be: FakeBackend): LinearClient {
       return W("issueUpdate", () => {
         const i = be.issues.get(vars.id as string);
         if (!i) return;
-        const input = (vars.input ?? {}) as { stateId?: string; teamId?: string; addedLabelIds?: string[]; removedLabelIds?: string[] };
-        if (input.teamId) {
+        const input = (vars.input ?? {}) as { stateId?: string; teamId?: string; labelIds?: string[]; addedLabelIds?: string[]; removedLabelIds?: string[] };
+        if (input.teamId && input.labelIds) {
+          // Linear semantics: labels sent in the move input must be usable in
+          // the destination (workspace, the team's own, or its parent's)
+          const dest = be.teams.get(input.teamId);
+          for (const id of input.labelIds) {
+            const l = be.labels.get(id);
+            if (!l) throw new Error(`label ${id} not found`);
+            if (l.teamId != null && l.teamId !== input.teamId && l.teamId !== dest?.parentId)
+              throw new Error(`label ${l.name} does not belong to the destination team`);
+          }
+          i.teamId = input.teamId;
+          i.teamKey = dest?.key ?? i.teamKey;
+          i.labelIds = [...input.labelIds];
+          if (input.stateId) { /* ignored on a team move, as in the real API */ }
+        } else if (input.teamId) {
           // Linear semantics: team move DROPS team-scoped labels; and the
           // paired stateId is IGNORED here (closest-state mapping) — the
           // canary case the post-move destination-state correction exists for
@@ -311,11 +363,21 @@ function fakeClient(be: FakeBackend): LinearClient {
       return W("issueUnarchive", () => { be.issues.get(vars.id as string)!.archived = false; });
     if (query.includes("ReorgLabelCreate"))
       return W("issueLabelCreate", () => {
-        const input = vars.input as { name: string; description?: string };
+        const input = vars.input as { name: string; description?: string; teamId?: string };
+        const id = `22222222-2222-4222-8222-${String(++be.createdLabelSeq).padStart(12, "0")}`;
+        if (input.teamId) {
+          // team create: unique (case-insensitively) across the workspace, the
+          // team itself, its parent and its sub-teams; unrelated teams may share
+          const t = be.teams.get(input.teamId)!;
+          const fam = new Set([t.id, ...(t.parentId ? [t.parentId] : []), ...[...be.teams.values()].filter((c) => c.parentId === t.id).map((c) => c.id)]);
+          if ([...be.labels.values()].some((l) => labelName(be, l).toLowerCase() === input.name.toLowerCase() && (l.teamId == null || fam.has(l.teamId))))
+            throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
+          be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: t.id, teamKey: t.key });
+          return;
+        }
         // Linear enforces label-name uniqueness ACROSS workspace + team scope
         if ([...be.labels.values()].some((l) => labelName(be, l) === input.name))
           throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
-        const id = `22222222-2222-4222-8222-${String(++be.createdLabelSeq).padStart(12, "0")}`;
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
       });
     if (query.includes("ReorgLabelUpdate"))
@@ -328,6 +390,8 @@ function fakeClient(be: FakeBackend): LinearClient {
         if ("retiredAt" in input) l.retiredAt = input.retiredAt ?? null;
         if (typeof input.name === "string") l.name = input.name;
       });
+    if (query.includes("ReorgLabelRestore"))
+      return W("issueLabelRestore", () => { be.labels.get(vars.id as string)!.retiredAt = null; });
     if (query.includes("ReorgLabelDelete"))
       return W("issueLabelDelete", () => { be.labels.delete(vars.id as string); });
     if (query.includes("ReorgStateArchive"))
@@ -2205,5 +2269,478 @@ describe("guarded paging and refusal messages", () => {
     });
     await expect(applyPlan(be, [op], join(dir, "j.jsonl"), { allowIrreversible: true }))
       .rejects.toThrow(/archived: EX-1\)\. Linear may allow archiving .* refuses conservatively/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Team-label carry-over: create-team-label, move labelMap, prior journals
+// ---------------------------------------------------------------------------
+
+describe("team-label carry-over", () => {
+  const lid = (n: number) => `33333333-3333-4333-8333-${String(n).padStart(12, "0")}`;
+  const L_SRC_BUG = lid(1);   // source team label "bug"
+  const L_SRC_OTHER = lid(2); // source team label "other"
+  const L_WS = lid(3);        // workspace label kept through the move
+  const L_PARENT = lid(4);    // parent-owned label "shared"
+  const L_UNRELATED = lid(5); // label of an unrelated team
+
+  /** Teams: AAA (source, unrelated to BBB), BBB (destination), PPP parent of SSS. */
+  function backend(): FakeBackend {
+    const be = freshBackend();
+    for (const [id, key, parentId] of [["t-a", "AAA", null], ["t-b", "BBB", null], ["t-p", "PPP", null], ["t-s", "SSS", "t-p"], ["t-u", "UUU", null]] as const)
+      be.teams.set(id, { id, key, triageEnabled: true, deleted: false, parentId });
+    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-a", "t-b", "t-p", "t-s"], initiativeIds: [] });
+    be.labels.set(L_SRC_BUG, { id: L_SRC_BUG, name: "bug", retiredAt: null, teamId: "t-a", teamKey: "AAA" });
+    be.labels.set(L_SRC_OTHER, { id: L_SRC_OTHER, name: "other", retiredAt: null, teamId: "t-a", teamKey: "AAA" });
+    be.labels.set(L_WS, { id: L_WS, name: "ws-kept", retiredAt: null, teamId: null, teamKey: null });
+    be.labels.set(L_PARENT, { id: L_PARENT, name: "shared", retiredAt: null, teamId: "t-p", teamKey: "PPP" });
+    be.labels.set(L_UNRELATED, { id: L_UNRELATED, name: "elsewhere", retiredAt: null, teamId: "t-u", teamKey: "UUU" });
+    be.issues.set("i-1", { ...ISSUE_1, teamId: "t-a", teamKey: "AAA", labelIds: [L_SRC_BUG, L_WS], projectId: "p-1" });
+    return be;
+  }
+  const createOp = (seq: number, teamId: string, name: string, extra: Partial<ReorgOp> = {}): ReorgOp =>
+    baseOp({
+      seq, phase: 5, op: "create-team-label",
+      target: { type: "team", id: teamId, identifier: teamId },
+      from: { labelId: null }, to: { name, color: "#ff0000" }, ...extra,
+    });
+  const moveWith = (seq: number, labelMap: Record<string, string>, over: Partial<ReorgOp> = {}): ReorgOp =>
+    baseOp({
+      seq, phase: 5, op: "move-issue-team",
+      from: { teamId: "t-a", projectId: "p-1", cycleId: null, stateId: "s-todo", labelIds: [L_SRC_BUG, L_WS] },
+      to: { teamId: "t-b", labelMap, reapplyLabelIds: [] },
+      ...over,
+    });
+  const green = (j: string) => {
+    journalAppend(j, { seq: "verify", phase: 1, at: "2026-10-05T00:00:01Z", ok: true });
+    journalAppend(j, { seq: "verify", phase: 2, at: "2026-10-05T00:00:02Z", ok: true });
+  };
+  const events = (be: FakeBackend, ops: ReorgOp[], extra: Partial<Parameters<typeof runPlan>[2]> = {}) => {
+    const lines: string[] = [];
+    return runPlan(fakeClient(be), planWith(ops), {
+      apply: false, check: true, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "chk.jsonl"), pace: fastPace(),
+      onEvent: (e) => lines.push(e.detail), ...extra,
+    }).then((r) => ({ r, lines }));
+  };
+
+  describe("create-team-label name conflicts", () => {
+    test("--check: free in an unrelated team, even when the name exists elsewhere", async () => {
+      const be = backend();
+      const { r } = await events(be, [createOp(1, "t-b", "bug")]); // AAA owns "bug"; BBB is unrelated
+      expect(r.drifted).toEqual([]);
+    });
+
+    test("--check: parent, sub-team, workspace and case-insensitive clashes are all refused", async () => {
+      const be = backend();
+      // sub-team SSS owns "Sub-Thing"; parent PPP owns "shared"; workspace owns "ws-kept"
+      be.labels.set(lid(6), { id: lid(6), name: "Sub-Thing", retiredAt: null, teamId: "t-s", teamKey: "SSS" });
+      const cases: [string, string][] = [
+        ["t-p", "SUB-THING"],  // dest parent vs a sub-team's label, other case
+        ["t-s", "Shared"],     // dest sub-team vs its parent's label
+        ["t-b", "WS-KEPT"],    // workspace label, other case
+        ["t-p", "shared"],     // the destination's own label
+      ];
+      for (const [team, name] of cases) {
+        const { r, lines } = await events(be, [createOp(1, team, name)]);
+        // the destination's OWN label is drift (absence anchor); the rest are refusals
+        expect(r.drifted.length + r.refused.length).toBeGreaterThan(0);
+        expect(lines.join("\n")).toMatch(/REFUSE|DRIFT/);
+        if (name !== "shared" || team !== "t-p") {
+          expect(r.refused).toEqual([1]);
+          expect(lines.join("\n")).toContain("name taken by");
+        }
+      }
+    });
+
+    test("apply refuses with no write when the name is taken in another scope", async () => {
+      const be = backend();
+      await expect(applyPlan(be, [createOp(1, "t-s", "shared")], join(dir, "j.jsonl"))).rejects.toThrow("name taken by");
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("a lower-seq rename frees the name (check and apply); a higher-seq rename does not", async () => {
+      const be = backend();
+      // sub-team SSS owns "bug"; creating "bug" in its parent PPP needs the rename first
+      be.labels.set(lid(7), { id: lid(7), name: "bug", retiredAt: null, teamId: "t-s", teamKey: "SSS" });
+      const rename = (seq: number) => baseOp({
+        seq, phase: 5, op: "rename-label", target: { type: "label", id: lid(7), identifier: "SSS/bug" },
+        from: { name: "bug", retired: false }, to: { name: "bug·old-sss" },
+      });
+      const ok = await events(be, [rename(1), createOp(2, "t-p", "bug")]);
+      expect(ok.r.drifted).toEqual([]);
+      expect(ok.r.refused).toEqual([]);
+      const late = await events(be, [createOp(1, "t-p", "bug"), rename(2)]);
+      expect(late.r.refused).toEqual([1]);
+
+      const j = join(dir, "j.jsonl");
+      const res = await applyPlan(be, [rename(1), createOp(2, "t-p", "bug")], j);
+      expect(res.applied).toBe(2);
+      const made = [...be.labels.values()].find((l) => l.teamId === "t-p" && l.name === "bug");
+      expect(made).toBeDefined();
+      expect(journalRead(j).find((r) => r.seq === 2)!.original!.to.labelId).toBe(made!.id);
+    });
+  });
+
+  describe("move-issue-team labelMap", () => {
+    test("created:<seq> resolves from the journal; the move sends the exact set (workspace label kept, mapped label added)", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const ops = [
+        createOp(1, "t-b", "bug"),
+        moveWith(2, { [L_SRC_BUG]: "created:1", [L_SRC_OTHER]: "created:1" /* not on the issue: must add nothing */ }),
+      ];
+      const res = await applyPlan(be, ops, j);
+      expect(res.applied).toBe(2);
+      const made = [...be.labels.values()].find((l) => l.teamId === "t-b" && l.name === "bug")!;
+      const i = be.issues.get("i-1")!;
+      expect(i.teamId).toBe("t-b");
+      expect([...i.labelIds].sort()).toEqual([made.id, L_WS].sort());
+      const rec = journalRead(j).find((r) => r.seq === 2)!;
+      expect(rec.original!.to.labelIdsComputed).toEqual([made.id, L_WS].sort());
+      const v = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+      expect(v.ok).toBe(true);
+    });
+
+    test("an unresolvable created:<seq> refuses before any write", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [moveWith(2, { [L_SRC_BUG]: "created:1" })], j)).rejects.toThrow("no ok create-label journal record");
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("(a) a team label on the issue that is neither swapped nor mapped refuses, naming it", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [moveWith(2, { [L_SRC_OTHER]: L_WS })], j)).rejects.toThrow(`"bug" (${L_SRC_BUG}) is live on EX-1 with no journaled relabel to a workspace replacement and no to.labelMap entry`);
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("(a) a mapped destination outside the destination team's scope refuses", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [moveWith(2, { [L_SRC_BUG]: L_UNRELATED })], j)).rejects.toThrow("outside the destination team's scope");
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("a workspace label or the destination parent's label is an acceptable destination", async () => {
+      const be = backend();
+      be.issues.get("i-1")!.labelIds = [L_SRC_BUG, L_WS];
+      const j = join(dir, "j.jsonl");
+      green(j);
+      // source AAA -> destination SSS (sub-team of PPP): the parent's label is in scope
+      const res = await applyPlan(be, [moveWith(2, { [L_SRC_BUG]: L_PARENT }, { to: { teamId: "t-s", labelMap: { [L_SRC_BUG]: L_PARENT }, reapplyLabelIds: [] } })], j);
+      expect(res.applied).toBe(1);
+      expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([L_PARENT, L_WS].sort());
+    });
+
+    test("an inherited child on the issue maps through its owner id", async () => {
+      const be = backend();
+      const child = lid(8);
+      // sub-team SSS carries an inherited view of the parent's "shared"
+      be.labels.set(child, { id: child, name: "shared", retiredAt: null, teamId: "t-s", teamKey: "SSS", inheritedFrom: L_PARENT });
+      be.issues.set("i-1", { ...ISSUE_1, teamId: "t-s", teamKey: "SSS", labelIds: [child, L_WS], projectId: "p-1" });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const op = moveWith(2, { [L_PARENT]: L_PARENT }, {
+        from: { teamId: "t-s", projectId: "p-1", cycleId: null, stateId: "s-todo", labelIds: [child, L_WS] },
+        to: { teamId: "t-p", labelMap: { [L_PARENT]: L_PARENT }, reapplyLabelIds: [] },
+      });
+      const res = await applyPlan(be, [op], j);
+      expect(res.applied).toBe(1);
+      expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([L_PARENT, L_WS].sort());
+    });
+
+    test("post-move verify stops when the issue's labels are not exactly the expected set", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      // Linear silently drops the mapped label after acknowledging the write
+      const inner = (fakeClient(be) as unknown as { client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> } }).client;
+      const client = {
+        client: {
+          rawRequest: async (q: string, v: Record<string, unknown>) => {
+            const r = await inner.rawRequest(q, v);
+            const input = v.input as { labelIds?: string[] } | undefined;
+            if (q.includes("ReorgIssueUpdate") && input?.labelIds) {
+              const i = be.issues.get("i-1")!;
+              i.labelIds = i.labelIds.filter((x) => x === L_WS);
+            }
+            return r;
+          },
+        },
+      } as unknown as LinearClient;
+      const ops = [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })];
+      await expect(
+        runPlan(client, planWith(ops), {
+          apply: true, resume: false, allowIrreversible: false, journalPath: j,
+          backupRecordPath: freshBackup(), pace: fastPace(), verifyDelaysMs: [0, 0], sleep: async () => {},
+        }),
+      ).rejects.toThrow(ReorgMismatch);
+      expect(journalRead(j).some((r) => r.seq === 2)).toBe(false); // never journaled ok
+    });
+
+    test("verifyPhase fails when the labels drift off the journaled set later", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const ops = [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })];
+      await applyPlan(be, ops, j);
+      be.issues.get("i-1")!.labelIds = [L_WS]; // mapped label lost afterwards
+      const v = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+      expect(v.ok).toBe(false);
+      expect(v.failures.join("\n")).toContain("labelIds");
+    });
+
+    test("--check flags an unresolvable created ref and an out-of-scope plain destination; accepts a lower-seq planned create", async () => {
+      const be = backend();
+      green(join(dir, "chk.jsonl"));
+      const bad = await events(be, [moveWith(2, { [L_SRC_BUG]: "created:1" })]);
+      expect(bad.r.refused).toContain(2);
+      expect(bad.lines.join("\n")).toContain("no ok create-label journal record");
+      const scope = await events(be, [moveWith(2, { [L_SRC_BUG]: L_UNRELATED })]);
+      expect(scope.r.refused).toContain(2);
+      expect(scope.lines.join("\n")).toContain("outside the destination team's scope");
+      // gates are green and the ref is a lower-seq planned create: nothing to refuse
+      const good = await events(be, [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })]);
+      expect(good.r.drifted).toEqual([]);
+      expect(good.r.refused).toEqual([]);
+    });
+  });
+
+  describe("rollback with a source label retired since the move", () => {
+    async function moved() {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await applyPlan(be, [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })], j);
+      be.labels.get(L_SRC_BUG)!.retiredAt = "2026-10-05T00:00:00Z";
+      be.mutationCalls.length = 0;
+      return { be, j };
+    }
+    const opts = { pace: fastPace(), verifyDelaysMs: [0], sleep: async () => {} };
+
+    test("dry run and apply refuse, naming the label, with no write", async () => {
+      const { be, j } = await moved();
+      await expect(rollbackPhase(fakeClient(be), j, 5, opts)).rejects.toThrow(/retired since the move: "bug"/);
+      await expect(rollbackPhase(fakeClient(be), j, 5, { ...opts, apply: true })).rejects.toThrow("--restore-retired");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-b");
+    });
+
+    test("a restore that does not land stops the rollback before the move", async () => {
+      const { be, j } = await moved();
+      // only the restore is acknowledged but not applied
+      const inner = (fakeClient(be) as unknown as { client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> } }).client;
+      const client = {
+        client: {
+          rawRequest: async (q: string, v: Record<string, unknown>) =>
+            q.includes("ReorgLabelRestore") ? { data: { issueLabelRestore: { success: true } }, headers: undefined } : inner.rawRequest(q, v),
+        },
+      } as unknown as LinearClient;
+      await expect(rollbackPhase(client, j, 5, { ...opts, apply: true, restoreRetired: true })).rejects.toThrow(ReorgMismatch);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-b");
+    });
+
+    test("--restore-retired restores it (verified) and then moves back with the source labels", async () => {
+      const { be, j } = await moved();
+      const lines: string[] = [];
+      const dry = await rollbackPhase(fakeClient(be), j, 5, { ...opts, restoreRetired: true, onEvent: (e) => lines.push(e.detail) });
+      expect(dry.dryRun).toBe(true);
+      expect(lines.join("\n")).toContain("would restore retired label");
+      expect(be.mutationCalls).toEqual([]);
+      await rollbackPhase(fakeClient(be), j, 5, { ...opts, apply: true, restoreRetired: true });
+      expect(be.labels.get(L_SRC_BUG)!.retiredAt).toBeNull();
+      expect(be.mutationCalls).toContain("issueLabelRestore");
+      const i = be.issues.get("i-1")!;
+      expect(i.teamId).toBe("t-a");
+      expect([...i.labelIds].sort()).toEqual([L_SRC_BUG, L_WS].sort());
+    });
+  });
+
+  describe("rollback", () => {
+    test("restores the source team and the source labels recorded in `before`; retires the created label", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      // the plan's census copy of the labels is stale; the journal's `before` is the truth
+      const ops = [
+        createOp(1, "t-b", "bug"),
+        moveWith(2, { [L_SRC_BUG]: "created:1" }, {
+          from: { teamId: "t-a", projectId: "p-1", cycleId: null, stateId: "s-todo", labelIds: [L_SRC_OTHER] },
+        }),
+      ];
+      await applyPlan(be, ops, j);
+      const made = [...be.labels.values()].find((l) => l.teamId === "t-b" && l.name === "bug")!;
+      expect(be.issues.get("i-1")!.labelIds).toContain(made.id);
+
+      const rb = await rollbackPhase(fakeClient(be), j, 5, { pace: fastPace(), apply: true, verifyDelaysMs: [0], sleep: async () => {} });
+      expect(rb.rolledBack).toBe(2);
+      const i = be.issues.get("i-1")!;
+      expect(i.teamId).toBe("t-a");
+      expect([...i.labelIds].sort()).toEqual([L_SRC_BUG, L_WS].sort());
+      expect(be.labels.get(made.id)!.retiredAt).not.toBeNull();
+    });
+  });
+
+  describe("created:<seq> must name a label of the destination team or its parent", () => {
+    test("a create in an unrelated team is refused by --check and before ANY write on apply", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const ops = [createOp(1, "t-u", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })];
+      const chk = await events(be, ops, { journalPath: j });
+      expect(chk.r.refused).toEqual([2]);
+      expect(chk.lines.join("\n")).toMatch(/targets team t-u, but the move's destination is BBB/);
+      await expect(applyPlan(be, ops, j)).rejects.toThrow("the label must belong to the destination team or its parent");
+      expect(be.mutationCalls).toEqual([]); // the create (seq 1) never landed
+    });
+
+    test("a create in the destination's parent is accepted", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const move = moveWith(2, { [L_SRC_BUG]: "created:1" }, { to: { teamId: "t-s", labelMap: { [L_SRC_BUG]: "created:1" }, reapplyLabelIds: [] } });
+      const chk = await events(be, [createOp(1, "t-p", "bug"), move], { journalPath: j });
+      expect(chk.r.refused).toEqual([]);
+      const res = await applyPlan(be, [createOp(1, "t-p", "bug"), move], j);
+      expect(res.applied).toBe(2);
+    });
+  });
+
+  describe("--prior-journal gates", () => {
+    const writeJ = (name: string, recs: JournalRecord[]) => {
+      const p = join(dir, name);
+      for (const r of recs) journalAppend(p, r);
+      return p;
+    };
+    const mk = (phase: number, at: string, ok: boolean): JournalRecord => ({ seq: "verify", phase, at, ok });
+    const move = () => moveWith(2, { [L_SRC_BUG]: L_WS });
+
+    test("green markers only in the prior journal satisfy the gate; the prior file is never written or resumed", async () => {
+      const be = backend();
+      const prior = writeJ("prior.jsonl", [
+        mk(1, "2026-10-05T00:00:01Z", true), mk(2, "2026-10-05T00:00:02Z", true),
+        // an ok op record for the same seq in the prior journal must NOT be resumed
+        { seq: 2, phase: 5, op: "move-issue-team", at: "2026-10-05T00:00:03Z", ok: true },
+      ]);
+      const before = readFileSync(prior, "utf8");
+      const res = await applyPlan(be, [move()], join(dir, "cur.jsonl"), { priorJournalPaths: [prior], resume: true });
+      expect(res.applied).toBe(1);
+      expect(res.skipped).toBe(0);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-b");
+      expect(readFileSync(prior, "utf8")).toBe(before);
+    });
+
+    test("without the prior journal the same plan is refused", async () => {
+      const be = backend();
+      await expect(applyPlan(be, [move()], join(dir, "cur.jsonl"))).rejects.toThrow("phase-1 verify");
+    });
+
+    test("a LATER red marker anywhere fails the gate (in the current journal, or in another prior)", async () => {
+      const be = backend();
+      const prior = writeJ("prior.jsonl", [mk(1, "2026-10-05T00:00:01Z", true), mk(2, "2026-10-05T00:00:02Z", true)]);
+      const cur = writeJ("cur.jsonl", [mk(1, "2026-10-05T00:00:09Z", false)]);
+      await expect(applyPlan(be, [move()], cur, { priorJournalPaths: [prior] })).rejects.toThrow("phase-1 verify");
+      const prior2 = writeJ("prior2.jsonl", [mk(2, "2026-10-05T00:00:07Z", false)]);
+      const cur2 = writeJ("cur2.jsonl", [mk(1, "2026-10-05T00:00:03Z", true)]);
+      await expect(applyPlan(be, [move()], cur2, { priorJournalPaths: [prior, prior2] })).rejects.toThrow("phase-2 verify");
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("an EARLIER red followed by a later green passes (latest wins)", async () => {
+      const be = backend();
+      const prior = writeJ("prior.jsonl", [
+        mk(1, "2026-10-05T00:00:01Z", false), mk(1, "2026-10-05T00:00:05Z", true), mk(2, "2026-10-05T00:00:06Z", true),
+      ]);
+      const res = await applyPlan(be, [move()], join(dir, "cur.jsonl"), { priorJournalPaths: [prior] });
+      expect(res.applied).toBe(1);
+    });
+
+    test("a missing prior journal is an error, not an empty gate", async () => {
+      const be = backend();
+      await expect(applyPlan(be, [move()], join(dir, "cur.jsonl"), { priorJournalPaths: [join(dir, "nope.jsonl")] })).rejects.toThrow("does not exist");
+    });
+
+    test("journalPhaseVerifiedAcross: the current journal decides alone; priors only when it has no marker", () => {
+      const m = (ok: boolean, at = "2026-10-05T00:00:01Z"): JournalRecord => ({ seq: "verify", phase: 1, at, ok });
+      const noClock = { seq: "verify", phase: 1, ok: false } as unknown as JournalRecord; // missing `at`
+      // prior green + current red with a missing timestamp -> NOT verified
+      expect(journalPhaseVerifiedAcross([[m(true, "2026-10-06T00:00:00Z")]], [noClock], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([[m(true)]], [], 1)).toBe(true);
+      expect(journalPhaseVerifiedAcross([[m(false)]], [], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([[m(false)]], [m(true)], 1)).toBe(true);
+      // every prior journal with a marker must end green
+      expect(journalPhaseVerifiedAcross([[m(true)], [m(false)]], [], 1)).toBe(false);
+      // file order inside one journal
+      expect(journalPhaseVerifiedAcross([], [m(true, "2026-10-05T00:00:05Z"), m(false, "2026-10-05T00:00:01Z")], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([], [], 1)).toBe(false);
+    });
+  });
+
+  test("parsePlanFile rejects a malformed labelMap and a nameless create-team-label", () => {
+    const hdr = JSON.stringify({ _meta: { generated: "g", censusHash: "c", workspaceId: "w", rulesHash: "r" } });
+    const write = (op: ReorgOp) => { const p = join(dir, "p.jsonl"); writeFileSync(p, `${hdr}\n${JSON.stringify(op)}\n`); return p; };
+    expect(() => parsePlanFile(write(moveWith(1, { a: 5 as unknown as string })))).toThrow("labelMap");
+    expect(() => parsePlanFile(write(createOp(1, "t-b", "")))).toThrow("to.name");
+    expect(parsePlanFile(write(createOp(1, "t-b", "x"))).ops).toHaveLength(1);
+  });
+});
+
+describe("archive-state and inherited workflow states", () => {
+  function stateBackend(): FakeBackend {
+    const be = freshBackend();
+    be.states.set("s-owner", { id: "s-owner", name: "Review", type: "started", archivedAt: null, teamKey: "PPP" });
+    be.states.set("s-view", { id: "s-view", name: "Review", type: "started", archivedAt: null, inheritedFrom: "s-owner", teamKey: "SSS" });
+    return be;
+  }
+  const archive = (id: string, ident: string) =>
+    baseOp({
+      phase: 2, op: "archive-state", reversible: false, approval: "deck-1",
+      target: { type: "state", id, identifier: ident }, from: { archived: false }, to: { archived: true },
+    });
+  const run = async (be: FakeBackend, ops: ReorgOp[], extra: Partial<Parameters<typeof runPlan>[2]>) => {
+    const lines: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith(ops), {
+      apply: false, resume: false, allowIrreversible: true, journalPath: join(dir, "s.jsonl"),
+      pace: fastPace(), onEvent: (e) => lines.push(e.detail), ...extra,
+    });
+    return { r, lines: lines.join("\n") };
+  };
+
+  test("an inherited view refuses on apply, with no write", async () => {
+    const be = stateBackend();
+    await expect(applyPlan(be, [archive("s-view", "SSS/Review")], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("act on the owner state");
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check reports an inherited view as REFUSE", async () => {
+    const be = stateBackend();
+    const { r, lines } = await run(be, [archive("s-view", "SSS/Review")], { check: true });
+    expect(r.refused).toEqual([1]);
+    expect(lines).toContain("act on the owner state");
+  });
+
+  test("--check and the plain dry run list the inherited views an owner archive takes with it", async () => {
+    const be = stateBackend();
+    const chk = await run(be, [archive("s-owner", "PPP/Review")], { check: true });
+    expect(chk.r.refused).toEqual([]);
+    expect(chk.lines).toContain("will also archive 1 inherited view(s): SSS/Review");
+    const dry = await run(be, [archive("s-owner", "PPP/Review")], {});
+    expect(dry.lines).toContain("will also archive 1 inherited view(s): SSS/Review");
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("an owner whose inherited view still holds issues refuses naming the view", async () => {
+    const be = stateBackend();
+    be.issues.set("i-1", { ...ISSUE_1, stateId: "s-view", labelIds: [] });
+    await expect(applyPlan(be, [archive("s-owner", "PPP/Review")], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("inherited view SSS/Review still holds issue(s)");
+    expect(be.mutationCalls).toEqual([]);
   });
 });

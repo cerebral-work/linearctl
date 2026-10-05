@@ -678,6 +678,7 @@ reorgCmd
   .option("--allow-irreversible", "permit reversible:false ops (phase 6, deck-approved)")
   .option("--backup-record <file>", "backup.verified.json (required with --apply; < 24 h old)")
   .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
+  .option("--prior-journal <file>", "earlier journal whose verify markers count for the phase gates (read-only, repeatable)", (v: string, prev: string[] = []) => [...prev, v])
   .action((plan, opts) => reorgApply(plan, opts));
 reorgCmd
   .command("verify")
@@ -686,6 +687,7 @@ reorgCmd
   .requiredOption("--phase <n>", "phase to verify")
   .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
   .option("--report <file>", "report output path")
+  .option("--prior-journal <file>", "earlier journal whose verify markers count for the phase gates (read-only, repeatable)", (v: string, prev: string[] = []) => [...prev, v])
   .option("--json", "emit JSON")
   .action((opts) => reorgVerify(opts));
 reorgCmd
@@ -695,6 +697,7 @@ reorgCmd
   .requiredOption("--phase <n>", "phase to roll back")
   .option("--apply", "write the inverse ops (default is a dry-run preview, zero mutations)")
   .option("--check", "dry-run PLUS a live drift pre-read of every target (no writes)")
+  .option("--restore-retired", "restore (verified) source labels retired since a labelMap move, instead of refusing")
   .option("--include-already-applied", "also invert rows journaled alreadyApplied (changes the tool never wrote; skipped by default)")
   .option("--json", "emit JSON")
   .action((journal, opts) => reorgRollback(journal, opts));
