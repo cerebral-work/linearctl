@@ -30,71 +30,48 @@ jobs:
     name: Release PR / tag
     if: github.event_name == 'push' || inputs.tag == ''
     runs-on: ubuntu-latest
+    # The job's own GITHUB_TOKEN needs nothing beyond read: every write is made
+    # with the release-please App token minted below. The enterprise policy does
+    # not allow GitHub Actions to create or approve pull requests ("GitHub
+    # Actions is not permitted to create or approve pull requests"), so a
+    # GITHUB_TOKEN can update an existing release PR but never open a new one.
+    # An App token can, and the PRs/tags it creates also trigger workflows.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
+      # Dedicated minimal App (Contents, Issues, Pull requests: write; installed
+      # only on the repos that run release-please). Deliberately NOT the broad
+      # `cerebral-work` App (RELEASE_BOT_*), whose key carries org-admin-level
+      # permissions. The minted token is narrowed further to this repo and to
+      # the three permissions release-please documents. A missing variable or
+      # secret fails this step, so the job cannot fall back to GITHUB_TOKEN.
+      - name: Mint a release-please App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_KEY }}
+          owner: cerebral-work
+          repositories: linearctl
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: rp
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Branch protection requires the CI check on every PR, but release-please
-  # pushes with GITHUB_TOKEN, whose events never trigger workflows — so the
-  # Release PR would sit permanently BLOCKED. This job MINTS the required
-  # check: after release-please runs (on every main push), it finds any open
-  # release-please PR, actually runs typecheck/test/build against its head
-  # SHA, and posts a check-run with the exact required name via the Checks
-  # API. No PAT, no new secrets; honest gate (red tests -> red check).
-  gate-release-pr:
-    name: Gate release PR
-    needs: release-please
-    if: always() && needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
-      pull-requests: read
-    steps:
-      - name: Find open release-please PR
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          SHA=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open             --json headRefName,headRefOid             -q '[.[] | select(.headRefName | startswith("release-please--"))][0].headRefOid // empty')
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          [ -n "$SHA" ] && echo "found release PR head $SHA" || echo "no open release PR"
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        if: steps.pr.outputs.sha != ''
-        with:
-          ref: ${{ steps.pr.outputs.sha }}
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        if: steps.pr.outputs.sha != ''
-      - name: typecheck / test / compile against the PR head
-        id: verify
-        if: steps.pr.outputs.sha != ''
-        env:
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-        run: |
-          set -o pipefail
-          bun install --frozen-lockfile
-          bun run typecheck && bun test && bun run build
-      - name: Mint the required check on the PR head
-        if: always() && steps.pr.outputs.sha != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          CONC=$([ "${{ steps.verify.outcome }}" = "success" ] && echo success || echo failure)
-          gh api "repos/$GITHUB_REPOSITORY/check-runs"             -f name='typecheck · test · compile-smoke'             -f head_sha='${{ steps.pr.outputs.sha }}'             -f status=completed -f conclusion="$CONC"             -f 'output[title]=Release-PR gate (minted by release.yml)'             -f 'output[summary]=Ran typecheck/test/build against the release PR head; bot pushes cannot trigger the pull_request workflow themselves.'
-
   # Sync the freshly-tagged release to Linear. Called here (not via `push: tags`
-  # on linear-release.yml) because release-please tags with the default
-  # GITHUB_TOKEN, which never fires tag-push workflows. `secrets: inherit` passes
-  # LINEAR_ACCESS_KEY through; the called workflow self-skips when it's absent.
+  # on linear-release.yml) so it runs exactly once, in the same run that creates
+  # the release; a tag trigger would also fire for the App-created tag and
+  # double-run it. `secrets: inherit` passes LINEAR_ACCESS_KEY through; the
+  # called workflow self-skips when it's absent.
   # The sync is best-effort (reporting, not the deliverable): linear-release.yml
   # marks its action steps continue-on-error so a sync hiccup — e.g. a duplicate-
   # version collision — can't red this release run or block distribution.
