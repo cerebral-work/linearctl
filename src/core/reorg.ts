@@ -547,7 +547,7 @@ const TEAM_STATE_Q = /* GraphQL */ `
 /** Workspace-scoped label by exact name (team:null) — create's re-read. */
 const FIND_WS_LABEL_Q = /* GraphQL */ `
   query ReorgFindWsLabel($name: String!) {
-    issueLabels(filter: { name: { eq: $name }, team: { null: true } }) {
+    issueLabels(filter: { name: { eqIgnoreCase: $name }, team: { null: true } }) {
       nodes { id name retiredAt }
     }
   }
@@ -708,7 +708,9 @@ export async function findLabelNameConflicts(
 }
 
 function describeConflicts(ls: ReorgLabelNode[]): string {
-  return ls.map((l) => `${l.id}${l.team ? ` (team ${l.team.key})` : " (workspace)"}`).join(", ");
+  return ls
+    .map((l) => `"${l.name}" ${l.id}${l.team ? ` (team ${l.team.key})` : " (workspace)"}`)
+    .join(", ");
 }
 
 /** Ids of rename-label ops, strictly lower seq than `seq`, that move a label
@@ -914,15 +916,6 @@ const M = {
     initiativeUpdate(id: $id, input: $input) { success } }`,
 };
 
-/** All-scopes labels by exact name — the --check create-conflict preflight. */
-const LABELS_BY_NAME_ALL_SCOPES_Q = /* GraphQL */ `
-  query ReorgLabelsByNameAllScopes($name: String!) {
-    issueLabels(filter: { name: { eq: $name } }, first: 250) {
-      nodes { id name team { id key } inheritedFrom { id } }
-    }
-  }
-`;
-
 /** One issue in a state? (archive-state precondition: only empty states.) */
 const ISSUES_IN_STATE_Q = /* GraphQL */ `
   query ReorgIssuesInState($id: ID!) {
@@ -1047,14 +1040,31 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
       return { labelId: op.to.labelId ?? null };
     },
     async apply(ctx, op) {
-      await mutate(ctx, "issueLabelCreate", M.labelCreate, {
-        input: {
-          name: op.to.name,
-          color: op.to.color ?? "#999999",
-          ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
-          // no teamId → workspace-scoped label
-        },
-      });
+      try {
+        await mutate(ctx, "issueLabelCreate", M.labelCreate, {
+          input: {
+            name: op.to.name,
+            color: op.to.color ?? "#999999",
+            ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
+            // no teamId → workspace-scoped label
+          },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/already exists/i.test(msg)) {
+          // Name BOTH spellings: the requested one and the live conflicting
+          // one (one extra read, failure path only).
+          const live = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+            ctx.client, LABELS_BY_NAME_CI_Q, { name: op.to.name }, ctx.pace,
+          );
+          const spellings = live.issueLabels.nodes.map((l) => `"${l.name}"`).join(", ");
+          throw new Error(
+            `create-workspace-label "${String(op.to.name)}" refused by Linear (${msg}); ` +
+              `label-name uniqueness is case-insensitive — the name is taken by ${spellings || "an existing label"}; rename it first`,
+          );
+        }
+        throw err;
+      }
       const live = await OP_REGISTRY["create-workspace-label"].readState(ctx, op);
       if (typeof live.labelId !== "string")
         throw new Error(`created label "${String(op.to.name)}" not found on re-read`);
@@ -2219,17 +2229,16 @@ export async function runPlan(
     // create-conflict preflight: a create-workspace-label fails at Linear if
     // ANY label (any scope) still carries the name. Planned rename-label ops
     // clear their targets' names, so they don't count as conflicts.
-    const renamedAway = new Set(
-      ops.filter((o) => o.op === "rename-label").map((o) => o.target.id),
-    );
     for (const op of ops.filter((o) => o.op === "create-workspace-label")) {
       const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-        ctx.client, LABELS_BY_NAME_ALL_SCOPES_Q, { name: op.to.name }, ctx.pace,
+        ctx.client, LABELS_BY_NAME_CI_Q, { name: op.to.name }, ctx.pace,
       );
-      // planned renames clear their targets AND, by propagation, every
-      // inherited child of those targets
+      // Only a LOWER-seq rename to a DIFFERENT name frees (same rule as
+      // create-team-label); the rename clears its target AND, by
+      // propagation, every inherited child of that target.
+      const freed = plannedRenameFrees(ops, op.seq, String(op.to.name));
       const conflicts = d.issueLabels.nodes.filter(
-        (l) => !renamedAway.has(l.id) && !(l.inheritedFrom && renamedAway.has(l.inheritedFrom.id)),
+        (l) => !freed.has(l.id) && !(l.inheritedFrom && freed.has(l.inheritedFrom.id)),
       );
       if (conflicts.length > 0) {
         drifted.push(op.seq);
