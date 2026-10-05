@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.2](https://github.com/cerebral-work/linearctl/compare/v0.10.1...v0.10.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **reorg:** fail closed on unknown team visibility, report allowed changes, document ([aac2059](https://github.com/cerebral-work/linearctl/commit/aac20595377455fed2253d9385cc887d34469dcd))
+* **reorg:** private-to-private widens only when the destination gains members ([42aa46d](https://github.com/cerebral-work/linearctl/commit/42aa46d5d46cc7b824e2d5f89c1be9bd50071ebc))
+* **reorg:** refuse moves that widen a private team's visibility ([c00cb91](https://github.com/cerebral-work/linearctl/commit/c00cb9159c5c69ba02884ac88b7a49ab512c4a87))
+* **reorg:** refuse moves that widen a private team's visibility ([51b603a](https://github.com/cerebral-work/linearctl/commit/51b603abc95d87f8692117e283eb8823dcb517d2))
+
 ## [0.10.1](https://github.com/cerebral-work/linearctl/compare/v0.10.0...v0.10.1) (2026-10-05)
 
 
