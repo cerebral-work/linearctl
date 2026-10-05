@@ -200,13 +200,23 @@ the journal record of that `create-team-label` / `create-workspace-label`).
   `create-team-label`, `add-project-team`, `move-issue-team` (only these kinds
   are reordered; other ops keep their place).
 
+## Inherited workflow states
+
+Workflow states inherit like labels: a sub-team's states carry `inheritedFrom`
+pointing at the parent's state, and archiving the parent's state archives every
+inherited view at once. `archive-state` on an inherited view refuses ("act on
+the owner state"; `REFUSE` under `--check`). For an owner state, the dry run
+and `--check` list the inherited views that will archive with it, and the
+executor refuses while any of those views still holds issues.
+
 ## Prior journals
 
 `apply`, `--check` and `verify` accept `--prior-journal <file>` (repeatable).
 Only the `verify` markers of those journals are read, and they count for the
-phase gates together with the current journal: the **latest marker per phase,
-by timestamp, across all journals** decides, so a later red marker anywhere
-fails the gate. Prior journals are never written, resumed or rolled back, and
+phase gates together with the current journal. Within one journal the latest
+marker by file order wins; across journals each journal's latest marker
+competes and the one with the latest timestamp wins, so a later red marker
+anywhere fails the gate. Prior journals are never written, resumed or rolled back, and
 a missing file is an error. `verify` additionally prints the gate state across
 journals after its own marker is appended.
 
