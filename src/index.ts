@@ -697,6 +697,7 @@ reorgCmd
   .requiredOption("--phase <n>", "phase to roll back")
   .option("--apply", "write the inverse ops (default is a dry-run preview, zero mutations)")
   .option("--check", "dry-run PLUS a live drift pre-read of every target (no writes)")
+  .option("--restore-retired", "restore (verified) source labels retired since a labelMap move, instead of refusing")
   .option("--include-already-applied", "also invert rows journaled alreadyApplied (changes the tool never wrote; skipped by default)")
   .option("--json", "emit JSON")
   .action((journal, opts) => reorgRollback(journal, opts));

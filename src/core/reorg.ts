@@ -354,21 +354,26 @@ export function journalPhaseVerified(records: JournalRecord[], phase: number): b
   return latest?.ok === true;
 }
 
-/** Gate across several journals: each journal's own latest marker (file order)
- *  for the phase, then the marker with the latest `at` timestamp overall wins.
- *  Unparseable timestamps sort first; a tie goes to the later journal in the
- *  list (pass prior journals first, the current one last). */
-export function journalPhaseVerifiedAcross(journals: JournalRecord[][], phase: number): boolean {
-  let best: { t: number; ok: boolean } | null = null;
-  for (const j of journals) {
-    let latest: JournalRecord | undefined;
-    for (const r of j) if (r.seq === "verify" && r.phase === phase) latest = r;
-    if (!latest) continue;
-    const parsed = Date.parse(latest.at);
-    const t = Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
-    if (best === null || t >= best.t) best = { t, ok: latest.ok === true };
-  }
-  return best?.ok === true;
+/** Latest verify marker for the phase in ONE journal (file order), or undefined. */
+function latestMarker(records: JournalRecord[], phase: number): JournalRecord | undefined {
+  let latest: JournalRecord | undefined;
+  for (const r of records) if (r.seq === "verify" && r.phase === phase) latest = r;
+  return latest;
+}
+
+/** Gate across journals, with no clock involved: if the CURRENT journal has any
+ *  verify marker for the phase, its latest (file order) decides alone. Prior
+ *  journals are consulted only when the current one has none, and then every
+ *  prior journal that has a marker must end green (any red fails). */
+export function journalPhaseVerifiedAcross(
+  prior: JournalRecord[][],
+  current: JournalRecord[],
+  phase: number,
+): boolean {
+  const cur = latestMarker(current, phase);
+  if (cur) return cur.ok === true;
+  const marks = prior.map((j) => latestMarker(j, phase)).filter((m): m is JournalRecord => m !== undefined);
+  return marks.length > 0 && marks.every((m) => m.ok === true);
 }
 
 /** Verify markers only, one list per journal, from journals this run must not
@@ -648,22 +653,26 @@ const LABELS_BY_NAME_CI_Q = /* GraphQL */ `
 /** A team's parent and sub-teams (label-name uniqueness spans the family). */
 const TEAM_FAMILY_Q = /* GraphQL */ `
   query ReorgTeamFamily($id: String!) {
-    team(id: $id) { id key parent { id } children { id } }
+    team(id: $id) { id key parent { id key } children { id } }
   }
 `;
 
 interface TeamFamily {
+  key: string;
   parentId: string | null;
+  parentKey: string | null;
   childIds: string[];
 }
 
 async function readTeamFamily(ctx: OpCtx, teamId: string): Promise<TeamFamily> {
   const d = await reorgRaw<{
-    team: { parent?: { id: string } | null; children?: { id: string }[] | null } | null;
+    team: { key?: string; parent?: { id: string; key?: string } | null; children?: { id: string }[] | null } | null;
   }>(ctx.client, TEAM_FAMILY_Q, { id: teamId }, ctx.pace);
   if (!d.team) throw new Error(`team ${teamId} not found`);
   return {
+    key: d.team.key ?? teamId,
     parentId: d.team.parent?.id ?? null,
+    parentKey: d.team.parent?.key ?? null,
     childIds: (d.team.children ?? []).map((c) => c.id),
   };
 }
@@ -870,6 +879,8 @@ const M = {
     issueLabelCreate(input: $input) { success } }`,
   labelUpdate: /* GraphQL */ `mutation ReorgLabelUpdate($id: String!, $input: IssueLabelUpdateInput!) {
     issueLabelUpdate(id: $id, input: $input) { success } }`,
+  labelRestore: /* GraphQL */ `mutation ReorgLabelRestore($id: String!) {
+    issueLabelRestore(id: $id) { success } }`,
   labelDelete: /* GraphQL */ `mutation ReorgLabelDelete($id: String!) {
     issueLabelDelete(id: $id) { success } }`,
   stateArchive: /* GraphQL */ `mutation ReorgStateArchive($id: String!) {
@@ -1586,12 +1597,12 @@ export async function assertMovePreconditions(
   const fail = (why: string): never => {
     throw new Error(`move-issue-team seq ${op.seq} precondition: ${why}`);
   };
-  const gate = [...(ctx.priorMarkers ?? []), journal];
-  if (!journalPhaseVerifiedAcross(gate, 1))
+  const prior = ctx.priorMarkers ?? [];
+  if (!journalPhaseVerifiedAcross(prior, journal, 1))
     fail("(a) phase-1 verify is not green in the journal");
   if (!Array.isArray(op.to.reapplyLabelIds) && !hasLabelMap(op))
     fail("(a) to.reapplyLabelIds missing — the mapped workspace labels must be re-sent in the move input");
-  if (!journalPhaseVerifiedAcross(gate, 2))
+  if (!journalPhaseVerifiedAcross(prior, journal, 2))
     fail("(c) phase-2 verify is not green in the journal");
   if (!("cycleId" in op.from)) fail("(d) from.cycleId not captured at census");
 
@@ -1684,6 +1695,27 @@ async function assertStateOwner(ctx: OpCtx, op: ReorgOp): Promise<void> {
     throw new Error(
       `archive-state ${op.target.identifier}: inherited view (child of ${String(live.inheritedFromId)}) — act on the owner state`,
     );
+}
+
+/** A labelMap `created:<seq>` that names a create-team-label must target the
+ *  move's destination team or its parent (workspace creates are fine anywhere).
+ *  Reads only; throws naming both teams. `planned` is the plan's op list. */
+async function assertLabelMapTeams(ctx: OpCtx, op: ReorgOp, planned: ReorgOp[]): Promise<void> {
+  if (op.op !== "move-issue-team" || !hasLabelMap(op) || typeof op.to.teamId !== "string") return;
+  let family: TeamFamily | null = null;
+  for (const [src, ref] of Object.entries(op.to.labelMap as Record<string, unknown>)) {
+    const r = String(ref);
+    if (!r.startsWith(CREATED_REF_PREFIX)) continue;
+    const create = planned.find((o) => o.seq === Number(r.slice(CREATED_REF_PREFIX.length)));
+    if (!create || create.op !== "create-team-label") continue;
+    family ??= await readTeamFamily(ctx, op.to.teamId);
+    if (create.target.id !== op.to.teamId && create.target.id !== family.parentId)
+      throw new Error(
+        `seq ${op.seq} [move-issue-team] labelMap ${src} -> ${r}: create-team-label seq ${create.seq} targets team ` +
+          `${create.target.identifier}, but the move's destination is ${family.key}` +
+          `${family.parentKey ? ` (parent ${family.parentKey})` : ""} — the label must belong to the destination team or its parent`,
+      );
+  }
 }
 
 /** create-team-label: the name must be free across the destination team, its
@@ -1800,7 +1832,10 @@ export async function assertOpPreconditions(
   /** --check only: the whole plan, so planned lower-seq renames and creates count. */
   planned?: ReorgOp[],
 ): Promise<void> {
-  if (op.op === "move-issue-team" && planned) op = withCheckResolvedLabelMap(op, journal, planned);
+  if (op.op === "move-issue-team" && planned) {
+    await assertLabelMapTeams(ctx, op, planned);
+    op = withCheckResolvedLabelMap(op, journal, planned);
+  }
   if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op, planned);
@@ -2258,6 +2293,10 @@ export async function runPlan(
         `re-run with --allow-irreversible after the deck approvals are confirmed`,
     );
 
+  // Before ANY write: a labelMap that points at a create in the wrong team is a
+  // plan defect, and the create (an earlier op) must not land for it.
+  for (const m of plan.ops) await assertLabelMapTeams(ctx, m, plan.ops);
+
   let applied = 0;
   let i = 0;
   while (i < ops.length) {
@@ -2529,7 +2568,7 @@ export async function verifyPhase(
   const marker: JournalRecord = { seq: "verify", phase, ok, at: report.at };
   journalAppend(opts.journalPath, marker);
   // what the phase gate reads after this run: latest marker across all journals
-  const gateGreen = journalPhaseVerifiedAcross([...loadPriorMarkers(opts.priorJournalPaths), [...journal, marker]], phase);
+  const gateGreen = journalPhaseVerifiedAcross(loadPriorMarkers(opts.priorJournalPaths), [...journal, marker], phase);
   return { ok, failures, gateGreen };
 }
 
@@ -2537,7 +2576,17 @@ export async function verifyPhase(
 // Rollback — inverse ops in reverse journal order, same per-write verify
 // ---------------------------------------------------------------------------
 
+/** Retirement status of a set of labels (rollback of a labelMap move). */
+const LABELS_RETIRED_Q = /* GraphQL */ `
+  query ReorgLabelsRetired($ids: [ID!]!) {
+    issueLabels(filter: { id: { in: $ids } }, includeArchived: true, first: 250) { nodes { id name retiredAt } }
+  }
+`;
+
 export interface RollbackOptions {
+  /** A labelMap move's source labels may have been retired since; restore them
+   *  (verified) before moving back instead of refusing. */
+  restoreRetired?: boolean;
   pace: ApplyOptions["pace"];
   onEvent?: ApplyOptions["onEvent"];
   /** Write the inverse ops. Default false: preview only, zero mutation calls. */
@@ -2611,7 +2660,7 @@ export async function rollbackPhase(
 
   // Pass 1: build and validate every inverse before any write, so a journal
   // that cannot be inverted refuses the whole rollback instead of half of it.
-  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp }[] = [];
+  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp; restore: { id: string; name: string }[] }[] = [];
   for (const rec of journal) {
     const orig = rec.original;
     if (rec.alreadyApplied && !opts.includeAlreadyApplied) {
@@ -2638,7 +2687,23 @@ export async function rollbackPhase(
         `cannot invert ${orig.op}: field ${missing.map((k) => `"${k}"`).join(", ")} was recorded by neither the plan nor the journal`,
         { expected: { missingFields: missing }, actual: "not recorded" },
       );
-    steps.push({ rec, orig, inv });
+    // The source labels a labelMap move restores must be usable: a label retired
+    // since the move cannot be re-applied. Refuse (or restore with the flag).
+    let restore: { id: string; name: string }[] = [];
+    if (inv.op === "move-issue-team" && Array.isArray(inv.to.labelIdsComputed) && inv.to.labelIdsComputed.length > 0) {
+      const d = await reorgRaw<{ issueLabels: { nodes: { id: string; name: string; retiredAt?: string | null }[] } }>(
+        ctx.client, LABELS_RETIRED_Q, { ids: sortedStrings(inv.to.labelIdsComputed) }, ctx.pace,
+      );
+      restore = d.issueLabels.nodes.filter((l) => l.retiredAt != null).map((l) => ({ id: l.id, name: l.name }));
+      if (restore.length > 0 && !opts.restoreRetired)
+        throw new RollbackRefused(
+          Number(rec.seq),
+          `source label(s) retired since the move: ${restore.map((l) => `"${l.name}" (${l.id})`).join(", ")} — ` +
+            `restore them (issueLabelRestore) or re-run with --restore-retired`,
+          { expected: { retired: false }, actual: { retired: restore.map((l) => l.id) } },
+        );
+    }
+    steps.push({ rec, orig, inv, restore });
   }
 
   // Live pre-read: the target must be in the state the journal says the forward
@@ -2690,7 +2755,7 @@ export async function rollbackPhase(
     }
   }
 
-  for (const { rec, orig, inv } of steps) {
+  for (const { rec, orig, inv, restore } of steps) {
     planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
     // (remove-project-team rolls back via add-project-team).
@@ -2706,8 +2771,17 @@ export async function rollbackPhase(
       }
     }
     if (!write) {
+      for (const l of restore)
+        opts.onEvent?.({ kind: "rollback", detail: `would restore retired label "${l.name}" (${l.id}) first` });
       opts.onEvent?.({ kind: "rollback", detail: `would revert ${intent}` });
       continue;
+    }
+    for (const l of restore) {
+      await mutate(ctx, "issueLabelRestore", M.labelRestore, { id: l.id });
+      const back = await readLabel(ctx, l.id);
+      if (back.retired !== false)
+        throw new ReorgMismatch(inv.seq, { expected: { label: l.id, retired: false }, actual: { retired: back.retired } });
+      opts.onEvent?.({ kind: "rollback", detail: `restored retired label "${l.name}" (${l.id})` });
     }
 
     await invDef.apply(ctx, inv);
@@ -3275,6 +3349,12 @@ export function planFromRules(
         if (!target) throw new Error(`labelMap ref "${r}" names no create-team-label rule ref`);
         if (target.seq >= op.seq) throw new Error(`labelMap ref "${r}" resolves to seq ${target.seq}, not before the move at seq ${op.seq}`);
         r = `${CREATED_REF_PREFIX}${target.seq}`;
+        const dest = censusData.teams.find((t) => t.id === op.to.teamId);
+        if (dest && target.target.id !== dest.id && target.target.id !== dest.parent?.id)
+          throw new Error(
+            `labelMap ref "${ref}": create-team-label targets team ${target.target.identifier}, but the move's destination is ` +
+              `${dest.key}${dest.parent ? ` (parent ${dest.parent.key})` : ""} — the label must belong to the destination team or its parent`,
+          );
       }
       const onIssue = carried.has(src) || (childrenOf.get(src) ?? []).some((k) => carried.has(k));
       if (onIssue) next[src] = r;

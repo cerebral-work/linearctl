@@ -615,6 +615,30 @@ describe("team-label carry-over planning", () => {
     ).toThrow('names no create-team-label rule ref');
   });
 
+  test("a ref to a create in a team that is neither the destination nor its parent is refused", () => {
+    const census = {
+      ...CENSUS,
+      teams: [...CENSUS.teams, { id: "t-cc", key: "CCC", name: "Other", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } }],
+    };
+    expect(() =>
+      planFromRules(
+        [createRule({ match: { entity: "team", where: { key: "CCC" } } }), moveRule({ "l-team-bug": "created:bug" })],
+        census, META,
+      ),
+    ).toThrow("targets team CCC, but the move's destination is BBB");
+    // the destination's parent is fine
+    const withParent = {
+      ...CENSUS,
+      teams: CENSUS.teams.map((t) => (t.key === "BBB" ? { ...t, parent: { id: "t-ex", key: "EX" } } : t)),
+    };
+    expect(() =>
+      planFromRules(
+        [createRule({ match: { entity: "team", where: { key: "EX" } } }), moveRule({ "l-team-bug": "created:bug" })],
+        withParent, META,
+      ),
+    ).not.toThrow();
+  });
+
   test("a create-team-label rule must name a team and a label name", () => {
     expect(() => planFromRules([createRule({ match: { entity: "project", where: { id: "p-1" } } })], CENSUS, META)).toThrow('entity "team"');
     expect(() => planFromRules([createRule({ to: {} })], CENSUS, META)).toThrow("to.name");

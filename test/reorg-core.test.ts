@@ -210,6 +210,11 @@ function fakeClient(be: FakeBackend): LinearClient {
       const t = be.teams.get(vars.id as string);
       return ok({ team: t && !t.deleted ? { id: t.id, key: t.key, triageEnabled: t.triageEnabled } : null });
     }
+    if (query.includes("ReorgLabelsRetired")) {
+      be.readCalls++;
+      const ids = vars.ids as string[];
+      return ok({ issueLabels: { nodes: ids.map((id) => be.labels.get(id)).filter(Boolean).map((l) => ({ id: l!.id, name: labelName(be, l!), retiredAt: labelRetired(be, l!) })) } });
+    }
     if (query.includes("ReorgTeamFamily")) {
       be.readCalls++;
       const t = be.teams.get(vars.id as string);
@@ -385,6 +390,8 @@ function fakeClient(be: FakeBackend): LinearClient {
         if ("retiredAt" in input) l.retiredAt = input.retiredAt ?? null;
         if (typeof input.name === "string") l.name = input.name;
       });
+    if (query.includes("ReorgLabelRestore"))
+      return W("issueLabelRestore", () => { be.labels.get(vars.id as string)!.retiredAt = null; });
     if (query.includes("ReorgLabelDelete"))
       return W("issueLabelDelete", () => { be.labels.delete(vars.id as string); });
     if (query.includes("ReorgStateArchive"))
@@ -2505,6 +2512,42 @@ describe("team-label carry-over", () => {
     });
   });
 
+  describe("rollback with a source label retired since the move", () => {
+    async function moved() {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await applyPlan(be, [createOp(1, "t-b", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })], j);
+      be.labels.get(L_SRC_BUG)!.retiredAt = "2026-10-05T00:00:00Z";
+      be.mutationCalls.length = 0;
+      return { be, j };
+    }
+    const opts = { pace: fastPace(), verifyDelaysMs: [0], sleep: async () => {} };
+
+    test("dry run and apply refuse, naming the label, with no write", async () => {
+      const { be, j } = await moved();
+      await expect(rollbackPhase(fakeClient(be), j, 5, opts)).rejects.toThrow(/retired since the move: "bug"/);
+      await expect(rollbackPhase(fakeClient(be), j, 5, { ...opts, apply: true })).rejects.toThrow("--restore-retired");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-b");
+    });
+
+    test("--restore-retired restores it (verified) and then moves back with the source labels", async () => {
+      const { be, j } = await moved();
+      const lines: string[] = [];
+      const dry = await rollbackPhase(fakeClient(be), j, 5, { ...opts, restoreRetired: true, onEvent: (e) => lines.push(e.detail) });
+      expect(dry.dryRun).toBe(true);
+      expect(lines.join("\n")).toContain("would restore retired label");
+      expect(be.mutationCalls).toEqual([]);
+      await rollbackPhase(fakeClient(be), j, 5, { ...opts, apply: true, restoreRetired: true });
+      expect(be.labels.get(L_SRC_BUG)!.retiredAt).toBeNull();
+      expect(be.mutationCalls).toContain("issueLabelRestore");
+      const i = be.issues.get("i-1")!;
+      expect(i.teamId).toBe("t-a");
+      expect([...i.labelIds].sort()).toEqual([L_SRC_BUG, L_WS].sort());
+    });
+  });
+
   describe("rollback", () => {
     test("restores the source team and the source labels recorded in `before`; retires the created label", async () => {
       const be = backend();
@@ -2527,6 +2570,31 @@ describe("team-label carry-over", () => {
       expect(i.teamId).toBe("t-a");
       expect([...i.labelIds].sort()).toEqual([L_SRC_BUG, L_WS].sort());
       expect(be.labels.get(made.id)!.retiredAt).not.toBeNull();
+    });
+  });
+
+  describe("created:<seq> must name a label of the destination team or its parent", () => {
+    test("a create in an unrelated team is refused by --check and before ANY write on apply", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const ops = [createOp(1, "t-u", "bug"), moveWith(2, { [L_SRC_BUG]: "created:1" })];
+      const chk = await events(be, ops, { journalPath: j });
+      expect(chk.r.refused).toEqual([2]);
+      expect(chk.lines.join("\n")).toMatch(/targets team t-u, but the move's destination is BBB/);
+      await expect(applyPlan(be, ops, j)).rejects.toThrow("the label must belong to the destination team or its parent");
+      expect(be.mutationCalls).toEqual([]); // the create (seq 1) never landed
+    });
+
+    test("a create in the destination's parent is accepted", async () => {
+      const be = backend();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const move = moveWith(2, { [L_SRC_BUG]: "created:1" }, { to: { teamId: "t-s", labelMap: { [L_SRC_BUG]: "created:1" }, reapplyLabelIds: [] } });
+      const chk = await events(be, [createOp(1, "t-p", "bug"), move], { journalPath: j });
+      expect(chk.r.refused).toEqual([]);
+      const res = await applyPlan(be, [createOp(1, "t-p", "bug"), move], j);
+      expect(res.applied).toBe(2);
     });
   });
 
@@ -2584,14 +2652,19 @@ describe("team-label carry-over", () => {
       await expect(applyPlan(be, [move()], join(dir, "cur.jsonl"), { priorJournalPaths: [join(dir, "nope.jsonl")] })).rejects.toThrow("does not exist");
     });
 
-    test("journalPhaseVerifiedAcross: file order within a journal, timestamp across journals", () => {
-      const a = (ok: boolean, at: string) => [mk(1, at, ok)];
-      expect(journalPhaseVerifiedAcross([a(true, "2026-10-05T00:00:01Z"), a(false, "2026-10-05T00:00:02Z")], 1)).toBe(false);
-      // an older red in a later-listed journal does not beat a newer green elsewhere
-      expect(journalPhaseVerifiedAcross([a(true, "2026-10-05T00:00:09Z"), a(false, "2026-10-05T00:00:02Z")], 1)).toBe(true);
-      // inside ONE journal the later line wins even if its timestamp is older
-      expect(journalPhaseVerifiedAcross([[mk(1, "2026-10-05T00:00:05Z", true), mk(1, "2026-10-05T00:00:01Z", false)]], 1)).toBe(false);
-      expect(journalPhaseVerifiedAcross([], 1)).toBe(false);
+    test("journalPhaseVerifiedAcross: the current journal decides alone; priors only when it has no marker", () => {
+      const m = (ok: boolean, at = "2026-10-05T00:00:01Z"): JournalRecord => ({ seq: "verify", phase: 1, at, ok });
+      const noClock = { seq: "verify", phase: 1, ok: false } as unknown as JournalRecord; // missing `at`
+      // prior green + current red with a missing timestamp -> NOT verified
+      expect(journalPhaseVerifiedAcross([[m(true, "2026-10-06T00:00:00Z")]], [noClock], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([[m(true)]], [], 1)).toBe(true);
+      expect(journalPhaseVerifiedAcross([[m(false)]], [], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([[m(false)]], [m(true)], 1)).toBe(true);
+      // every prior journal with a marker must end green
+      expect(journalPhaseVerifiedAcross([[m(true)], [m(false)]], [], 1)).toBe(false);
+      // file order inside one journal
+      expect(journalPhaseVerifiedAcross([], [m(true, "2026-10-05T00:00:05Z"), m(false, "2026-10-05T00:00:01Z")], 1)).toBe(false);
+      expect(journalPhaseVerifiedAcross([], [], 1)).toBe(false);
     });
   });
 

@@ -227,6 +227,7 @@ export interface ReorgRollbackOptions {
   apply?: boolean;
   check?: boolean;
   includeAlreadyApplied?: boolean;
+  restoreRetired?: boolean;
   json?: boolean;
 }
 
@@ -238,6 +239,7 @@ export async function reorgRollback(journalPath: string, opts: ReorgRollbackOpti
       apply: opts.apply === true,
       check: opts.check === true,
       includeAlreadyApplied: opts.includeAlreadyApplied === true,
+      restoreRetired: opts.restoreRetired === true,
       // --json keeps stdout a single document; progress goes to stderr
       onEvent: (ev) => (opts.json ? process.stderr : process.stdout).write(`${ev.detail}\n`),
     });
