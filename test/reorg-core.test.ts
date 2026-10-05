@@ -406,7 +406,8 @@ function freshBackup(): string {
 async function applyPlan(be: FakeBackend, ops: ReorgOp[], journalPath: string, extra: Partial<Parameters<typeof runPlan>[2]> = {}) {
   return runPlan(fakeClient(be), planWith(ops), {
     apply: true, resume: false, allowIrreversible: false,
-    journalPath, backupRecordPath: freshBackup(), pace: fastPace(), ...extra,
+    journalPath, backupRecordPath: freshBackup(), pace: fastPace(),
+    verifyDelaysMs: [0, 0, 0, 0], sleep: async () => {}, ...extra,
   });
 }
 
@@ -1761,5 +1762,179 @@ describe("assertMovePreconditions (journal-level)", () => {
     await expect(assertMovePreconditions(ctx, move, [])).rejects.toThrow("phase-1 verify");
     const j1: JournalRecord[] = [{ seq: "verify", phase: 1, at: "a", ok: true }];
     await expect(assertMovePreconditions(ctx, move, j1)).rejects.toThrow("phase-2 verify");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Read-after-write lag + already-applied detection
+// ---------------------------------------------------------------------------
+
+describe("verify retry and already-applied", () => {
+  const LA = "11111111-1111-4111-8111-11111111110a";
+  const LB = "11111111-1111-4111-8111-11111111110b";
+  const LC = "11111111-1111-4111-8111-1111111110c5";
+
+  function relabelBackend(labelIds = [LA, LB]): FakeBackend {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...labelIds] });
+    be.labels.set(LA, { id: LA, name: "a", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set(LB, { id: LB, name: "b", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set(LC, { id: LC, name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    return be;
+  }
+  const relabelOp = () =>
+    baseOp({
+      op: "relabel",
+      from: { labelIds: [LA, LB] },
+      to: { add: [LC], remove: [LA] },
+    });
+
+  /** A client whose issue reads keep returning the pre-write state for the
+   *  next `lag` reads after any mutation. */
+  function lagClient(be: FakeBackend, lag: number): LinearClient {
+    const inner = (fakeClient(be) as unknown as {
+      client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> };
+    }).client;
+    let snapshot: FakeIssue | null = null;
+    let left = 0;
+    const rawRequest = async (q: string, v: Record<string, unknown>) => {
+      if (q.includes("ReorgIssueState") && left > 0 && snapshot) {
+        left--;
+        const live = be.issues.get(snapshot.id)!;
+        be.issues.set(snapshot.id, snapshot);
+        try {
+          return await inner.rawRequest(q, v);
+        } finally {
+          be.issues.set(snapshot.id, live);
+        }
+      }
+      if (!q.includes("Reorg") || q.includes("mutation")) {
+        const before = be.mutationCalls.length;
+        const i = be.issues.get("i-1");
+        const snap = i ? { ...i, labelIds: [...i.labelIds] } : null;
+        const r = await inner.rawRequest(q, v);
+        if (be.mutationCalls.length > before) {
+          snapshot = snap;
+          left = lag;
+        }
+        return r;
+      }
+      return inner.rawRequest(q, v);
+    };
+    return { client: { rawRequest } } as unknown as LinearClient;
+  }
+
+  const noSleep = { verifyDelaysMs: [1, 2, 4, 8], sleep: async () => {} };
+  const run = (client: LinearClient, ops: ReorgOp[], j: string, extra: Partial<Parameters<typeof runPlan>[2]> = {}) =>
+    runPlan(client, planWith(ops), {
+      apply: true, resume: false, allowIrreversible: false,
+      journalPath: j, backupRecordPath: freshBackup(), pace: fastPace(), ...noSleep, ...extra,
+    });
+
+  test("(a) a stale first post-write read is retried and the op journals ok", async () => {
+    const be = relabelBackend();
+    const j = join(dir, "j.jsonl");
+    const events: string[] = [];
+    const r = await run(lagClient(be, 1), [relabelOp()], j, { onEvent: (e) => events.push(e.kind) });
+    expect(r.applied).toBe(1);
+    expect(events).toContain("verify-retry");
+    const rows = journalRead(j);
+    expect(rows.map((x) => x.ok)).toEqual([true]);
+    expect(rows[0].alreadyApplied).toBeUndefined();
+  });
+
+  test("(b) a write that is never reflected mismatches after the configured retries; nothing journals ok", async () => {
+    const be = relabelBackend();
+    const j = join(dir, "j.jsonl");
+    const sleeps: number[] = [];
+    await expect(
+      run(lagClient(be, 99), [relabelOp()], j, { sleep: async (ms) => { sleeps.push(ms); } }),
+    ).rejects.toBeInstanceOf(ReorgMismatch);
+    expect(sleeps).toEqual([1, 2, 4, 8]);
+    expect(journalRead(j).filter((x) => x.ok)).toEqual([]);
+  });
+
+  test("(c) live already equal to the expected end state journals ok alreadyApplied with zero mutations", async () => {
+    const be = relabelBackend([LB, LC]); // already at the planned end state
+    const j = join(dir, "j.jsonl");
+    const events: string[] = [];
+    const r = await run(fakeClient(be), [relabelOp()], j, { onEvent: (e) => events.push(e.kind) });
+    expect(r.applied).toBe(1);
+    expect(be.mutationCalls).toEqual([]);
+    expect(events).toContain("already-applied");
+    const rows = journalRead(j);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ok).toBe(true);
+    expect(rows[0].alreadyApplied).toBe(true);
+    expect(rows[0].before).toEqual({ labelIds: [LA, LB] });
+    expect((rows[0].after as { labelIds: string[] }).labelIds).toEqual([LB, LC].sort());
+    // resume treats it as done
+    expect(journalOkSeqs(rows).has(1)).toBe(true);
+  });
+
+  test("(c2) --check reports already applied, not drift", async () => {
+    const be = relabelBackend([LB, LC]);
+    const lines: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([relabelOp()]), {
+      apply: false, check: true, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(), onEvent: (e) => lines.push(e.detail),
+    });
+    expect(r.drifted).toEqual([]);
+    expect(lines.some((l) => l.includes("already applied"))).toBe(true);
+  });
+
+  test("(d) live equal to neither from nor expected end state is still drift", async () => {
+    const be = relabelBackend([LB]); // neither [A,B] nor [B,C]
+    await expect(run(fakeClient(be), [relabelOp()], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("(e2) rollback skips alreadyApplied rows by default and lists them", async () => {
+    const be = relabelBackend([LB, LC]);
+    const j = join(dir, "j.jsonl");
+    await run(fakeClient(be), [relabelOp()], j);
+    const dry = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), ...noSleep });
+    expect(dry.planned).toBe(0);
+    expect(dry.skipped).toHaveLength(1);
+    expect(dry.skipped[0]).toContain("already applied before this run (not written by the tool)");
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true, ...noSleep });
+    expect(rb.rolledBack).toBe(0);
+    expect(be.mutationCalls).toEqual([]);
+    expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LB, LC].sort());
+  });
+
+  test("(e) rollback inverts an alreadyApplied relabel with includeAlreadyApplied", async () => {
+    const be = relabelBackend([LB, LC]);
+    const j = join(dir, "j.jsonl");
+    await run(fakeClient(be), [relabelOp()], j);
+    expect(be.mutationCalls).toEqual([]);
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true, includeAlreadyApplied: true, ...noSleep });
+    expect(rb.rolledBack).toBe(1);
+    expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LA, LB].sort());
+  });
+
+  test("batch: already-applied members are excluded from the write and journaled alreadyApplied", async () => {
+    const be = relabelBackend();
+    be.issues.set("i-2", { ...ISSUE_1, id: "i-2", identifier: "EX-2", labelIds: [LB, LC] }); // already done
+    const mk = (n: number, id: string, from: string[]) =>
+      baseOp({
+        seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
+        from: { labelIds: from }, to: { add: [LC], remove: [LA] }, batchKey: "k",
+      });
+    const j = join(dir, "j.jsonl");
+    const batchIds: string[][] = [];
+    const inner = (fakeClient(be) as unknown as {
+      client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> };
+    }).client;
+    const spy = { client: { rawRequest: async (q: string, v: Record<string, unknown>) => {
+      if (q.includes("ReorgBatchUpdate")) batchIds.push([...(v.ids as string[])]);
+      return inner.rawRequest(q, v);
+    } } } as unknown as LinearClient;
+    const r = await run(spy, [mk(1, "i-1", [LA, LB]), mk(2, "i-2", [LA, LB])], j);
+    expect(r.applied).toBe(2);
+    expect(batchIds).toEqual([["i-1"]]); // the already-applied member is NOT written
+    const rows = journalRead(j);
+    expect(rows.map((x) => [x.seq, x.ok, x.alreadyApplied === true])).toEqual([[1, true, false], [2, true, true]]);
+    expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LB, LC].sort());
   });
 });
