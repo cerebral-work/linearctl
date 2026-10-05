@@ -60,14 +60,10 @@ export async function resolveIssueUuids(
 
   await mapPool(chunks, CONCURRENCY, async (chunk) => {
     const vars: Record<string, unknown> = {};
-    const decls: string[] = [];
-    const fields: string[] = [];
     chunk.forEach((ref, i) => {
-      decls.push(`$r${i}: String!`);
-      fields.push(`r${i}: issue(id: $r${i}) { id identifier }`);
       vars[`r${i}`] = ref;
     });
-    const query = `query Resolve(${decls.join(", ")}) {\n  ${fields.join("\n  ")}\n}`;
+    const query = buildResolveQuery(chunk.length);
     const res = await withRetry(() =>
       client.client.rawRequest<Record<string, { id: string; identifier: string } | null>, typeof vars>(
         query,
@@ -82,6 +78,28 @@ export async function resolveIssueUuids(
   });
 
   return out;
+}
+
+/** The aliased-issue lookup document for `n` refs (exported for schema tests). */
+export function buildResolveQuery(n: number): string {
+  const decls: string[] = [];
+  const fields: string[] = [];
+  for (let i = 0; i < n; i++) {
+    decls.push(`$r${i}: String!`);
+    fields.push(`r${i}: issue(id: $r${i}) { id identifier }`);
+  }
+  return `query Resolve(${decls.join(", ")}) {\n  ${fields.join("\n  ")}\n}`;
+}
+
+/** The aliased issueUpdate document for `n` items (exported for schema tests). */
+export function buildBatchMutation(n: number): string {
+  const decls: string[] = [];
+  const fields: string[] = [];
+  for (let i = 0; i < n; i++) {
+    decls.push(`$id${i}: String!`, `$in${i}: IssueUpdateInput!`);
+    fields.push(`m${i}: issueUpdate(id: $id${i}, input: $in${i}) { success }`);
+  }
+  return `mutation Batch(${decls.join(", ")}) {\n  ${fields.join("\n  ")}\n}`;
 }
 
 /**
@@ -105,15 +123,11 @@ export async function batchUpdateIssues(
 
   await mapPool(chunks, CONCURRENCY, async (chunk) => {
     const vars: Record<string, unknown> = {};
-    const decls: string[] = [];
-    const fields: string[] = [];
     chunk.forEach((it, i) => {
-      decls.push(`$id${i}: String!`, `$in${i}: IssueUpdateInput!`);
-      fields.push(`m${i}: issueUpdate(id: $id${i}, input: $in${i}) { success }`);
       vars[`id${i}`] = it.uuid;
       vars[`in${i}`] = it.input;
     });
-    const query = `mutation Batch(${decls.join(", ")}) {\n  ${fields.join("\n  ")}\n}`;
+    const query = buildBatchMutation(chunk.length);
     try {
       const res = await withRetry(() =>
         client.client.rawRequest<Record<string, { success: boolean }>, typeof vars>(query, vars),

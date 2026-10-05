@@ -978,13 +978,18 @@ export async function verifyBackup(dir: string, opts: VerifyOptions = {}): Promi
   return res;
 }
 
-async function liveCount(gql: Gql, spec: EntitySpec): Promise<number> {
-  const q = `query Count($first: Int!, $after: String) {
+/** The verify-time count document for one connection entity. */
+export function buildCountQuery(spec: EntitySpec): string {
+  return `query Count($first: Int!, $after: String) {
   ${spec.root}(first: $first, after: $after, includeArchived: true${spec.args ? ", " + spec.args : ""}) {
     nodes { id }
     pageInfo { hasNextPage endCursor }
   }
 }`;
+}
+
+async function liveCount(gql: Gql, spec: EntitySpec): Promise<number> {
+  const q = buildCountQuery(spec);
   let n = 0;
   let after: string | null = null;
   const seen = new Set<string>();
