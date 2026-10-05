@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.1](https://github.com/cerebral-work/linearctl/compare/v0.10.0...v0.10.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **reorg:** accept moves already completed by a parent's cascade ([968d88b](https://github.com/cerebral-work/linearctl/commit/968d88bb8df9dd7cb2d3917cd94df0d969aa6da9))
+* **reorg:** accept moves already completed by a parent's cascade ([e384c88](https://github.com/cerebral-work/linearctl/commit/e384c8804ca943fd894a55196ccdacfc71d2c824))
+* **reorg:** case-insensitive label-name preflight + clear case-variant refusal ([f09b39f](https://github.com/cerebral-work/linearctl/commit/f09b39f4a7cde6ca191168b8dd20030fa255afa0))
+* **reorg:** case-insensitive label-name preflight + clear case-variant refusal ([2837b26](https://github.com/cerebral-work/linearctl/commit/2837b262345fcb740c05b79584fc2b9765660a75))
+* **reorg:** guard the refusal-path conflict re-read ([1a86cc2](https://github.com/cerebral-work/linearctl/commit/1a86cc2c190ddc3552c73325e83650305117c114))
+* **reorg:** guard the refusal-path conflict re-read ([e458969](https://github.com/cerebral-work/linearctl/commit/e4589697e115396d35abd9eb79b4d44fcb9a0111))
+* **reorg:** limit rollback cascade acceptance to team moves ([7603af4](https://github.com/cerebral-work/linearctl/commit/7603af4111eef4489756685717a349fec4a39326))
+* **reorg:** tighten superseded-op rules in verify ([21e4f8d](https://github.com/cerebral-work/linearctl/commit/21e4f8d41428283947488600cb9bcd64f0cca359))
+* **reorg:** verify each target against the last op that changed it ([799ffb3](https://github.com/cerebral-work/linearctl/commit/799ffb3fd1ab8220302f41b5ecda96c467facffc))
+* **reorg:** verify each target against the last op that changed it ([ccaa9dc](https://github.com/cerebral-work/linearctl/commit/ccaa9dc953cb807a49e8fc371f0fa8dce88a6bfa))
+
 ## [0.10.0](https://github.com/cerebral-work/linearctl/compare/v0.9.2...v0.10.0) (2026-10-05)
 
 
