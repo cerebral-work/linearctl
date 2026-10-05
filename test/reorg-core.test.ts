@@ -1668,11 +1668,18 @@ describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
       seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
       from: { labelId: null }, to: { name: "security" },
     });
+    const events: string[] = [];
     const result = await runPlan(fakeClient(be), planWith([create]), {
       check: true, apply: false, resume: false, allowIrreversible: false,
       journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+      onEvent: (e) => events.push(e.detail),
     });
-    expect(result.drifted).toContain(2); // no rename planned → the child still holds the name
+    expect(result.drifted).toContain(2);
+    // the conflict detail must NAME the child id — an over-broad exclusion
+    // (drop any inherited label) would leave only the owner listed
+    const line = events.find((d) => d.includes("DRIFT seq 2"));
+    expect(line).toBeDefined();
+    expect(line).toContain("11111111-1111-4111-8111-1111111110c1");
   });
 });
 
