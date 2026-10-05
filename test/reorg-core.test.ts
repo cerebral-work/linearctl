@@ -1260,15 +1260,24 @@ describe("new ops", () => {
     ];
     be.projects.get("p-1")!.initiativeIds = ["in-old"];
     for (const n of [2, 3]) be.issues.set(`i-${n}`, { ...ISSUE_1, id: `i-${n}`, identifier: `EX-${n}`, labelIds: [...ISSUE_1.labelIds] });
+    be.states.set("s-ready", { id: "s-ready", name: "Ready", type: "unstarted", archivedAt: null });
+    be.projects.set("p-2", { id: "p-2", name: "P2", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] });
+    be.initiatives.set("in-2", { id: "in-2", name: "I2", archivedAt: null, ownerId: null });
+    ops.push(
+      baseOp({ seq: 9, op: "archive-project", target: { type: "project", id: "p-2", identifier: "P2" }, from: { archived: false, trashed: false }, to: { archived: true } }),
+      baseOp({ seq: 10, op: "archive-initiative", target: { type: "initiative", id: "in-2", identifier: "I2" }, from: { archived: false }, to: { archived: true } }),
+      baseOp({ seq: 11, phase: 2, op: "archive-state", reversible: false, approval: "deck-1", target: { type: "state", id: "s-ready", identifier: "EX/Ready" }, from: { archived: false }, to: { archived: true } }),
+      baseOp({ seq: 12, op: "archive-issue", from: { archived: false }, to: { archived: true } }),
+    );
     const batch = [2, 3].map((n) => baseOp({
       seq: 20 + n, op: "set-state", target: { type: "issue", id: `i-${n}`, identifier: `EX-${n}` },
       from: { stateId: "s-todo" }, to: { stateId: "s-done" }, batchKey: "b",
     }));
     const j = join(dir, "schema.jsonl");
-    for (const op of ops) await applyPlan(be, [op], j + op.seq);
+    for (const op of ops) await applyPlan(be, [op], j + op.seq, { allowIrreversible: true });
     await applyPlan(be, batch, j + "batch");
     for (const name of [
-      "issueBatchUpdate",
+      "issueBatchUpdate", "projectArchive", "initiativeArchive", "workflowStateArchive", "issueArchive",
       "projectStatusCreate", "issueLabelCreate", "issueUpdate", "issueLabelUpdate",
       "teamUpdate", "projectUpdate", "initiativeUpdate", "initiativeToProjectCreate",
     ])
