@@ -292,6 +292,10 @@ export interface JournalRecord {
   at: string;
   ok: boolean;
   error?: string;
+  /** The live state already equalled the op's expected end state at pre-read
+   *  (an earlier write landed but was never journaled); nothing was written.
+   *  `before` is the planned from-state so rollback inverts it like any ok row. */
+  alreadyApplied?: boolean;
 }
 
 function writeFsync(path: string, content: string, mode: "a" | "w"): void {
@@ -359,7 +363,17 @@ export function assertFreshBackup(path: string, now: Date = new Date()): void {
 interface OpCtx {
   client: LinearClient;
   pace: { bucket: TokenBucket; tracker: RateTracker };
+  /** Post-write verify re-read backoff (ms). Defaults to {@link DEFAULT_VERIFY_DELAYS_MS}. */
+  verifyDelaysMs?: number[];
+  /** Injectable sleep so tests run instantly. */
+  sleep?: (ms: number) => Promise<void>;
+  onEvent?: (ev: { kind: string; detail: string }) => void;
 }
+
+/** Linear's read API can lag a just-acknowledged write; a post-write re-read
+ *  that still shows the old state is retried with this backoff before it is
+ *  declared a mismatch. */
+export const DEFAULT_VERIFY_DELAYS_MS = [500, 1000, 2000, 4000];
 
 interface ReorgIssueNode {
   id: string;
@@ -1359,6 +1373,10 @@ export interface ApplyOptions {
   backupRecordPath?: string;
   pace: { bucket: TokenBucket; tracker: RateTracker };
   onEvent?: (ev: { kind: string; detail: string }) => void;
+  /** Post-write verify re-read backoff in ms (default 500/1000/2000/4000). */
+  verifyDelaysMs?: number[];
+  /** Injectable sleep (tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface RunResult {
@@ -1369,6 +1387,47 @@ export interface RunResult {
   drifted: number[];
 }
 
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** True when `live` already equals the op's expected end state. Never vacuous:
+ *  the expected state must constrain at least one compared key. move-issue-team
+ *  is excluded (its end state is also checked via label/state post-steps). */
+function isAlreadyApplied(
+  def: OpDef,
+  op: ReorgOp,
+  live: Record<string, unknown>,
+): boolean {
+  if (op.op === "move-issue-team") return false;
+  const expected = def.expectedPost(op);
+  if (expected === null) return false;
+  if (!def.compareKeys.some((k) => k in expected)) return false;
+  return compareState(expected, live, def.compareKeys).length === 0;
+}
+
+/** Re-read until the state matches `expected`, backing off between reads. */
+async function readUntilMatches(
+  ctx: OpCtx,
+  def: OpDef,
+  op: ReorgOp,
+  expected: Record<string, unknown>,
+  first?: Record<string, unknown>,
+): Promise<{ live: Record<string, unknown>; bad: string[] }> {
+  const delays = ctx.verifyDelaysMs ?? DEFAULT_VERIFY_DELAYS_MS;
+  const sleep = ctx.sleep ?? realSleep;
+  let live = first ?? (await def.readState(ctx, op));
+  let bad = compareState(expected, live, def.compareKeys);
+  for (let n = 0; bad.length && n < delays.length; n++) {
+    ctx.onEvent?.({
+      kind: "verify-retry",
+      detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: post-write read differs; retry ${n + 1}/${delays.length} in ${delays[n]}ms`,
+    });
+    await sleep(delays[n]);
+    live = await def.readState(ctx, op);
+    bad = compareState(expected, live, def.compareKeys);
+  }
+  return { live, bad };
+}
+
 /** One op end-to-end: drift pre-read → preconditions → write → expected-state
  *  verify (never vacuous) → journal. Shared by runPlan and rollbackPhase. */
 async function executeOne(
@@ -1376,7 +1435,7 @@ async function executeOne(
   op: ReorgOp,
   journal: JournalRecord[],
   journalPath: string,
-): Promise<void> {
+): Promise<"applied" | "already-applied"> {
   // 0. resolve name: label refs (journal-created ids first, then live lookup)
   op = await resolveOpLabelRefs(ctx, journal, op);
   const def = OP_REGISTRY[op.op];
@@ -1384,11 +1443,33 @@ async function executeOne(
   // 1. live pre-read + drift check (scoped to the op's read coverage)
   const liveBefore = await def.readState(ctx, op);
   const drift = compareState(op.from, liveBefore, def.compareKeys);
-  if (drift.length)
+  if (drift.length) {
+    if (isAlreadyApplied(def, op, liveBefore)) {
+      // An earlier write landed but was never journaled: record it, write nothing.
+      const rec: JournalRecord = {
+        seq: op.seq,
+        phase: op.phase,
+        op: op.op,
+        original: op,
+        before: op.from,
+        after: liveBefore,
+        at: new Date().toISOString(),
+        ok: true,
+        alreadyApplied: true,
+      };
+      journalAppend(journalPath, rec);
+      journal.push(rec);
+      ctx.onEvent?.({
+        kind: "already-applied",
+        detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: live state already equals the expected end state; journaled, no write`,
+      });
+      return "already-applied";
+    }
     throw new ReorgMismatch(op.seq, {
       expected: pick(op.from, def.compareKeys),
       actual: pick(liveBefore, def.compareKeys),
     });
+  }
 
   // 2. op-specific preconditions (live reads)
   if (op.target.type === "label" && liveBefore.inheritedFromId)
@@ -1416,9 +1497,9 @@ async function executeOne(
     if (liveAfter !== null)
       throw new ReorgMismatch(op.seq, { expected: "absent", actual: "still present" });
   } else {
-    liveAfter = await def.readState(ctx, op);
-    const bad = compareState(expected, liveAfter, def.compareKeys);
-    if (bad.length)
+    const r = await readUntilMatches(ctx, def, op, expected);
+    liveAfter = r.live;
+    if (r.bad.length)
       throw new ReorgMismatch(op.seq, {
         expected: pick(expected, def.compareKeys),
         actual: pick(liveAfter, def.compareKeys),
@@ -1469,6 +1550,7 @@ async function executeOne(
   };
   journalAppend(journalPath, rec);
   journal.push(rec);
+  return "applied";
 }
 
 export async function runPlan(
@@ -1494,7 +1576,13 @@ export async function runPlan(
   }
   if (opts.maxOps !== undefined) ops = ops.slice(0, opts.maxOps);
 
-  const ctx: OpCtx = { client, pace: opts.pace };
+  const ctx: OpCtx = {
+    client,
+    pace: opts.pace,
+    verifyDelaysMs: opts.verifyDelaysMs,
+    sleep: opts.sleep,
+    onEvent: opts.onEvent,
+  };
 
   // --check: dry-run PLUS a live drift pre-read per target; no writes.
   if (opts.check && !opts.apply) {
@@ -1524,7 +1612,12 @@ export async function runPlan(
           }
         }
         const drift = compareState(op.from, live, def.compareKeys);
-        if (drift.length) {
+        if (drift.length && isAlreadyApplied(def, op, live)) {
+          opts.onEvent?.({
+            kind: "check",
+            detail: `already applied seq ${op.seq} [${op.op}] ${op.target.identifier}`,
+          });
+        } else if (drift.length) {
           drifted.push(op.seq);
           opts.onEvent?.({
             kind: "drift",
@@ -1632,11 +1725,11 @@ export async function runPlan(
       // single member — falls through to the sequential path
     }
 
-    await executeOne(ctx, op, journal, opts.journalPath);
+    const outcome = await executeOne(ctx, op, journal, opts.journalPath);
     applied++;
     opts.onEvent?.({
       kind: "applied",
-      detail: `seq ${op.seq} [${op.op}] ${op.target.identifier} ok`,
+      detail: `seq ${op.seq} [${op.op}] ${op.target.identifier} ${outcome === "already-applied" ? "ok (already applied)" : "ok"}`,
     });
     i++;
   }
@@ -1659,20 +1752,29 @@ async function runBatch(
   // drift-check every member before the single write (refs resolved first)
   const befores = new Map<number, Record<string, unknown>>();
   const resolvedGroup: ReorgOp[] = [];
+  const alreadyApplied = new Set<number>();
   for (const raw of group) {
     const op = await resolveOpLabelRefs(ctx, journal, raw);
     resolvedGroup.push(op);
     const def = OP_REGISTRY[op.op];
     const live = await def.readState(ctx, op);
     const drift = compareState(op.from, live, def.compareKeys);
-    if (drift.length)
-      throw new ReorgMismatch(op.seq, {
-        expected: pick(op.from, def.compareKeys),
-        actual: pick(live, def.compareKeys),
+    if (drift.length) {
+      if (!isAlreadyApplied(def, op, live))
+        throw new ReorgMismatch(op.seq, {
+          expected: pick(op.from, def.compareKeys),
+          actual: pick(live, def.compareKeys),
+        });
+      alreadyApplied.add(op.seq);
+      ctx.onEvent?.({
+        kind: "already-applied",
+        detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: live state already equals the expected end state; excluded from the batch write`,
       });
+    }
     befores.set(op.seq, live);
   }
   group = resolvedGroup;
+  const toWrite = group.filter((o) => !alreadyApplied.has(o.seq));
 
   const resolvedFirst = resolvedGroup[0];
   const input: Record<string, unknown> =
@@ -1680,30 +1782,74 @@ async function runBatch(
       ? { stateId: resolvedFirst.to.stateId }
       : { addedLabelIds: resolvedFirst.to.add ?? [], removedLabelIds: resolvedFirst.to.remove ?? [] };
 
-  await reorgRaw(
-    ctx.client,
-    M.batchUpdate,
-    { ids: group.map((o) => o.target.id), input },
-    ctx.pace,
-  );
+  if (toWrite.length > 0)
+    await reorgRaw(
+      ctx.client,
+      M.batchUpdate,
+      { ids: toWrite.map((o) => o.target.id), input },
+      ctx.pace,
+    );
 
-  // one filtered verify read for the whole batch
+  // one filtered verify read for the whole batch (re-read with backoff while
+  // any written member still differs: the read API can lag the write)
   interface BatchVerifyNode {
     id: string;
     state?: { id: string } | null;
     labels?: { nodes: { id: string }[] } | null;
   }
-  const d = await reorgRaw<{ issues: { nodes: BatchVerifyNode[] } }>(
-    ctx.client,
-    `query ReorgBatchVerify($ids: [ID!]!) {
+  const evaluate = (byId: Map<string, BatchVerifyNode>) => {
+    const out = new Map<number, { actual: Record<string, unknown>; bad: string[]; expected: Record<string, unknown> | null }>();
+    for (const op of toWrite) {
+      const def = OP_REGISTRY[op.op];
+      const n = byId.get(op.target.id);
+      const actual: Record<string, unknown> = n
+        ? {
+            stateId: n.state?.id ?? null,
+            labelIds: (n.labels?.nodes ?? []).map((l) => l.id).sort(),
+          }
+        : {};
+      const expected = def.expectedPost(op);
+      const bad: string[] = [];
+      if (!n) {
+        bad.push("missing from verify read");
+      } else if (expected) {
+        for (const k of def.compareKeys) {
+          if (!(k in expected)) continue;
+          if (JSON.stringify(expected[k]) !== JSON.stringify(actual[k]))
+            bad.push(`${k}: expected=${JSON.stringify(expected[k])} actual=${JSON.stringify(actual[k])}`);
+        }
+      }
+      out.set(op.seq, { actual, bad, expected });
+    }
+    return out;
+  };
+  const readBatch = async () => {
+    const d = await reorgRaw<{ issues: { nodes: BatchVerifyNode[] } }>(
+      ctx.client,
+      `query ReorgBatchVerify($ids: [ID!]!) {
       issues(filter: { id: { in: $ids } }, includeArchived: true) {
         nodes { id state { id } labels { nodes { id } } }
       }
     }`,
-    { ids: group.map((o) => o.target.id) },
-    ctx.pace,
-  );
-  const byId = new Map(d.issues.nodes.map((n) => [n.id, n]));
+      { ids: toWrite.map((o) => o.target.id) },
+      ctx.pace,
+    );
+    return evaluate(new Map(d.issues.nodes.map((n) => [n.id, n])));
+  };
+  let results = new Map<number, { actual: Record<string, unknown>; bad: string[]; expected: Record<string, unknown> | null }>();
+  if (toWrite.length > 0) {
+    const delays = ctx.verifyDelaysMs ?? DEFAULT_VERIFY_DELAYS_MS;
+    const sleep = ctx.sleep ?? realSleep;
+    results = await readBatch();
+    for (let n = 0; n < delays.length && [...results.values()].some((r) => r.bad.length); n++) {
+      ctx.onEvent?.({
+        kind: "verify-retry",
+        detail: `batch ${String(first.batchKey)}: ${[...results.values()].filter((r) => r.bad.length).length} member(s) differ after the write; retry ${n + 1}/${delays.length} in ${delays[n]}ms`,
+      });
+      await sleep(delays[n]);
+      results = await readBatch();
+    }
+  }
 
   // Journal EVERY member from the verify read — ok members with their actual
   // after state, the mismatching one marked ok:false — THEN stop. A mid-batch
@@ -1711,24 +1857,23 @@ async function runBatch(
   const failures: { op: ReorgOp; why: string; expected: unknown; actual: unknown }[] = [];
   for (const op of group) {
     const def = OP_REGISTRY[op.op];
-    const n = byId.get(op.target.id);
-    const actual: Record<string, unknown> = n
-      ? {
-          stateId: n.state?.id ?? null,
-          labelIds: (n.labels?.nodes ?? []).map((l) => l.id).sort(),
-        }
-      : {};
-    const expected = def.expectedPost(op);
-    const bad: string[] = [];
-    if (!n) {
-      bad.push("missing from verify read");
-    } else if (expected) {
-      for (const k of def.compareKeys) {
-        if (!(k in expected)) continue;
-        if (JSON.stringify(expected[k]) !== JSON.stringify(actual[k]))
-          bad.push(`${k}: expected=${JSON.stringify(expected[k])} actual=${JSON.stringify(actual[k])}`);
-      }
+    if (alreadyApplied.has(op.seq)) {
+      const rec: JournalRecord = {
+        seq: op.seq,
+        phase: op.phase,
+        op: op.op,
+        original: op,
+        before: op.from,
+        after: befores.get(op.seq),
+        at: new Date().toISOString(),
+        ok: true,
+        alreadyApplied: true,
+      };
+      journalAppend(opts.journalPath, rec);
+      journal.push(rec);
+      continue;
     }
+    const { actual, bad, expected } = results.get(op.seq)!;
     const rec: JournalRecord = {
       seq: op.seq,
       phase: op.phase,
@@ -1825,6 +1970,10 @@ export interface RollbackOptions {
   apply?: boolean;
   /** Preview plus a live pre-read of every target, reporting drift (no writes). */
   check?: boolean;
+  /** Post-write verify re-read backoff in ms (default 500/1000/2000/4000). */
+  verifyDelaysMs?: number[];
+  /** Injectable sleep (tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface RollbackResult {
@@ -1869,7 +2018,13 @@ export async function rollbackPhase(
   let rolledBack = 0;
   let planned = 0;
   const write = opts.apply === true;
-  const ctx: OpCtx = { client, pace: opts.pace };
+  const ctx: OpCtx = {
+    client,
+    pace: opts.pace,
+    verifyDelaysMs: opts.verifyDelaysMs,
+    sleep: opts.sleep,
+    onEvent: opts.onEvent,
+  };
 
   // Pass 1: build and validate every inverse before any write, so a journal
   // that cannot be inverted refuses the whole rollback instead of half of it.
@@ -1977,8 +2132,7 @@ export async function rollbackPhase(
         // read failed = absent, as required
       }
     } else {
-      const live = await invDef.readState(ctx, inv);
-      const bad = compareState(expected, live, invDef.compareKeys);
+      const { live, bad } = await readUntilMatches(ctx, invDef, inv, expected);
       if (bad.length)
         throw new ReorgMismatch(inv.seq, {
           expected: pick(expected, invDef.compareKeys),
