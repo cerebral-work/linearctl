@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.2](https://github.com/cerebral-work/linearctl/compare/v0.9.1...v0.9.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **reorg:** archive projects instead of trashing them ([f9e0859](https://github.com/cerebral-work/linearctl/commit/f9e0859e21a44ccaf714b7d671c4125fe7ca25d7))
+* **reorg:** archive projects instead of trashing them ([bd03449](https://github.com/cerebral-work/linearctl/commit/bd03449a907ac494aa80b9556a002d5c51e3b72c))
+* **reorg:** give create-project-status a position and validate mutation inputs against the schema ([e54030a](https://github.com/cerebral-work/linearctl/commit/e54030a1d2c25db96ef2f4f0195488016db34153))
+
+
+### Documentation
+
+* **reorg:** document archive-project archive-not-trash semantics ([11a8c24](https://github.com/cerebral-work/linearctl/commit/11a8c242c2d1f8cac47dd6acbb0e6eecf3dd43a7))
+
 ## [0.9.1](https://github.com/cerebral-work/linearctl/compare/v0.9.0...v0.9.1) (2026-10-05)
 
 
