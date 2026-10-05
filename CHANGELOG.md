@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.9.0](https://github.com/cerebral-work/linearctl/compare/v0.8.0...v0.9.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **backup:** backup verification mismatch and drift now exit 6; backup usage now exits 2 instead of 3.
+
+### Features
+
+* **issues:** add duplicate-of and actionable GraphQL errors (CER-2344) ([bf804a1](https://github.com/cerebral-work/linearctl/commit/bf804a15ac3099699236c05de61efed560090407))
+* **issues:** add verified duplicate-of update and close ([ed6181d](https://github.com/cerebral-work/linearctl/commit/ed6181d11126a23ab03c6eb2710de0aee06aa264))
+* **milestone:** add membership filters and issue detail ([3f3e617](https://github.com/cerebral-work/linearctl/commit/3f3e617b35b0be92e34141815c6917c6b801a984))
+* **reorg:** plan-file-driven workspace reorganization engine ([5be0075](https://github.com/cerebral-work/linearctl/commit/5be00751da25a4d49ed2568651ead11667f6295a))
+* **reorg:** planner gaps — label refs, selectors, by-id, three ops, archive-state gating ([dc5f033](https://github.com/cerebral-work/linearctl/commit/dc5f03357f4bd613451e1d0947f465b8297305b8))
+* **reorg:** planner gaps — label refs, selectors, by-id, three ops, archive-state gating ([0f1460e](https://github.com/cerebral-work/linearctl/commit/0f1460e05c52d664564a2910c75684516714f64a))
+* **reorg:** rename-label op + rename-before-create ordering + --check name preflight ([cdbc460](https://github.com/cerebral-work/linearctl/commit/cdbc460ea18747330662111c6a5b855dd2fac6a2))
+
+
+### Bug Fixes
+
+* **backup:** align exit codes with the agent contract ([fa14d94](https://github.com/cerebral-work/linearctl/commit/fa14d942d93a8f01b0ff8275ee5191bfaa5e68e5))
+* **backup:** correct verification help exit codes ([f252b62](https://github.com/cerebral-work/linearctl/commit/f252b625994dbf502139f2317a95437709fae5eb))
+* **cli:** preserve GraphQL user-input diagnostics ([4a1d2f3](https://github.com/cerebral-work/linearctl/commit/4a1d2f37a98b0933d4156f2f85af2478aa5a37d1))
+* **issues:** drop the stray --duplicate-of flag on show; neutral fixtures and docs ([bbc0f08](https://github.com/cerebral-work/linearctl/commit/bbc0f08ffe65c32d1530c6278d78273439deff5c))
+* **label:** make --limit the prefix of the whole sorted listing ([9c302d2](https://github.com/cerebral-work/linearctl/commit/9c302d2bea79c427c6848d2fe3f5c8d9b56ef0dc))
+* **label:** paginate label list and flag truncation (CER-2349) ([8dd3798](https://github.com/cerebral-work/linearctl/commit/8dd3798e230e92074a1ee5792572dbde48210d10))
+* **label:** paginate label list and flag truncation (CER-2349) ([8e611be](https://github.com/cerebral-work/linearctl/commit/8e611bef8bd9ee23a368922f7f8a1bedd6d7cd43))
+* **project:** stop double-counting paginated listings ([bff8adf](https://github.com/cerebral-work/linearctl/commit/bff8adf079fa75225f7b5d7ccce1fc16869f337e))
+* **project:** stop double-counting paginated listings ([930c39d](https://github.com/cerebral-work/linearctl/commit/930c39dffa60fb3ed38a27005b2c046c93de2644))
+* **reorg:** check-mode ref guard + propagated-rename preflight exclusion ([8a76b55](https://github.com/cerebral-work/linearctl/commit/8a76b557ca51ba585f2609abcece74b183737ba0))
+* **reorg:** check-mode ref guard + propagated-rename preflight exclusion ([bb59a11](https://github.com/cerebral-work/linearctl/commit/bb59a11803bd202ec86d1cad53751e78d881d1af))
+* **reorg:** from-completeness + re-decided label scope support ([4b26529](https://github.com/cerebral-work/linearctl/commit/4b26529dd73d3364703c6609bc4faa94d0430942))
+* **reorg:** gate rollback behind --apply and fix rename-label inverse ([f1b11f8](https://github.com/cerebral-work/linearctl/commit/f1b11f847e629971283eeec24b46a1390800c192))
+* **reorg:** gate rollback behind --apply and restore journaled pre-write state ([f251252](https://github.com/cerebral-work/linearctl/commit/f251252be54ea5bfb93e14d60237e5c755532028))
+* **reorg:** inherited-label handling ([8c69a17](https://github.com/cerebral-work/linearctl/commit/8c69a17684159e0976529422fe858c48d88821c3))
+* **reorg:** inherited-label handling (CER-2353) ([5aebdee](https://github.com/cerebral-work/linearctl/commit/5aebdeecae434607059847872aaf70fc205e5c86))
+* **reorg:** pin batch exclusion; rollback skips already-applied rows by default ([eec3218](https://github.com/cerebral-work/linearctl/commit/eec32187e38a8d36ed0c0cd907d1fa3fc23ac674))
+* **reorg:** read every rollback target before the first write ([15d0763](https://github.com/cerebral-work/linearctl/commit/15d07636a9a99008565b8dd65f473dbc5369c9a1))
+* **reorg:** refuse rollback of unrecorded fields and unreadable targets before writing ([4465dc4](https://github.com/cerebral-work/linearctl/commit/4465dc4ca70cb8815de25e945ae8d07275140e28))
+* **reorg:** restore the census fetch cap and mark a capped census partial ([82af8b7](https://github.com/cerebral-work/linearctl/commit/82af8b7776e19af1201a8326d131aa83ab57e298))
+* **reorg:** retry post-write verify and detect already-applied ops ([dc79134](https://github.com/cerebral-work/linearctl/commit/dc79134de94d46ecd1bdaeb21bde4fb63e33035c))
+* **reorg:** retry post-write verify and detect already-applied ops ([75c2194](https://github.com/cerebral-work/linearctl/commit/75c219484a4815a83396bf2d1e7ee77f620ae7f3))
+* **reorg:** round 1 — census owner inclusion, wider guard, team-aware mapping ([358d865](https://github.com/cerebral-work/linearctl/commit/358d865abe89cba3cafaf45ad13a4585608f5d34))
+
+
+### Documentation
+
+* **agent:** refresh the listing audit and state what census --limit caps ([6a6c1fa](https://github.com/cerebral-work/linearctl/commit/6a6c1fa8a3f2e0614a69aaf387d8beeb3004b027))
+* **agent:** refresh the listing audit and state what census --limit caps ([757d51f](https://github.com/cerebral-work/linearctl/commit/757d51ffad538449d390726dc506c0dfec046a4e))
+* **agent:** write the listing contract and audit listings against it ([0b5323f](https://github.com/cerebral-work/linearctl/commit/0b5323f3f697e192a29ead3d6b0d52e92b5e8fc3))
+* **agent:** write the listing contract and audit listings against it ([f8f509e](https://github.com/cerebral-work/linearctl/commit/f8f509e8e91b2dd1e981c06fe88ead9a983d2e99))
+* **issues:** drop a redundant rollback sentence from the duplicate-of feature doc ([31ef654](https://github.com/cerebral-work/linearctl/commit/31ef654f5685832d79a616dbe54228d314fa72e0))
+
 ## [0.8.0](https://github.com/cerebral-work/linearctl/compare/v0.7.0...v0.8.0) (2026-10-04)
 
 
