@@ -1053,11 +1053,18 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
         const msg = err instanceof Error ? err.message : String(err);
         if (/already exists/i.test(msg)) {
           // Name BOTH spellings: the requested one and the live conflicting
-          // one (one extra read, failure path only).
-          const live = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-            ctx.client, LABELS_BY_NAME_CI_Q, { name: op.to.name }, ctx.pace,
-          );
-          const spellings = live.issueLabels.nodes.map((l) => `"${l.name}"`).join(", ");
+          // one (one extra read, failure path only). The re-read is guarded:
+          // if IT fails, Linear's original refusal must still surface —
+          // fall back to the generic hint.
+          let spellings = "";
+          try {
+            const live = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+              ctx.client, LABELS_BY_NAME_CI_Q, { name: op.to.name }, ctx.pace,
+            );
+            spellings = live.issueLabels.nodes.map((l) => `"${l.name}"`).join(", ");
+          } catch {
+            spellings = "";
+          }
           throw new Error(
             `create-workspace-label "${String(op.to.name)}" refused by Linear (${msg}); ` +
               `label-name uniqueness is case-insensitive — the name is taken by ${spellings || "an existing label"}; rename it first`,
