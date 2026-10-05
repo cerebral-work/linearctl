@@ -5,11 +5,11 @@ name: Linear Release (prod)
 # commit range for issue refs (CER-NNN / TOD-NNN) + PR numbers, then marking the
 # release complete.
 #
-# CALLED, NOT TAG-TRIGGERED: release-please creates the tag with the default
-# GITHUB_TOKEN, and GitHub by design does NOT fire `push: tags` workflows from
-# token-created events — a tag trigger here would silently never run. So this is
-# a reusable workflow invoked by release.yml in the same run that creates the
-# release (release_created == true). workflow_dispatch stays for manual re-syncs.
+# CALLED, NOT TAG-TRIGGERED: this is a reusable workflow invoked by release.yml
+# in the same run that creates the release (release_created == true). release-
+# please now tags with a GitHub App token, which DOES fire `push: tags`
+# workflows, so a tag trigger here would run it a second time. workflow_dispatch
+# stays for manual re-syncs.
 #
 # DORMANT-UNTIL-KEYED: no-op-safe skip when LINEAR_ACCESS_KEY is absent, so it
 # never red-X's a release before the operator provisions the pipeline + key.
