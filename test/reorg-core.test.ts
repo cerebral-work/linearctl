@@ -174,6 +174,11 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
       const ids = vars.ids as string[];
+      // Linear's id filter validates UUIDs — a name: ref arriving raw is a
+      // 400 Argument Validation Error, not an empty page
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (ids.some((id) => !UUID.test(id)))
+        throw new Error("Argument Validation Error");
       return ok({
         issueLabels: {
           nodes: ids.map((id) => be.labels.get(id)).filter(Boolean).map((l) => ({
@@ -270,7 +275,7 @@ function fakeClient(be: FakeBackend): LinearClient {
         // Linear enforces label-name uniqueness ACROSS workspace + team scope
         if ([...be.labels.values()].some((l) => labelName(be, l) === input.name))
           throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
-        const id = `l-new-${++be.createdLabelSeq}`;
+        const id = `22222222-2222-4222-8222-${String(++be.createdLabelSeq).padStart(12, "0")}`;
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
       });
     if (query.includes("ReorgLabelUpdate"))
@@ -384,7 +389,7 @@ function planWith(ops: ReorgOp[]): ReorgPlan {
 }
 
 const ISSUE_1: FakeIssue = {
-  id: "i-1", identifier: "EX-1", stateId: "s-todo", labelIds: ["l-a"],
+  id: "i-1", identifier: "EX-1", stateId: "s-todo", labelIds: ["11111111-1111-4111-8111-11111111110a"],
   projectId: "p-1", cycleId: null, teamId: "t-1", teamKey: "EX", archived: false,
 };
 
@@ -513,7 +518,7 @@ describe("runPlan modes", () => {
     const be = freshBackend();
     be.swallowWrites = true;
     be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds] });
-    be.issues.set("i-2", { ...ISSUE_1, id: "i-2", identifier: "EX-2", labelIds: ["l-a"] });
+    be.issues.set("i-2", { ...ISSUE_1, id: "i-2", identifier: "EX-2", labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     const j = join(dir, "j.jsonl");
     await expect(
       applyPlan(be, [
@@ -529,7 +534,7 @@ describe("runPlan modes", () => {
     const be = freshBackend();
     for (const n of [1, 2, 3, 4]) {
       const id = `i-${n}`;
-      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["l-a"] });
+      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     }
     const ops = [1, 2, 3, 4].map((n) => baseOp({
       seq: n, target: { type: "issue", id: `i-${n}`, identifier: `EX-${n}` },
@@ -584,17 +589,17 @@ describe("op triples (apply → verify → rollback)", () => {
 
   test("relabel (expected post-state is the computed label set)", async () => {
     const be = freshBackend();
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a", "l-b"] });
-    be.labels.set("l-a", { id: "l-a", name: "a", retiredAt: null, teamId: "t-1", teamKey: "EX" });
-    be.labels.set("l-b", { id: "l-b", name: "b", retiredAt: null, teamId: "t-1", teamKey: "EX" });
-    be.labels.set("l-ws", { id: "l-ws", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a", "11111111-1111-4111-8111-11111111110b"] });
+    be.labels.set("11111111-1111-4111-8111-11111111110a", { id: "11111111-1111-4111-8111-11111111110a", name: "a", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-11111111110b", { id: "11111111-1111-4111-8111-11111111110b", name: "b", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-1111111110c5", { id: "11111111-1111-4111-8111-1111111110c5", name: "bug", retiredAt: null, teamId: null, teamKey: null });
     await triple(be, baseOp({
       op: "relabel",
-      from: { labelIds: ["l-a", "l-b"] },
-      to: { add: ["l-ws"], remove: ["l-a"] },
+      from: { labelIds: ["11111111-1111-4111-8111-11111111110a", "11111111-1111-4111-8111-11111111110b"] },
+      to: { add: ["11111111-1111-4111-8111-1111111110c5"], remove: ["11111111-1111-4111-8111-11111111110a"] },
     }), {
-      afterApply: () => expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual(["l-b", "l-ws"]),
-      afterRollback: () => expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual(["l-a", "l-b"]),
+      afterApply: () => expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual(["11111111-1111-4111-8111-11111111110b", "11111111-1111-4111-8111-1111111110c5"].sort()),
+      afterRollback: () => expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual(["11111111-1111-4111-8111-11111111110a", "11111111-1111-4111-8111-11111111110b"].sort()),
     });
   });
 
@@ -698,13 +703,13 @@ describe("op triples (apply → verify → rollback)", () => {
 
   test("retire-or-delete-label: retire → verify → restore", async () => {
     const be = freshBackend();
-    be.labels.set("l-t", { id: "l-t", name: "teambug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "teambug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     await triple(be, baseOp({
-      op: "retire-or-delete-label", target: { type: "label", id: "l-t", identifier: "EX/teambug" },
+      op: "retire-or-delete-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/teambug" },
       from: { retired: false }, to: { retired: true },
     }), {
-      afterApply: () => expect(be.labels.get("l-t")!.retiredAt).not.toBeNull(),
-      afterRollback: () => expect(be.labels.get("l-t")!.retiredAt).toBeNull(),
+      afterApply: () => expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.retiredAt).not.toBeNull(),
+      afterRollback: () => expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.retiredAt).toBeNull(),
     });
   });
 
@@ -736,13 +741,13 @@ describe("swallowed writes fail loudly", () => {
   test.each(["relabel", "add-project-team", "move-issue-team"] as const)("%s", async (kind) => {
     const be = freshBackend();
     be.swallowWrites = true;
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     // seeded WITHOUT the destination team: the drift check passes and the
     // swallowed write (not the drift abort) is what the verify catches
     be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] });
     let op: ReorgOp;
     if (kind === "relabel") {
-      op = baseOp({ op: kind, from: { labelIds: ["l-a"] }, to: { add: ["l-ws"], remove: [] } });
+      op = baseOp({ op: kind, from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-1111111110c5"], remove: [] } });
     } else if (kind === "add-project-team") {
       op = baseOp({
         op: kind, target: { type: "project", id: "p-1", identifier: "P" },
@@ -753,7 +758,7 @@ describe("swallowed writes fail loudly", () => {
       // the write never lands, so expected teamId t-2 must mismatch
       op = baseOp({
         op: kind,
-        from: { teamId: "t-1", projectId: "p-1", cycleId: null, labelIds: ["l-a"] },
+        from: { teamId: "t-1", projectId: "p-1", cycleId: null, labelIds: ["11111111-1111-4111-8111-11111111110a"] },
         to: { teamId: "t-2", reapplyLabelIds: [], stateId: "s-todo" },
       });
       // preconditions must pass so the swallowed WRITE is what's tested
@@ -776,10 +781,10 @@ describe("batching", () => {
     const ops: ReorgOp[] = [];
     for (let n = 1; n <= 51; n++) {
       const id = `i-${n}`;
-      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["l-a"] });
+      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
       ops.push(baseOp({
         seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
-        from: { labelIds: ["l-a"] }, to: { add: ["l-b"], remove: [] }, batchKey: "k",
+        from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-11111111110b"], remove: [] }, batchKey: "k",
       }));
     }
     const j = join(dir, "j.jsonl");
@@ -797,16 +802,16 @@ describe("batching", () => {
     const ops: ReorgOp[] = [];
     for (const n of [1, 2]) {
       const id = `i-${n}`;
-      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["l-a"], archived: n === 2 });
+      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["11111111-1111-4111-8111-11111111110a"], archived: n === 2 });
       ops.push(baseOp({
         seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
-        from: { labelIds: ["l-a"] }, to: { add: ["l-b"], remove: [] }, batchKey: "k",
+        from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-11111111110b"], remove: [] }, batchKey: "k",
       }));
     }
     const result = await applyPlan(be, ops, join(dir, "j.jsonl"));
     expect(result.applied).toBe(2);
     expect(be.mutationCalls.filter((c) => c === "issueBatchUpdate")).toHaveLength(1);
-    expect(be.issues.get("i-2")!.labelIds).toContain("l-b"); // archived member relabeled
+    expect(be.issues.get("i-2")!.labelIds).toContain("11111111-1111-4111-8111-11111111110b"); // archived member relabeled
   });
 
   test("mid-batch mismatch: good members journaled ok, bad one marked ok:false, then stop", async () => {
@@ -814,10 +819,10 @@ describe("batching", () => {
     const ops: ReorgOp[] = [];
     for (const n of [1, 2, 3]) {
       const id = `i-${n}`;
-      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["l-a"] });
+      be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
       ops.push(baseOp({
         seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
-        from: { labelIds: ["l-a"] }, to: { add: ["l-b"], remove: [] }, batchKey: "k",
+        from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-11111111110b"], remove: [] }, batchKey: "k",
       }));
     }
     be.batchSkip.add("i-2"); // the batch write lands for i-1/i-3 only
@@ -847,15 +852,15 @@ describe("move-issue-team", () => {
     be.teams.set("t-1", { id: "t-1", key: "EX", triageEnabled: true, deleted: false });
     be.teams.set("t-2", { id: "t-2", key: "NEW", triageEnabled: true, deleted: false });
     be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1", "t-2"], initiativeIds: [] });
-    be.labels.set("l-team", { id: "l-team", name: "teambug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
-    be.labels.set("l-ws", { id: "l-ws", name: "bug", retiredAt: null, teamId: null, teamKey: null });
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-ws"], stateId: "s-todo" });
+    be.labels.set("11111111-1111-4111-8111-1111111110e4", { id: "11111111-1111-4111-8111-1111111110e4", name: "teambug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-1111111110c5", { id: "11111111-1111-4111-8111-1111111110c5", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-1111111110c5"], stateId: "s-todo" });
     return be;
   }
   const moveOp = baseOp({
     seq: 5, op: "move-issue-team",
-    from: { teamId: "t-1", projectId: "p-1", cycleId: null, labelIds: ["l-ws"] },
-    to: { teamId: "t-2", reapplyLabelIds: ["l-ws"], stateId: "s-new-todo" },
+    from: { teamId: "t-1", projectId: "p-1", cycleId: null, labelIds: ["11111111-1111-4111-8111-1111111110c5"] },
+    to: { teamId: "t-2", reapplyLabelIds: ["11111111-1111-4111-8111-1111111110c5"], stateId: "s-new-todo" },
   });
 
   test("full path: labels re-sent, project preserved, state corrected to the DESTINATION", async () => {
@@ -867,7 +872,7 @@ describe("move-issue-team", () => {
     expect(result.applied).toBe(1);
     const i = be.issues.get("i-1")!;
     expect(i.teamId).toBe("t-2");
-    expect(i.labelIds).toContain("l-ws");
+    expect(i.labelIds).toContain("11111111-1111-4111-8111-1111111110c5");
     expect(i.projectId).toBe("p-1");
     // the fake ignored the paired stateId (closest-state mapping); the engine
     // corrected to the DESTINATION state with a separate verified set-state —
@@ -888,7 +893,7 @@ describe("move-issue-team", () => {
 
   test("(a) a live team-scoped label without a journaled swap refuses the move", async () => {
     const be = moveBackend();
-    be.issues.get("i-1")!.labelIds = ["l-ws", "l-team"]; // team label still on it
+    be.issues.get("i-1")!.labelIds = ["11111111-1111-4111-8111-1111111110c5", "11111111-1111-4111-8111-1111111110e4"]; // team label still on it
     const j = join(dir, "j.jsonl");
     journalAppend(j, { seq: "verify", phase: 1, at: "a", ok: true });
     journalAppend(j, { seq: "verify", phase: 2, at: "b", ok: true });
@@ -898,7 +903,7 @@ describe("move-issue-team", () => {
 
   test("(a) passes when the team label's swap is journaled into reapplyLabelIds", async () => {
     const be = moveBackend();
-    be.issues.get("i-1")!.labelIds = ["l-ws", "l-team"];
+    be.issues.get("i-1")!.labelIds = ["11111111-1111-4111-8111-1111111110c5", "11111111-1111-4111-8111-1111111110e4"];
     const j = join(dir, "j.jsonl");
     journalAppend(j, { seq: "verify", phase: 1, at: "a", ok: true });
     journalAppend(j, { seq: "verify", phase: 2, at: "b", ok: true });
@@ -906,15 +911,15 @@ describe("move-issue-team", () => {
       seq: 2, phase: 1, op: "relabel", at: "c", ok: true,
       original: baseOp({
         seq: 2, op: "relabel", target: { type: "issue", id: "i-1", identifier: "EX-1" },
-        from: { labelIds: ["l-team"] }, to: { add: ["l-ws"], remove: ["l-team"] },
+        from: { labelIds: ["11111111-1111-4111-8111-1111111110e4"] }, to: { add: ["11111111-1111-4111-8111-1111111110c5"], remove: ["11111111-1111-4111-8111-1111111110e4"] },
       }),
     });
     const result = await applyPlan(be, [moveOp], j);
     expect(result.applied).toBe(1);
     const i = be.issues.get("i-1")!;
     expect(i.teamId).toBe("t-2");
-    expect(i.labelIds).not.toContain("l-team"); // dropped by the move, as designed
-    expect(i.labelIds).toContain("l-ws");
+    expect(i.labelIds).not.toContain("11111111-1111-4111-8111-1111111110e4"); // dropped by the move, as designed
+    expect(i.labelIds).toContain("11111111-1111-4111-8111-1111111110c5");
   });
 });
 
@@ -1058,7 +1063,7 @@ describe("rollbackPhase", () => {
 describe("labelRef name:<n> resolution", () => {
   test("relabel resolves a label created earlier in the same plan (journal)", async () => {
     const be = freshBackend();
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     const j = join(dir, "j.jsonl");
     const ops = [
       baseOp({
@@ -1068,7 +1073,7 @@ describe("labelRef name:<n> resolution", () => {
       }),
       baseOp({
         seq: 2, op: "relabel",
-        from: { labelIds: ["l-a"] },
+        from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] },
         to: { add: ["name:bug"], remove: [] },
       }),
     ];
@@ -1084,25 +1089,25 @@ describe("labelRef name:<n> resolution", () => {
 
   test("live fallback: resolves an existing workspace label by name", async () => {
     const be = freshBackend();
-    be.labels.set("l-ws", { id: "l-ws", name: "bug", retiredAt: null, teamId: null, teamKey: null });
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.labels.set("11111111-1111-4111-8111-1111111110c5", { id: "11111111-1111-4111-8111-1111111110c5", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     const result = await applyPlan(be, [baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:bug"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["name:bug"], remove: [] },
     })], join(dir, "j.jsonl"));
     expect(result.applied).toBe(1);
-    expect(be.issues.get("i-1")!.labelIds).toContain("l-ws");
+    expect(be.issues.get("i-1")!.labelIds).toContain("11111111-1111-4111-8111-1111111110c5");
   });
 
   test("ambiguity and zero hits both refuse", async () => {
     const be = freshBackend();
-    be.labels.set("l-1", { id: "l-1", name: "dup", retiredAt: null, teamId: null, teamKey: null });
-    be.labels.set("l-2", { id: "l-2", name: "dup", retiredAt: null, teamId: null, teamKey: null });
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.labels.set("11111111-1111-4111-8111-111111111101", { id: "11111111-1111-4111-8111-111111111101", name: "dup", retiredAt: null, teamId: null, teamKey: null });
+    be.labels.set("11111111-1111-4111-8111-111111111102", { id: "11111111-1111-4111-8111-111111111102", name: "dup", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     await expect(applyPlan(be, [baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:dup"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["name:dup"], remove: [] },
     })], join(dir, "j.jsonl"))).rejects.toThrow("ambiguous");
     await expect(applyPlan(be, [baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:ghost"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["name:ghost"], remove: [] },
     })], join(dir, "j2.jsonl"))).rejects.toThrow("resolves to nothing");
   });
 });
@@ -1207,31 +1212,31 @@ describe("archive-state gating (bug fix)", () => {
 describe("rename-label + cross-scope uniqueness (planner addition)", () => {
   test("rename-label triple: apply renames, verify green, rollback restores the name", async () => {
     const be = freshBackend();
-    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     const j = join(dir, "j.jsonl");
     const op = baseOp({
-      op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/bug" },
       from: { name: "bug" }, to: { name: "bug·old-EX" },
     });
     await applyPlan(be, [op], j);
-    expect(be.labels.get("l-t")!.name).toBe("bug·old-EX");
+    expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("bug·old-EX");
     const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(v.ok).toBe(true);
     const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
     expect(rb.rolledBack).toBe(1);
-    expect(be.labels.get("l-t")!.name).toBe("bug");
+    expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("bug");
   });
 
   describe("rollback gate + planner-shaped rename journal", () => {
     // Planner-shaped row: `from` carries {retired} but NOT the old name; the old
     // name lives only in the journaled live read (`before`).
     function seedRename(be: FakeBackend, liveName: string): string {
-      be.labels.set("l-t", { id: "l-t", name: liveName, retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: liveName, retiredAt: null, teamId: "t-1", teamKey: "EX" });
       const j = join(dir, "rb.jsonl");
       journalAppend(j, {
         seq: 6, phase: 1, op: "rename-label", at: "t", ok: true,
         original: baseOp({
-          seq: 6, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/ci" },
+          seq: 6, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/ci" },
           from: { retired: false }, to: { name: "ci·old-EX" },
         }),
         before: { retired: false, name: "ci" },
@@ -1250,7 +1255,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       expect(r.rolledBack).toBe(0);
       expect(be.mutationCalls).toEqual([]);
       expect(be.readCalls).toBe(0);
-      expect(be.labels.get("l-t")!.name).toBe("ci·old-EX");
+      expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("ci·old-EX");
       expect(events[0]).toContain("would revert");
       expect(events[0]).toContain('"name":"ci"');
     });
@@ -1260,7 +1265,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       const j = seedRename(be, "ci·old-EX");
       const r = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
       expect(r.rolledBack).toBe(1);
-      expect(be.labels.get("l-t")!.name).toBe("ci");
+      expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("ci");
     });
 
     test("real drift fails, names field + both values, and writes nothing", async () => {
@@ -1279,7 +1284,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       expect(m.message).toContain("ci·old-EX");
       expect(m.message).toContain("someone-renamed-it");
       expect(be.mutationCalls).toEqual([]);
-      expect(be.labels.get("l-t")!.name).toBe("someone-renamed-it");
+      expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("someone-renamed-it");
     });
 
     test("--check reports drift without writing", async () => {
@@ -1296,12 +1301,12 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
 
     test("refuses before any write when neither plan nor journal recorded the needed field", async () => {
       const be = freshBackend();
-      be.labels.set("l-t", { id: "l-t", name: "ci·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "ci·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
       const j = join(dir, "nofield.jsonl");
       journalAppend(j, {
         seq: 6, phase: 1, op: "rename-label", at: "t", ok: true,
         original: baseOp({
-          seq: 6, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/ci" },
+          seq: 6, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/ci" },
           from: { retired: false }, to: { name: "ci·old-EX" },
         }),
         before: { retired: false },
@@ -1320,13 +1325,13 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
         expect((err as RollbackRefused).message).toContain("neither the plan nor the journal");
       }
       expect(be.mutationCalls).toEqual([]);
-      expect(be.labels.get("l-t")!.name).toBe("ci·old-EX");
+      expect(be.labels.get("11111111-1111-4111-8111-111111111010")!.name).toBe("ci·old-EX");
     });
 
     test("an unreadable target is drift under --check and refused before any write under --apply", async () => {
       const be = freshBackend();
       const j = seedRename(be, "ci·old-EX");
-      be.labels.delete("l-t");
+      be.labels.delete("11111111-1111-4111-8111-111111111010");
       const chk = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), check: true });
       expect(chk.drifted).toHaveLength(1);
       expect(chk.drifted[0]).toContain("unreadable");
@@ -1344,10 +1349,10 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
 
     test("--apply reads every target first: an unreadable second-processed target means zero writes", async () => {
       const be = freshBackend();
-      be.labels.set("l-a", { id: "l-a", name: "a·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      be.labels.set("11111111-1111-4111-8111-11111111110a", { id: "11111111-1111-4111-8111-11111111110a", name: "a·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
       const j = join(dir, "two.jsonl");
       // seq 2 is processed first (reverse order); seq 1's label does not exist
-      for (const [seq, id, name] of [[1, "l-gone", "g"], [2, "l-a", "a"]] as const) {
+      for (const [seq, id, name] of [[1, "11111111-1111-4111-8111-111111111060", "g"], [2, "11111111-1111-4111-8111-11111111110a", "a"]] as const) {
         journalAppend(j, {
           seq, phase: 1, op: "rename-label", at: "t", ok: true,
           original: baseOp({
@@ -1367,7 +1372,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       expect(err).toBeInstanceOf(RollbackRefused);
       expect((err as RollbackRefused).message).toContain("seq 1");
       expect(be.mutationCalls).toEqual([]);
-      expect(be.labels.get("l-a")!.name).toBe("a·old-EX");
+      expect(be.labels.get("11111111-1111-4111-8111-11111111110a")!.name).toBe("a·old-EX");
     });
 
     test("--check on a clean journal reports no drift", async () => {
@@ -1381,7 +1386,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
 
   test("the fake enforces cross-scope uniqueness like Linear (create fails on any copy)", async () => {
     const be = freshBackend();
-    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     await expect(applyPlan(be, [baseOp({
       op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
       from: { labelId: null }, to: { name: "bug" },
@@ -1390,7 +1395,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
 
   test("--check flags the name conflict as drift; a planned rename clears it", async () => {
     const be = freshBackend();
-    be.labels.set("l-t", { id: "l-t", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "bug", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     const create = baseOp({
       seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
       from: { labelId: null }, to: { name: "bug" },
@@ -1402,7 +1407,7 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
     expect(conflicted.drifted).toContain(2);
 
     const rename = baseOp({
-      seq: 1, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      seq: 1, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/bug" },
       from: { name: "bug" }, to: { name: "bug·old-EX" },
     });
     const cleared = await runPlan(fakeClient(be), planWith([rename, create]), {
@@ -1416,8 +1421,8 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
 describe("round-1 review test pins", () => {
   test("labelRef prefers the journal-created id over a live same-name label", async () => {
     const be = freshBackend();
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
-    be.labels.set("l-live", { id: "l-live", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
+    be.labels.set("11111111-1111-4111-8111-1111111110e2", { id: "11111111-1111-4111-8111-1111111110e2", name: "bug", retiredAt: null, teamId: null, teamKey: null });
     const j = join(dir, "j.jsonl");
     // a create landed earlier in THIS plan (journal carries the created id)
     journalAppend(j, {
@@ -1425,22 +1430,22 @@ describe("round-1 review test pins", () => {
       original: baseOp({
         seq: 1, op: "create-workspace-label",
         target: { type: "label", id: "new:bug", identifier: "bug" },
-        from: { labelId: null }, to: { name: "bug", labelId: "l-journaled" },
+        from: { labelId: null }, to: { name: "bug", labelId: "11111111-1111-4111-8111-1111111110e1" },
       }),
     });
     const result = await applyPlan(be, [baseOp({
-      seq: 2, op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:bug"], remove: [] },
+      seq: 2, op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["name:bug"], remove: [] },
     })], j);
     expect(result.applied).toBe(1);
-    expect(be.issues.get("i-1")!.labelIds).toContain("l-journaled");
-    expect(be.issues.get("i-1")!.labelIds).not.toContain("l-live");
+    expect(be.issues.get("i-1")!.labelIds).toContain("11111111-1111-4111-8111-1111111110e1");
+    expect(be.issues.get("i-1")!.labelIds).not.toContain("11111111-1111-4111-8111-1111111110e2");
   });
 
   test("rename-label drift anchor: refuses when the live name differs from from.name", async () => {
     const be = freshBackend();
-    be.labels.set("l-t", { id: "l-t", name: "renamed-elsewhere", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111010", { id: "11111111-1111-4111-8111-111111111010", name: "renamed-elsewhere", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     await expect(applyPlan(be, [baseOp({
-      op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/bug" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111010", identifier: "EX/bug" },
       from: { name: "bug" }, to: { name: "bug·old-EX" },
     })], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
     expect(be.mutationCalls).toEqual([]);
@@ -1477,16 +1482,16 @@ describe("round-1 review test pins", () => {
 });
 
 describe("inherited labels (CER-2353)", () => {
-  const OWNER = { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" };
-  const CHILD = { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" };
+  const OWNER = { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" };
+  const CHILD = { id: "11111111-1111-4111-8111-111111111002", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" };
 
   test("fake models Linear: a write to an inherited label is refused (guard first, API as backstop)", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
     // a direct executor path (drift passes: name matches) — the API refusal is the backstop
     const op = baseOp({
-      op: "rename-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111002", identifier: "SUB/security" },
       from: { name: "security" }, to: { name: "security·old-SUB" },
     });
     await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label/i);
@@ -1495,10 +1500,10 @@ describe("inherited labels (CER-2353)", () => {
 
   test("apply refuses an inherited target BEFORE any write (executor guard)", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
     const op = baseOp({
-      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      op: "retire-or-delete-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111002", identifier: "SUB/security" },
       from: { retired: false }, to: { retired: true },
     });
     await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label.*target the owner/s);
@@ -1507,10 +1512,10 @@ describe("inherited labels (CER-2353)", () => {
 
   test("--check flags an inherited target as drift", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
     const op = baseOp({
-      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      op: "retire-or-delete-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111002", identifier: "SUB/security" },
       from: { retired: false }, to: { retired: true },
     });
     const result = await runPlan(fakeClient(be), planWith([op]), {
@@ -1523,29 +1528,29 @@ describe("inherited labels (CER-2353)", () => {
 
   test("parent rename propagates to the child's reflected name", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
     await applyPlan(be, [baseOp({
-      op: "rename-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "EX/security" },
       from: { name: "security" }, to: { name: "security·old-EX" },
     })], join(dir, "j.jsonl"));
     // child reads now reflect the parent's new name (Linear propagation)
-    expect(labelName(be, be.labels.get("l-child")!)).toBe("security·old-EX");
+    expect(labelName(be, be.labels.get("11111111-1111-4111-8111-111111111002")!)).toBe("security·old-EX");
   });
   test("relabel removes the CHILD id from a sub-team issue and adds the workspace label", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
-    be.labels.set("l-ws", { id: "l-ws", name: "security", retiredAt: null, teamId: null, teamKey: null });
-    be.issues.set("i-sub", { ...ISSUE_1, id: "i-sub", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", labelIds: ["l-child"] });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-1111111110c5", { id: "11111111-1111-4111-8111-1111111110c5", name: "security", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-sub", { ...ISSUE_1, id: "i-sub", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", labelIds: ["11111111-1111-4111-8111-111111111002"] });
     const op = baseOp({
       op: "relabel", target: { type: "issue", id: "i-sub", identifier: "SUB-1" },
-      from: { labelIds: ["l-child"] }, to: { add: ["l-ws"], remove: ["l-child"] },
+      from: { labelIds: ["11111111-1111-4111-8111-111111111002"] }, to: { add: ["11111111-1111-4111-8111-1111111110c5"], remove: ["11111111-1111-4111-8111-111111111002"] },
     });
     const j = join(dir, "j.jsonl");
     const result = await applyPlan(be, [op], j);
     expect(result.applied).toBe(1);
-    expect(be.issues.get("i-sub")!.labelIds).toEqual(["l-ws"]);
+    expect(be.issues.get("i-sub")!.labelIds).toEqual(["11111111-1111-4111-8111-1111111110c5"]);
     // the written-labels guard let a child-id REMOVE through (only adds are refused)
     expect(be.mutationCalls).toEqual(["issueUpdate"]);
     const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
@@ -1554,25 +1559,25 @@ describe("inherited labels (CER-2353)", () => {
 
   test("retiring an owner hides its inherited views (child reads retired)", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { ...OWNER });
-    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { ...OWNER });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { ...CHILD });
     await applyPlan(be, [baseOp({
-      op: "retire-or-delete-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      op: "retire-or-delete-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "EX/security" },
       from: { retired: false }, to: { retired: true },
     })], join(dir, "j.jsonl"));
-    expect(labelRetired(be, be.labels.get("l-child")!)).not.toBeNull();
+    expect(labelRetired(be, be.labels.get("11111111-1111-4111-8111-111111111002")!)).not.toBeNull();
   });
 });
 
 describe("from-completeness invariant", () => {
   test("fails when a to-changed field has no from counterpart (rename-label without from.name)", () => {
     const bad = baseOp({
-      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111101", identifier: "EX/x" },
       from: { retired: false }, to: { name: "y" }, // from.name missing
     });
     expect(() => assertFromAnchors([bad])).toThrow(/from is missing name/);
     const good = baseOp({
-      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111101", identifier: "EX/x" },
       from: { retired: false, name: "x", inheritedFromId: null }, to: { name: "y" },
     });
     expect(() => assertFromAnchors([good])).not.toThrow();
@@ -1589,8 +1594,8 @@ describe("census capture (CER-2353 round 1)", () => {
         return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
       if (query.includes("ReorgCensusLabels"))
         return { data: { issueLabels: page([
-          { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
-          { id: "l-child", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, inheritedFrom: { id: "l-owner" } },
+          { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
+          { id: "11111111-1111-4111-8111-111111111002", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, inheritedFrom: { id: "11111111-1111-4111-8111-111111111001" } },
         ]) } };
       if (query.includes("ReorgCensusIssues")) return { data: { issues: page([]) } };
       if (query.includes("ReorgCensusProjects")) return { data: { projects: page([]) } };
@@ -1605,8 +1610,8 @@ describe("census capture (CER-2353 round 1)", () => {
     const seen: string[] = [];
     const d = await census(censusStub(seen), {}, fastPace());
     expect(d.teams[0].parent).toEqual({ id: "t-parent", key: "PAR" });
-    const child = d.teamLabels.find((l) => l.id === "l-child");
-    expect(child?.inheritedFromId).toBe("l-owner");
+    const child = d.teamLabels.find((l) => l.id === "11111111-1111-4111-8111-111111111002");
+    expect(child?.inheritedFromId).toBe("11111111-1111-4111-8111-111111111001");
     // the QUERY TEXT asks for the fields (a dropped selection would pass silently)
     expect(seen.find((q) => q.includes("ReorgCensusTeams"))).toContain("parent { id key }");
     expect(seen.find((q) => q.includes("ReorgCensusLabels"))).toContain("inheritedFrom { id }");
@@ -1616,16 +1621,16 @@ describe("census capture (CER-2353 round 1)", () => {
     // EX has the inherited child; its owner sits in PAR (outside the filter)
     const d = await census(censusStub([]), { teamKeys: ["EX"] }, fastPace());
     const ids = d.teamLabels.map((l) => l.id).sort();
-    expect(ids).toEqual(["l-child", "l-owner"]);
+    expect(ids).toEqual(["11111111-1111-4111-8111-111111111002", "11111111-1111-4111-8111-111111111001"].sort());
   });
 });
 
 describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
   test("a name: ref in to.add does NOT trip the inherited-write guard in --check", async () => {
     const be = freshBackend();
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     const result = await runPlan(fakeClient(be), planWith([baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:security"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["name:security"], remove: [] },
     })]), {
       check: true, apply: false, resume: false, allowIrreversible: false,
       journalPath: join(dir, "j.jsonl"), pace: fastPace(),
@@ -1636,12 +1641,12 @@ describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
 
   test("create preflight excludes inherited children of renamed owners (rename propagates)", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     // the inherited views still hold the name until the owner rename propagates
-    be.labels.set("l-ch-1", { id: "l-ch-1", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
-    be.labels.set("l-ch-2", { id: "l-ch-2", name: "security", retiredAt: null, teamId: "t-sub2", teamKey: "SB2", inheritedFrom: "l-owner" });
+    be.labels.set("11111111-1111-4111-8111-1111111110c1", { id: "11111111-1111-4111-8111-1111111110c1", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
+    be.labels.set("11111111-1111-4111-8111-1111111110c2", { id: "11111111-1111-4111-8111-1111111110c2", name: "security", retiredAt: null, teamId: "t-sub2", teamKey: "SB2", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
     const rename = baseOp({
-      seq: 1, op: "rename-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      seq: 1, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-111111111001", identifier: "EX/security" },
       from: { name: "security", retired: false }, to: { name: "security·old-EX" },
     });
     const create = baseOp({
@@ -1654,27 +1659,42 @@ describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
     });
     expect(result.drifted).toEqual([]); // children of the renamed owner are not conflicts
   });
+
+  test("negative: an owner NOT renamed in the plan leaves its child flagging the create", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-1111111110c1", { id: "11111111-1111-4111-8111-1111111110c1", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toContain(2); // no rename planned → the child still holds the name
+  });
 });
 
 describe("written-label guard + team-aware child mapping (round 1)", () => {
   test("relabel ADDING an inherited child id is refused before the write", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
-    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { id: "11111111-1111-4111-8111-111111111002", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     await expect(applyPlan(be, [baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-111111111002"], remove: [] },
     })], join(dir, "j.jsonl"))).rejects.toThrow(/write inherited label/);
     expect(be.mutationCalls).toEqual([]);
   });
 
   test("--check reports an add of an inherited child id as drift (no write)", async () => {
     const be = freshBackend();
-    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
-    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
-    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("11111111-1111-4111-8111-111111111002", { id: "11111111-1111-4111-8111-111111111002", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-11111111110a"] });
     const result = await runPlan(fakeClient(be), planWith([baseOp({
-      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+      op: "relabel", from: { labelIds: ["11111111-1111-4111-8111-11111111110a"] }, to: { add: ["11111111-1111-4111-8111-111111111002"], remove: [] },
     })]), {
       check: true, apply: false, resume: false, allowIrreversible: false,
       journalPath: join(dir, "j.jsonl"), pace: fastPace(),
