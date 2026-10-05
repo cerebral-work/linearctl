@@ -9,6 +9,7 @@ import {
   RollbackRefused,
   TokenBucket,
   assertFreshBackup,
+  assertFromAnchors,
   assertMovePreconditions,
   estimateRequests,
   journalAppend,
@@ -45,6 +46,13 @@ interface FakeLabel { id: string; name: string; retiredAt: string | null; teamId
 /** Inherited labels mirror the owner's name (Linear propagates a parent rename). */
 function labelName(be: FakeBackend, l: FakeLabel): string {
   return l.inheritedFrom ? (be.labels.get(l.inheritedFrom)?.name ?? l.name) : l.name;
+}
+
+/** …and its retirement (retiring an owner hides its inherited views too). */
+function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
+  if (l.retiredAt) return l.retiredAt;
+  if (l.inheritedFrom) return be.labels.get(l.inheritedFrom)?.retiredAt ?? null;
+  return null;
 }
 interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
@@ -106,7 +114,7 @@ function fakeClient(be: FakeBackend): LinearClient {
       return ok({
         issueLabel: l
           ? {
-              id: l.id, name: labelName(be, l), retiredAt: l.retiredAt,
+              id: l.id, name: labelName(be, l), retiredAt: labelRetired(be, l),
               team: l.teamId ? { id: l.teamId, key: l.teamKey } : null,
               inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null,
             }
@@ -1521,6 +1529,49 @@ describe("inherited labels (CER-2353)", () => {
     })], join(dir, "j.jsonl"));
     // child reads now reflect the parent's new name (Linear propagation)
     expect(labelName(be, be.labels.get("l-child")!)).toBe("security·old-EX");
+  });
+  test("relabel removes the CHILD id from a sub-team issue and adds the workspace label", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("l-ws", { id: "l-ws", name: "security", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-sub", { ...ISSUE_1, id: "i-sub", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", labelIds: ["l-child"] });
+    const op = baseOp({
+      op: "relabel", target: { type: "issue", id: "i-sub", identifier: "SUB-1" },
+      from: { labelIds: ["l-child"] }, to: { add: ["l-ws"], remove: ["l-child"] },
+    });
+    const j = join(dir, "j.jsonl");
+    const result = await applyPlan(be, [op], j);
+    expect(result.applied).toBe(1);
+    expect(be.issues.get("i-sub")!.labelIds).toEqual(["l-ws"]);
+    const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(true);
+  });
+
+  test("retiring an owner hides its inherited views (child reads retired)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    await applyPlan(be, [baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      from: { retired: false }, to: { retired: true },
+    })], join(dir, "j.jsonl"));
+    expect(labelRetired(be, be.labels.get("l-child")!)).not.toBeNull();
+  });
+});
+
+describe("from-completeness invariant", () => {
+  test("fails when a to-changed field has no from counterpart (rename-label without from.name)", () => {
+    const bad = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      from: { retired: false }, to: { name: "y" }, // from.name missing
+    });
+    expect(() => assertFromAnchors([bad])).toThrow(/from is missing name/);
+    const good = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      from: { retired: false, name: "x", inheritedFromId: null }, to: { name: "y" },
+    });
+    expect(() => assertFromAnchors([good])).not.toThrow();
   });
 });
 

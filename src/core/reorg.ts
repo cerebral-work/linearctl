@@ -406,6 +406,7 @@ interface ReorgInitiativeNode {
   id: string;
   name: string;
   archivedAt?: string | null;
+  owner?: { id: string } | null;
 }
 
 interface ReorgTeamNode {
@@ -2087,7 +2088,7 @@ const CENSUS_PROJECTS_Q = /* GraphQL */ `
 const CENSUS_INITIATIVES_Q = /* GraphQL */ `
   query ReorgCensusInitiatives($first: Int!, $after: String) {
     initiatives(first: $first, after: $after, includeArchived: true) {
-      nodes { id name archivedAt }
+      nodes { id name archivedAt owner { id } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -2220,6 +2221,44 @@ export interface ReorgRule {
 }
 
 /**
+ * from-completeness invariant: every field an op's `to` changes must have a
+ * census anchor in `from` (a rollback recovering a name from the journal is
+ * the failure this prevents). Throws on the first incomplete op.
+ */
+export function assertFromAnchors(ops: ReorgOp[]): void {
+  const REQUIRED_FROM: Record<string, string[]> = {
+    "create-workspace-label": ["labelId"],
+    "relabel": ["labelIds"],
+    "rename-label": ["name", "retired"],
+    "retire-or-delete-label": ["retired"],
+    "set-state": ["stateId"],
+    "enable-triage": ["triageEnabled"],
+    "archive-state": ["archived"],
+    "set-project-status": ["statusId"],
+    "set-project-lead": ["leadId"],
+    "set-project-target": ["targetDate"],
+    "add-project-team": ["teamIds"],
+    "remove-project-team": ["teamIds"],
+    "move-project-initiative": ["initiativeIds"],
+    "set-initiative-owner": ["ownerId"],
+    "archive-issue": ["archived"],
+    "archive-project": ["trashed"],
+    "archive-initiative": ["archived"],
+    "move-issue-team": ["teamId", "stateId", "labelIds", "projectId", "cycleId"],
+    "create-project-status": ["statusId"],
+    "delete-team": [],
+  };
+  for (const op of ops) {
+    const missing = (REQUIRED_FROM[op.op] ?? []).filter((k) => !(k in op.from));
+    if (missing.length)
+      throw new Error(
+        `plan op seq ${op.seq} [${op.op}] ${op.target.identifier}: from is missing ${missing.join(", ")} ` +
+          `(every changed field needs a census anchor)`,
+      );
+  }
+}
+
+/**
  * Turn declarative rules + a census snapshot into concrete ops. `from` is
  * captured from the census here — that capture is what makes the executor
  * drift-safe. A rule that matches nothing is an error (a typo, not a no-op).
@@ -2317,6 +2356,8 @@ export function planFromRules(
         );
     }
   }
+  assertFromAnchors(ops);
+
   // relabel child mapping: a sub-team issue carries the CHILD id of an owner
   // label — removing the owner means removing the child the issue carries.
   const issueById = new Map(censusData.issues.map((i) => [i.id, i] as const));
@@ -2439,7 +2480,7 @@ function selectTargets(
         if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: l.issueCount })) continue;
         out.push({
           target: { type: "label", id: l.id, identifier: l.name },
-          from: { retired: l.retiredAt != null },
+          from: { retired: l.retiredAt != null, name: l.name, inheritedFromId: l.inheritedFromId },
         });
       }
       return out;
@@ -2461,7 +2502,8 @@ function selectTargets(
         if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: effectiveCount })) continue;
         out.push({
           target: { type: "label", id: l.id, identifier: `${l.teamKey}/${l.name}` },
-          from: { retired: l.retiredAt != null },
+          // name is the rename drift anchor; inheritedFromId proves ownership
+          from: { retired: l.retiredAt != null, name: l.name, inheritedFromId: l.inheritedFromId },
         });
       }
       return out;
@@ -2490,6 +2532,7 @@ function selectTargets(
             statusId: p.status?.id ?? null,
             leadId: p.lead?.id ?? null,
             targetDate: p.targetDate ?? null,
+            trashed: p.trashed === true,
             teamIds: (p.teams?.nodes ?? []).map((x) => x.id).sort(),
             initiativeIds: (p.initiatives?.nodes ?? []).map((x) => x.id).sort(),
           },
@@ -2509,7 +2552,7 @@ function selectTargets(
         if (!hit({ id: it.id, name: it.name, archived: it.archivedAt != null })) continue;
         out.push({
           target: { type: "initiative", id: it.id, identifier: it.name },
-          from: { archived: it.archivedAt != null },
+          from: { archived: it.archivedAt != null, ownerId: it.owner?.id ?? null },
         });
       }
       if (out.length > 1 && typeof where.name === "string" && !where.id)
