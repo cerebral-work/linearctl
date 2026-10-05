@@ -9,7 +9,9 @@ import {
   RollbackRefused,
   TokenBucket,
   assertFreshBackup,
+  assertFromAnchors,
   assertMovePreconditions,
+  census,
   estimateRequests,
   journalAppend,
   journalOkSeqs,
@@ -40,7 +42,19 @@ interface FakeIssue {
   teamKey: string;
   archived: boolean;
 }
-interface FakeLabel { id: string; name: string; retiredAt: string | null; teamId: string | null; teamKey: string | null }
+interface FakeLabel { id: string; name: string; retiredAt: string | null; teamId: string | null; teamKey: string | null; inheritedFrom?: string | null }
+
+/** Inherited labels mirror the owner's name (Linear propagates a parent rename). */
+function labelName(be: FakeBackend, l: FakeLabel): string {
+  return l.inheritedFrom ? (be.labels.get(l.inheritedFrom)?.name ?? l.name) : l.name;
+}
+
+/** …and its retirement (retiring an owner hides its inherited views too). */
+function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
+  if (l.retiredAt) return l.retiredAt;
+  if (l.inheritedFrom) return be.labels.get(l.inheritedFrom)?.retiredAt ?? null;
+  return null;
+}
 interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
@@ -98,7 +112,15 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelState")) {
       be.readCalls++;
       const l = be.labels.get(vars.id as string);
-      return ok({ issueLabel: l ? { id: l.id, name: l.name, retiredAt: l.retiredAt, team: l.teamId ? { id: l.teamId, key: l.teamKey } : null } : null });
+      return ok({
+        issueLabel: l
+          ? {
+              id: l.id, name: labelName(be, l), retiredAt: labelRetired(be, l),
+              team: l.teamId ? { id: l.teamId, key: l.teamKey } : null,
+              inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null,
+            }
+          : null,
+      });
     }
     if (query.includes("ReorgStateState")) {
       be.readCalls++;
@@ -146,8 +168,8 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgLabelsByNameAllScopes")) {
       be.readCalls++;
-      const nodes = [...be.labels.values()].filter((l) => l.name === vars.name);
-      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: l.name, team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
+      const nodes = [...be.labels.values()].filter((l) => labelName(be, l) === vars.name);
+      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
     }
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
@@ -155,7 +177,8 @@ function fakeClient(be: FakeBackend): LinearClient {
       return ok({
         issueLabels: {
           nodes: ids.map((id) => be.labels.get(id)).filter(Boolean).map((l) => ({
-            id: l!.id, name: l!.name, team: l!.teamId ? { id: l!.teamId, key: l!.teamKey } : null,
+            id: l!.id, name: labelName(be, l!), team: l!.teamId ? { id: l!.teamId, key: l!.teamKey } : null,
+            inheritedFrom: l!.inheritedFrom ? { id: l!.inheritedFrom } : null,
           })),
         },
       });
@@ -245,7 +268,7 @@ function fakeClient(be: FakeBackend): LinearClient {
       return W("issueLabelCreate", () => {
         const input = vars.input as { name: string; description?: string };
         // Linear enforces label-name uniqueness ACROSS workspace + team scope
-        if ([...be.labels.values()].some((l) => l.name === input.name))
+        if ([...be.labels.values()].some((l) => labelName(be, l) === input.name))
           throw new Error(`Duplicate label name - Label "${input.name}" already exists`);
         const id = `l-new-${++be.createdLabelSeq}`;
         be.labels.set(id, { id, name: input.name, retiredAt: null, teamId: null, teamKey: null });
@@ -253,6 +276,9 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelUpdate"))
       return W("issueLabelUpdate", () => {
         const l = be.labels.get(vars.id as string)!;
+        // Linear refuses writes on inherited (sub-team) labels outright
+        if (l.inheritedFrom)
+          throw new Error("Cannot update inherited labels, please update the parent label instead.");
         const input = vars.input as { retiredAt?: string | null; name?: string };
         if ("retiredAt" in input) l.retiredAt = input.retiredAt ?? null;
         if (typeof input.name === "string") l.name = input.name;
@@ -1447,6 +1473,178 @@ describe("round-1 review test pins", () => {
       op: "set-initiative-owner", target: { type: "initiative", id: "in-1", identifier: "I" },
       from: { ownerId: null }, to: { ownerId: "u-9" },
     })], join(dir, "j.jsonl"))).rejects.toBeInstanceOf(ReorgMismatch);
+  });
+});
+
+describe("inherited labels (CER-2353)", () => {
+  const OWNER = { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" };
+  const CHILD = { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" };
+
+  test("fake models Linear: a write to an inherited label is refused (guard first, API as backstop)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    // a direct executor path (drift passes: name matches) — the API refusal is the backstop
+    const op = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { name: "security" }, to: { name: "security·old-SUB" },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label/i);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("apply refuses an inherited target BEFORE any write (executor guard)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    const op = baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { retired: false }, to: { retired: true },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/inherited label.*target the owner/s);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check flags an inherited target as drift", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    const op = baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-child", identifier: "SUB/security" },
+      from: { retired: false }, to: { retired: true },
+    });
+    const result = await runPlan(fakeClient(be), planWith([op]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toEqual([1]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("parent rename propagates to the child's reflected name", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    await applyPlan(be, [baseOp({
+      op: "rename-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      from: { name: "security" }, to: { name: "security·old-EX" },
+    })], join(dir, "j.jsonl"));
+    // child reads now reflect the parent's new name (Linear propagation)
+    expect(labelName(be, be.labels.get("l-child")!)).toBe("security·old-EX");
+  });
+  test("relabel removes the CHILD id from a sub-team issue and adds the workspace label", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    be.labels.set("l-ws", { id: "l-ws", name: "security", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-sub", { ...ISSUE_1, id: "i-sub", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", labelIds: ["l-child"] });
+    const op = baseOp({
+      op: "relabel", target: { type: "issue", id: "i-sub", identifier: "SUB-1" },
+      from: { labelIds: ["l-child"] }, to: { add: ["l-ws"], remove: ["l-child"] },
+    });
+    const j = join(dir, "j.jsonl");
+    const result = await applyPlan(be, [op], j);
+    expect(result.applied).toBe(1);
+    expect(be.issues.get("i-sub")!.labelIds).toEqual(["l-ws"]);
+    // the written-labels guard let a child-id REMOVE through (only adds are refused)
+    expect(be.mutationCalls).toEqual(["issueUpdate"]);
+    const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(true);
+  });
+
+  test("retiring an owner hides its inherited views (child reads retired)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { ...OWNER });
+    be.labels.set("l-child", { ...CHILD });
+    await applyPlan(be, [baseOp({
+      op: "retire-or-delete-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      from: { retired: false }, to: { retired: true },
+    })], join(dir, "j.jsonl"));
+    expect(labelRetired(be, be.labels.get("l-child")!)).not.toBeNull();
+  });
+});
+
+describe("from-completeness invariant", () => {
+  test("fails when a to-changed field has no from counterpart (rename-label without from.name)", () => {
+    const bad = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      from: { retired: false }, to: { name: "y" }, // from.name missing
+    });
+    expect(() => assertFromAnchors([bad])).toThrow(/from is missing name/);
+    const good = baseOp({
+      op: "rename-label", target: { type: "label", id: "l-1", identifier: "EX/x" },
+      from: { retired: false, name: "x", inheritedFromId: null }, to: { name: "y" },
+    });
+    expect(() => assertFromAnchors([good])).not.toThrow();
+  });
+});
+
+describe("census capture (CER-2353 round 1)", () => {
+  /** Minimal census stub: one page per connection, canned rows. Records queries. */
+  function censusStub(seen: string[]): LinearClient {
+    const rawRequest = async (query: string) => {
+      seen.push(query);
+      const page = (nodes: unknown[]) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: null } });
+      if (query.includes("ReorgCensusTeams"))
+        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
+      if (query.includes("ReorgCensusLabels"))
+        return { data: { issueLabels: page([
+          { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
+          { id: "l-child", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, inheritedFrom: { id: "l-owner" } },
+        ]) } };
+      if (query.includes("ReorgCensusIssues")) return { data: { issues: page([]) } };
+      if (query.includes("ReorgCensusProjects")) return { data: { projects: page([]) } };
+      if (query.includes("ReorgCensusInitiatives")) return { data: { initiatives: page([]) } };
+      if (query.includes("ReorgOrg")) return { data: { organization: { id: "w", urlKey: "toy" } } };
+      throw new Error("unhandled " + query.slice(0, 60));
+    };
+    return { client: { rawRequest } } as unknown as LinearClient;
+  }
+
+  test("captures inheritedFrom on labels and parent on teams", async () => {
+    const seen: string[] = [];
+    const d = await census(censusStub(seen), {}, fastPace());
+    expect(d.teams[0].parent).toEqual({ id: "t-parent", key: "PAR" });
+    const child = d.teamLabels.find((l) => l.id === "l-child");
+    expect(child?.inheritedFromId).toBe("l-owner");
+    // the QUERY TEXT asks for the fields (a dropped selection would pass silently)
+    expect(seen.find((q) => q.includes("ReorgCensusTeams"))).toContain("parent { id key }");
+    expect(seen.find((q) => q.includes("ReorgCensusLabels"))).toContain("inheritedFrom { id }");
+  });
+
+  test("--team scope still includes the owners of in-scope inherited labels", async () => {
+    // EX has the inherited child; its owner sits in PAR (outside the filter)
+    const d = await census(censusStub([]), { teamKeys: ["EX"] }, fastPace());
+    const ids = d.teamLabels.map((l) => l.id).sort();
+    expect(ids).toEqual(["l-child", "l-owner"]);
+  });
+});
+
+describe("written-label guard + team-aware child mapping (round 1)", () => {
+  test("relabel ADDING an inherited child id is refused before the write", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    await expect(applyPlan(be, [baseOp({
+      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+    })], join(dir, "j.jsonl"))).rejects.toThrow(/write inherited label/);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check reports an add of an inherited child id as drift (no write)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    const result = await runPlan(fakeClient(be), planWith([baseOp({
+      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+    })]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toEqual([1]);
+    expect(be.mutationCalls).toEqual([]);
   });
 });
 

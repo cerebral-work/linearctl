@@ -111,6 +111,14 @@ Notes per kind:
   `--check` preflights every create against ALL scopes (accounting for planned
   renames) and reports a conflict as drift, instead of letting Linear reject
   it mid-apply.
+- **Inherited labels** (sub-team copies mirroring an owner team's label) are
+  read-only — Linear refuses writes on them. The census captures
+  `inheritedFrom` (+ `team.parent`); the planner groups by owner
+  (`inheritedFrom ?? id`, usage summed over children), selects owners only,
+  and refuses at plan time any rule naming an inherited label id. `apply` and
+  `--check` refuse an inherited target live. In a relabel, an owner id in
+  `to.remove` maps to the child id each issue actually carries, and a
+  `labelId` selector matches issues carrying any child of the owner.
 - `archive-state` is **never** reversible (Linear has no unarchive): the
   planner coerces it to `reversible:false` and requires an approval id;
   `reversible:false` is allowed in phase 2 (states) or 6 (deletes) only.

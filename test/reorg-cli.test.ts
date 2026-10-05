@@ -33,8 +33,8 @@ const TOY_CENSUS: CensusData = {
       cycleId: null, archived: false,
     },
   ],
-  workspaceLabels: [{ id: "l-ws-bug", name: "bug", retiredAt: null, team: null, teamKey: null, issueCount: 0 }],
-  teamLabels: [{ id: "l-team-bug", name: "bug", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 1 }],
+  workspaceLabels: [{ id: "l-ws-bug", name: "bug", retiredAt: null, team: null, teamKey: null, issueCount: 0, inheritedFromId: null }],
+  teamLabels: [{ id: "l-team-bug", name: "bug", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 1, inheritedFromId: null }],
   projects: [
     {
       id: "p-1", name: "Toy Project", trashed: false,
@@ -360,6 +360,163 @@ describe("phase-1 ordering (rename → create → relabel → retire)", () => {
       "retire-or-delete-label",
     ]);
     expect(plan.ops.map((o) => o.seq)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("inherited labels — planner (CER-2353)", () => {
+  const INH_CENSUS = {
+    ...TOY_CENSUS,
+    teamLabels: [
+      ...TOY_CENSUS.teamLabels,
+      { id: "l-owner-sec", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 0, inheritedFromId: null },
+      { id: "l-child-sec", name: "security", retiredAt: null, team: { id: "t-sub", key: "SUB" }, teamKey: "SUB", issueCount: 7, inheritedFromId: "l-owner-sec" },
+    ],
+  };
+
+  test("a rule targeting an inherited label id is refused at plan time", () => {
+    expect(() =>
+      planFromRules(
+        [rule({
+          op: "retire-or-delete-label",
+          match: { entity: "team-label", where: { id: "l-child-sec" } },
+          to: { retired: true }, evidence: "bad rule",
+        })],
+        INH_CENSUS, META,
+      ),
+    ).toThrow(/inherited label.*target the owner/s);
+  });
+
+  test("team-label selection: owners only; owner usage sums its children", () => {
+    // zero-own-issues owner with child usage must NOT match an issueCount:0 rule
+    // (zero matches = the planner's standard "matched nothing" refusal)
+    expect(() =>
+      planFromRules(
+        [rule({
+          op: "retire-or-delete-label",
+          match: { entity: "team-label", teamKey: "EX", where: { name: "security", issueCount: 0 } },
+          to: { retired: true }, evidence: "zero-issue rule",
+        })],
+        INH_CENSUS, META,
+      ),
+    ).toThrow("matched nothing");
+    const usedRule = planFromRules(
+      [rule({
+        op: "retire-or-delete-label",
+        match: { entity: "team-label", where: { name: "security", issueCount: 7 } },
+        to: { retired: true }, evidence: "usage rule",
+      })],
+      INH_CENSUS, META,
+    );
+    // the owner matches (effective 7); the inherited child never matches
+    expect(usedRule.ops.map((o) => o.target.id)).toEqual(["l-owner-sec"]);
+  });
+
+  test("relabel: removing an owner id maps to the child id the issue carries", () => {
+    const census = {
+      ...INH_CENSUS,
+      issues: [
+        { id: "i-sub-1", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", stateId: "s-todo", labelIds: ["l-child-sec"], projectId: null, cycleId: null, archived: false },
+      ],
+    };
+    const plan = planFromRules(
+      [rule({
+        op: "relabel",
+        match: { entity: "issue", where: { labelId: "l-owner-sec" } },
+        to: { add: ["l-ws-bug"], remove: ["l-owner-sec"] }, evidence: "swap owner for ws",
+      })],
+      census, META,
+    );
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].to.remove).toEqual(["l-child-sec"]); // the child id, not the owner
+  });
+});
+
+describe("planner invariants (round 1)", () => {
+  test("an unknown op kind is an ERROR, never silently accepted", () => {
+    expect(() =>
+      planFromRules(
+        [rule({ op: "future-op" as never, match: { entity: "issue", where: { identifier: "EX-1" } }, to: {} })],
+        TOY_CENSUS, META,
+      ),
+    ).toThrow(/unknown op kind "future-op"/);
+  });
+
+  test("create-project-status via the none entity anchors from.statusId (invariant passes)", () => {
+    const plan = planFromRules(
+      [rule({ op: "create-project-status", match: { entity: "none", where: {} }, to: { name: "Paused", type: "paused" } })],
+      TOY_CENSUS, META,
+    );
+    expect(plan.ops[0].from).toEqual({ statusId: null });
+    expect(plan.ops[0].target.type).toBe("project");
+  });
+
+  test("child mapping prefers the child in the issue's OWN team (second sub-team)", () => {
+    const census = {
+      ...TOY_CENSUS,
+      teamLabels: [
+        ...TOY_CENSUS.teamLabels,
+        { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 0, inheritedFromId: null },
+        { id: "l-child-a", name: "security", retiredAt: null, team: { id: "t-sub-a", key: "SA" }, teamKey: "SA", issueCount: 1, inheritedFromId: "l-owner" },
+        { id: "l-child-b", name: "security", retiredAt: null, team: { id: "t-sub-b", key: "SB" }, teamKey: "SB", issueCount: 1, inheritedFromId: "l-owner" },
+      ],
+      issues: [
+        { id: "i-b1", identifier: "SB-1", teamId: "t-sub-b", teamKey: "SB", stateId: "s-todo", labelIds: ["l-child-b"], projectId: null, cycleId: null, archived: false },
+      ],
+    };
+    const plan = planFromRules(
+      [rule({
+        op: "relabel",
+        match: { entity: "issue", where: { labelId: "l-owner" } },
+        to: { add: ["l-ws-bug"], remove: ["l-owner"] }, evidence: "swap",
+      })],
+      census, META,
+    );
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].to.remove).toEqual(["l-child-b"]); // its own team's child, not the first
+  });
+
+  test("distinguishing: issue carries a DIFFERENT team's child — own-team child wins over the carried one", () => {
+    const census = {
+      ...TOY_CENSUS,
+      teamLabels: [
+        ...TOY_CENSUS.teamLabels,
+        { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 0, inheritedFromId: null },
+        { id: "l-child-a", name: "security", retiredAt: null, team: { id: "t-sub-a", key: "SA" }, teamKey: "SA", issueCount: 1, inheritedFromId: "l-owner" },
+        { id: "l-child-b", name: "security", retiredAt: null, team: { id: "t-sub-b", key: "SB" }, teamKey: "SB", issueCount: 1, inheritedFromId: "l-owner" },
+      ],
+      issues: [
+        // weird but real-shaped: the issue sits in SB yet carries SA's child
+        { id: "i-b1", identifier: "SB-1", teamId: "t-sub-b", teamKey: "SB", stateId: "s-todo", labelIds: ["l-child-a"], projectId: null, cycleId: null, archived: false },
+      ],
+    };
+    const plan = planFromRules(
+      [rule({
+        op: "relabel",
+        match: { entity: "issue", where: { labelId: "l-owner" } },
+        to: { add: ["l-ws-bug"], remove: ["l-owner"] }, evidence: "swap",
+      })],
+      census, META,
+    );
+    // only the own-team lookup yields l-child-b; the carried-fallback yields l-child-a
+    expect(plan.ops[0].to.remove).toEqual(["l-child-b"]);
+  });
+
+  test("a census missing an inherited label's owner refuses loudly", () => {
+    const census = {
+      ...TOY_CENSUS,
+      teamLabels: [
+        { id: "l-orphan", name: "security", retiredAt: null, team: { id: "t-sub", key: "SUB" }, teamKey: "SUB", issueCount: 1, inheritedFromId: "l-absent-owner" },
+      ],
+      issues: [
+        { id: "i-1", identifier: "SUB-1", teamId: "t-sub", teamKey: "SUB", stateId: "s-todo", labelIds: ["l-orphan"], projectId: null, cycleId: null, archived: false },
+      ],
+    };
+    expect(() =>
+      planFromRules(
+        [rule({ op: "relabel", match: { entity: "issue", where: { labelId: "l-absent-owner" } }, to: { add: [], remove: ["l-absent-owner"] } })],
+        census, META,
+      ),
+    ).toThrow(/without its owner/);
   });
 });
 

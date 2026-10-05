@@ -378,6 +378,10 @@ interface ReorgLabelNode {
   name: string;
   retiredAt?: string | null;
   team?: { id: string; key: string } | null;
+  /** Set on INHERITED labels (sub-team copies mirroring the owner team's
+   *  label). Linear refuses writes on them ("Cannot update inherited labels").
+   *  The owner id to target instead. */
+  inheritedFrom?: { id: string } | null;
 }
 
 interface ReorgStateNode {
@@ -402,6 +406,7 @@ interface ReorgInitiativeNode {
   id: string;
   name: string;
   archivedAt?: string | null;
+  owner?: { id: string } | null;
 }
 
 interface ReorgTeamNode {
@@ -428,7 +433,7 @@ const ISSUE_STATE_Q = /* GraphQL */ `
 
 const LABEL_STATE_Q = /* GraphQL */ `
   query ReorgLabelState($id: String!) {
-    issueLabel(id: $id) { id name retiredAt team { id key } }
+    issueLabel(id: $id) { id name retiredAt team { id key } inheritedFrom { id } }
   }
 `;
 
@@ -552,7 +557,11 @@ async function readLabel(ctx: OpCtx, id: string): Promise<Record<string, unknown
     ctx.client, LABEL_STATE_Q, { id }, ctx.pace,
   );
   if (!d.issueLabel) throw new Error(`label ${id} not found`);
-  return { retired: d.issueLabel.retiredAt != null, name: d.issueLabel.name };
+  return {
+    retired: d.issueLabel.retiredAt != null,
+    name: d.issueLabel.name,
+    inheritedFromId: d.issueLabel.inheritedFrom?.id ?? null,
+  };
 }
 
 async function readState(ctx: OpCtx, id: string): Promise<Record<string, unknown>> {
@@ -1196,6 +1205,30 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
  *  (c) phase 2 verified green (destination state predictable);
  *  (d) the issue's cycleId was captured in op.from (journaled first).
  */
+/**
+ * Refuse when an op WRITES an inherited label id onto an issue (to.add /
+ * to.reapplyLabelIds). Removing a child id from an issue is allowed — the
+ * write ban is on the label object itself and on ADDING inherited labels.
+ */
+export async function assertNoInheritedWrites(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds)];
+  if (written.length === 0) return;
+  const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+    ctx.client,
+    `query ReorgLabelScopes($ids: [ID!]!) {
+      issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } inheritedFrom { id } } }
+    }`,
+    { ids: written },
+    ctx.pace,
+  );
+  for (const l of d.issueLabels.nodes) {
+    if (l.inheritedFrom?.id)
+      throw new Error(
+        `seq ${op.seq} [${op.op}]: would write inherited label "${l.name}" (${l.id}), child of ${l.inheritedFrom.id} — write the owner instead`,
+      );
+  }
+}
+
 export async function assertMovePreconditions(
   ctx: OpCtx,
   op: ReorgOp,
@@ -1220,7 +1253,7 @@ export async function assertMovePreconditions(
     const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
       ctx.client,
       `query ReorgLabelScopes($ids: [ID!]!) {
-        issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } } }
+        issueLabels(filter: { id: { in: $ids } }, first: 250) { nodes { id name team { id key } inheritedFrom { id } } }
       }`,
       { ids: labelIds },
       ctx.pace,
@@ -1355,6 +1388,13 @@ async function executeOne(
     });
 
   // 2. op-specific preconditions (live reads)
+  if (op.target.type === "label" && liveBefore.inheritedFromId)
+    throw new Error(
+      `seq ${op.seq} [${op.op}]: target ${op.target.identifier} is an inherited label ` +
+        `(child of ${String(liveBefore.inheritedFromId)}) — Linear refuses writes on it; target the owner`,
+    );
+  if (op.op === "relabel" || op.op === "move-issue-team")
+    await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
 
   // 3. write
@@ -1460,6 +1500,26 @@ export async function runPlan(
       const def = OP_REGISTRY[op.op];
       try {
         const live = await def.readState(ctx, op);
+        if (op.target.type === "label" && live.inheritedFromId) {
+          drifted.push(op.seq);
+          opts.onEvent?.({
+            kind: "drift",
+            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: inherited label (child of ${String(live.inheritedFromId)}) — target the owner`,
+          });
+          continue;
+        }
+        if (op.op === "relabel" || op.op === "move-issue-team") {
+          try {
+            await assertNoInheritedWrites(ctx, op);
+          } catch (err) {
+            drifted.push(op.seq);
+            opts.onEvent?.({
+              kind: "drift",
+              detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            continue;
+          }
+        }
         const drift = compareState(op.from, live, def.compareKeys);
         if (drift.length) {
           drifted.push(op.seq);
@@ -1948,12 +2008,15 @@ export interface CensusIssue {
 export interface CensusLabel extends ReorgLabelNode {
   teamKey?: string | null;
   issueCount: number;
+  /** Owner label id when this is an inherited (sub-team) copy. */
+  inheritedFromId: string | null;
 }
 
 export interface CensusTeamNode extends ReorgTeamNode {
   name: string;
   archivedAt?: string | null;
   issueCount?: number | null;
+  parent?: { id: string; key: string } | null;
   states?: { nodes: (ReorgStateNode & { position: number })[] } | null;
 }
 
@@ -2039,7 +2102,7 @@ const CENSUS_ISSUES_Q = /* GraphQL */ `
 const CENSUS_LABELS_Q = /* GraphQL */ `
   query ReorgCensusLabels($first: Int!, $after: String) {
     issueLabels(first: $first, after: $after) {
-      nodes { id name retiredAt team { id key } }
+      nodes { id name retiredAt team { id key } inheritedFrom { id } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -2063,7 +2126,7 @@ const CENSUS_PROJECTS_Q = /* GraphQL */ `
 const CENSUS_INITIATIVES_Q = /* GraphQL */ `
   query ReorgCensusInitiatives($first: Int!, $after: String) {
     initiatives(first: $first, after: $after, includeArchived: true) {
-      nodes { id name archivedAt }
+      nodes { id name archivedAt owner { id } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -2074,6 +2137,7 @@ const CENSUS_TEAMS_Q = /* GraphQL */ `
     teams(first: $first, after: $after, includeArchived: true, filter: $filter) {
       nodes {
         id key name triageEnabled archivedAt issueCount
+        parent { id key }
         states { nodes { id name type position archivedAt } }
       }
       pageInfo { hasNextPage endCursor }
@@ -2135,12 +2199,27 @@ export async function census(
     ...l,
     teamKey: l.team?.key ?? null,
     issueCount: countByLabel.get(l.id) ?? 0,
+    inheritedFromId: l.inheritedFrom?.id ?? null,
   }));
   const workspaceLabels = withCounts.filter((l) => l.team == null);
   const teamLabelsAll = withCounts.filter((l) => l.team != null);
-  const teamLabels = opts.teamKeys?.length
+  const scoped = opts.teamKeys?.length
     ? teamLabelsAll.filter((l) => opts.teamKeys!.includes(l.teamKey ?? ""))
     : teamLabelsAll;
+  // Owners of in-scope inherited labels are ALWAYS included, even when the
+  // owner sits outside the team filter — the planner's owner grouping,
+  // refusal lookup and child mapping silently break without them.
+  const have = new Set(scoped.map((l) => l.id));
+  const neededOwners = new Set(
+    scoped.map((l) => l.inheritedFromId).filter((x): x is string => Boolean(x)),
+  );
+  for (const l of teamLabelsAll) {
+    if (neededOwners.has(l.id) && !have.has(l.id)) {
+      scoped.push(l);
+      have.add(l.id);
+    }
+  }
+  const teamLabels = scoped;
 
   const projectsAll = await paged<ReorgProjectNode>(
     client, pace, CENSUS_PROJECTS_Q, "projects", {}, opts.limit,
@@ -2194,6 +2273,48 @@ export interface ReorgRule {
 }
 
 /**
+ * from-completeness invariant: every field an op's `to` changes must have a
+ * census anchor in `from` (a rollback recovering a name from the journal is
+ * the failure this prevents). Throws on the first incomplete op.
+ */
+export function assertFromAnchors(ops: ReorgOp[]): void {
+  const REQUIRED_FROM: Record<string, string[]> = {
+    "create-workspace-label": ["labelId"],
+    "relabel": ["labelIds"],
+    "rename-label": ["name", "retired"],
+    "retire-or-delete-label": ["retired"],
+    "set-state": ["stateId"],
+    "enable-triage": ["triageEnabled"],
+    "archive-state": ["archived"],
+    "set-project-status": ["statusId"],
+    "set-project-lead": ["leadId"],
+    "set-project-target": ["targetDate"],
+    "add-project-team": ["teamIds"],
+    "remove-project-team": ["teamIds"],
+    "move-project-initiative": ["initiativeIds"],
+    "set-initiative-owner": ["ownerId"],
+    "archive-issue": ["archived"],
+    "archive-project": ["trashed"],
+    "archive-initiative": ["archived"],
+    "move-issue-team": ["teamId", "stateId", "labelIds", "projectId", "cycleId"],
+    "create-project-status": ["statusId"],
+    "delete-team": [],
+  };
+  for (const op of ops) {
+    if (!(op.op in REQUIRED_FROM))
+      throw new Error(
+        `plan op seq ${op.seq}: unknown op kind "${op.op}" — add its from-field requirements to REQUIRED_FROM`,
+      );
+    const missing = REQUIRED_FROM[op.op].filter((k) => !(k in op.from));
+    if (missing.length)
+      throw new Error(
+        `plan op seq ${op.seq} [${op.op}] ${op.target.identifier}: from is missing ${missing.join(", ")} ` +
+          `(every changed field needs a census anchor)`,
+      );
+  }
+}
+
+/**
  * Turn declarative rules + a census snapshot into concrete ops. `from` is
  * captured from the census here — that capture is what makes the executor
  * drift-safe. A rule that matches nothing is an error (a typo, not a no-op).
@@ -2207,8 +2328,24 @@ export function planFromRules(
 ): ReorgPlan {
   const ops: ReorgOp[] = [];
   const warnings: string[] = [];
+  const labelById = new Map(
+    [...censusData.workspaceLabels, ...censusData.teamLabels].map((l) => [l.id, l] as const),
+  );
   let seq = 0;
   for (const rule of rules) {
+    // Writes target owner labels only — a rule naming an inherited label id is
+    // refused at plan time (Linear: "Cannot update inherited labels").
+    const whereId = rule.match.where.id;
+    if (
+      typeof whereId === "string" &&
+      (rule.match.entity === "team-label" || rule.match.entity === "workspace-label")
+    ) {
+      const l = labelById.get(whereId);
+      if (l?.inheritedFromId)
+        throw new Error(
+          `rule "${rule.evidence}" targets inherited label ${l.name} (${whereId}), child of ${l.inheritedFromId} — target the owner`,
+        );
+    }
     const targets = selectTargets(rule, censusData);
     if (targets.length === 0)
       throw new Error(
@@ -2275,6 +2412,36 @@ export function planFromRules(
         );
     }
   }
+  assertFromAnchors(ops);
+
+  // relabel child mapping: a sub-team issue carries the CHILD id of an owner
+  // label — removing the owner means removing the child the issue carries.
+  const issueById = new Map(censusData.issues.map((i) => [i.id, i] as const));
+  const childrenOf = new Map<string, string[]>();
+  for (const l of censusData.teamLabels) {
+    if (!l.inheritedFromId) continue;
+    if (!labelById.has(l.inheritedFromId))
+      throw new Error(
+        `census carries inherited label ${l.name} (${l.id}) without its owner ${l.inheritedFromId} — re-run the census (owners are always included now)`,
+      );
+    const arr = childrenOf.get(l.inheritedFromId) ?? [];
+    arr.push(l.id);
+    childrenOf.set(l.inheritedFromId, arr);
+  }
+  for (const op of ops) {
+    if (op.op !== "relabel" || op.target.type !== "issue") continue;
+    const issue = issueById.get(op.target.id);
+    if (!issue) continue;
+    op.to.remove = sortedStrings(op.to.remove).map((rid) => {
+      const kids = childrenOf.get(rid);
+      if (!kids) return rid;
+      // prefer the child belonging to the issue's own team (a sub-team issue
+      // carries its team's child), then any carried child, then the id as-is
+      const ownTeam = kids.find((k) => labelById.get(k)?.team?.id === issue.teamId);
+      return ownTeam ?? kids.find((k) => issue.labelIds.includes(k)) ?? rid;
+    });
+  }
+
   // Phase-1 ordering invariant: rename-label → create-workspace-label →
   // relabel → retire-or-delete-label. Linear enforces label-name uniqueness
   // across workspace AND team scope, so a create fails while any team copy
@@ -2304,14 +2471,16 @@ function selectTargets(
 
   switch (rule.match.entity) {
     case "none": {
-      // creation ops — the target does not exist; one synthetic target per rule
+      // creation ops — the target does not exist; one synthetic target per rule.
+      // The from anchor keys the kind: labels anchor labelId, statuses statusId.
+      const key = rule.op === "create-project-status" ? "statusId" : "labelId";
       return [{
         target: {
-          type: "label",
+          type: rule.op === "create-project-status" ? "project" : "label",
           id: `new:${String(rule.to.name ?? "unnamed")}`,
           identifier: String(rule.to.name ?? "unnamed"),
         },
-        from: { labelId: null },
+        from: { [key]: null },
       }];
     }
     case "team": {
@@ -2332,6 +2501,13 @@ function selectTargets(
         Object.entries(genericWhere).every(([k, v]) => JSON.stringify(obj[k]) === JSON.stringify(v));
       const labelName = typeof where.label === "string" ? where.label : null;
       const labelId = typeof where.labelId === "string" ? where.labelId : null;
+      // an owner label id matches issues carrying any of its inherited children
+      const labelIdSet: Set<string> | null = !labelId
+        ? null
+        : new Set([
+            labelId,
+            ...censusData.teamLabels.filter((l) => l.inheritedFromId === labelId).map((l) => l.id),
+          ]);
       const nameIds: Set<string> | null = !labelName
         ? null
         : new Set(
@@ -2347,7 +2523,7 @@ function selectTargets(
           identifier: i.identifier, teamKey: i.teamKey, stateId: i.stateId,
           projectId: i.projectId, archived: i.archived,
         })) continue;
-        if (labelId && !i.labelIds.includes(labelId)) continue;
+        if (labelIdSet && !i.labelIds.some((l) => labelIdSet.has(l))) continue;
         if (nameIds && !i.labelIds.some((l) => nameIds.has(l))) continue;
         out.push({
           target: { type: "issue", id: i.id, identifier: i.identifier },
@@ -2369,19 +2545,30 @@ function selectTargets(
         if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: l.issueCount })) continue;
         out.push({
           target: { type: "label", id: l.id, identifier: l.name },
-          from: { retired: l.retiredAt != null },
+          from: { retired: l.retiredAt != null, name: l.name, inheritedFromId: l.inheritedFromId },
         });
       }
       return out;
     }
     case "team-label": {
+      // Inherited (sub-team) copies never match — Linear refuses writes on
+      // them. Owner usage sums its children (a zero-issue owner whose children
+      // carry issues is NOT zero-issue).
+      const childCount = new Map<string, number>();
+      for (const l of censusData.teamLabels) {
+        if (l.inheritedFromId)
+          childCount.set(l.inheritedFromId, (childCount.get(l.inheritedFromId) ?? 0) + l.issueCount);
+      }
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const l of censusData.teamLabels) {
+        if (l.inheritedFromId) continue;
         if (rule.match.teamKey && l.teamKey !== rule.match.teamKey) continue;
-        if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: l.issueCount })) continue;
+        const effectiveCount = l.issueCount + (childCount.get(l.id) ?? 0);
+        if (!hit({ name: l.name, retired: l.retiredAt != null, issueCount: effectiveCount })) continue;
         out.push({
           target: { type: "label", id: l.id, identifier: `${l.teamKey}/${l.name}` },
-          from: { retired: l.retiredAt != null },
+          // name is the rename drift anchor; inheritedFromId proves ownership
+          from: { retired: l.retiredAt != null, name: l.name, inheritedFromId: l.inheritedFromId },
         });
       }
       return out;
@@ -2410,6 +2597,7 @@ function selectTargets(
             statusId: p.status?.id ?? null,
             leadId: p.lead?.id ?? null,
             targetDate: p.targetDate ?? null,
+            trashed: p.trashed === true,
             teamIds: (p.teams?.nodes ?? []).map((x) => x.id).sort(),
             initiativeIds: (p.initiatives?.nodes ?? []).map((x) => x.id).sort(),
           },
@@ -2429,7 +2617,7 @@ function selectTargets(
         if (!hit({ id: it.id, name: it.name, archived: it.archivedAt != null })) continue;
         out.push({
           target: { type: "initiative", id: it.id, identifier: it.name },
-          from: { archived: it.archivedAt != null },
+          from: { archived: it.archivedAt != null, ownerId: it.owner?.id ?? null },
         });
       }
       if (out.length > 1 && typeof where.name === "string" && !where.id)
