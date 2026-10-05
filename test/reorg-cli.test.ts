@@ -475,6 +475,32 @@ describe("planner invariants (round 1)", () => {
     expect(plan.ops[0].to.remove).toEqual(["l-child-b"]); // its own team's child, not the first
   });
 
+  test("distinguishing: issue carries a DIFFERENT team's child — own-team child wins over the carried one", () => {
+    const census = {
+      ...TOY_CENSUS,
+      teamLabels: [
+        ...TOY_CENSUS.teamLabels,
+        { id: "l-owner", name: "security", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 0, inheritedFromId: null },
+        { id: "l-child-a", name: "security", retiredAt: null, team: { id: "t-sub-a", key: "SA" }, teamKey: "SA", issueCount: 1, inheritedFromId: "l-owner" },
+        { id: "l-child-b", name: "security", retiredAt: null, team: { id: "t-sub-b", key: "SB" }, teamKey: "SB", issueCount: 1, inheritedFromId: "l-owner" },
+      ],
+      issues: [
+        // weird but real-shaped: the issue sits in SB yet carries SA's child
+        { id: "i-b1", identifier: "SB-1", teamId: "t-sub-b", teamKey: "SB", stateId: "s-todo", labelIds: ["l-child-a"], projectId: null, cycleId: null, archived: false },
+      ],
+    };
+    const plan = planFromRules(
+      [rule({
+        op: "relabel",
+        match: { entity: "issue", where: { labelId: "l-owner" } },
+        to: { add: ["l-ws-bug"], remove: ["l-owner"] }, evidence: "swap",
+      })],
+      census, META,
+    );
+    // only the own-team lookup yields l-child-b; the carried-fallback yields l-child-a
+    expect(plan.ops[0].to.remove).toEqual(["l-child-b"]);
+  });
+
   test("a census missing an inherited label's owner refuses loudly", () => {
     const census = {
       ...TOY_CENSUS,

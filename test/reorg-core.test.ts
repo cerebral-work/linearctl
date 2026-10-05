@@ -1546,6 +1546,8 @@ describe("inherited labels (CER-2353)", () => {
     const result = await applyPlan(be, [op], j);
     expect(result.applied).toBe(1);
     expect(be.issues.get("i-sub")!.labelIds).toEqual(["l-ws"]);
+    // the written-labels guard let a child-id REMOVE through (only adds are refused)
+    expect(be.mutationCalls).toEqual(["issueUpdate"]);
     const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(v.ok).toBe(true);
   });
@@ -1578,9 +1580,10 @@ describe("from-completeness invariant", () => {
 });
 
 describe("census capture (CER-2353 round 1)", () => {
-  /** Minimal census stub: one page per connection, canned rows. */
-  function censusStub(): LinearClient {
+  /** Minimal census stub: one page per connection, canned rows. Records queries. */
+  function censusStub(seen: string[]): LinearClient {
     const rawRequest = async (query: string) => {
+      seen.push(query);
       const page = (nodes: unknown[]) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: null } });
       if (query.includes("ReorgCensusTeams"))
         return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
@@ -1599,15 +1602,19 @@ describe("census capture (CER-2353 round 1)", () => {
   }
 
   test("captures inheritedFrom on labels and parent on teams", async () => {
-    const d = await census(censusStub(), {}, fastPace());
+    const seen: string[] = [];
+    const d = await census(censusStub(seen), {}, fastPace());
     expect(d.teams[0].parent).toEqual({ id: "t-parent", key: "PAR" });
     const child = d.teamLabels.find((l) => l.id === "l-child");
     expect(child?.inheritedFromId).toBe("l-owner");
+    // the QUERY TEXT asks for the fields (a dropped selection would pass silently)
+    expect(seen.find((q) => q.includes("ReorgCensusTeams"))).toContain("parent { id key }");
+    expect(seen.find((q) => q.includes("ReorgCensusLabels"))).toContain("inheritedFrom { id }");
   });
 
   test("--team scope still includes the owners of in-scope inherited labels", async () => {
     // EX has the inherited child; its owner sits in PAR (outside the filter)
-    const d = await census(censusStub(), { teamKeys: ["EX"] }, fastPace());
+    const d = await census(censusStub([]), { teamKeys: ["EX"] }, fastPace());
     const ids = d.teamLabels.map((l) => l.id).sort();
     expect(ids).toEqual(["l-child", "l-owner"]);
   });
@@ -1622,6 +1629,21 @@ describe("written-label guard + team-aware child mapping (round 1)", () => {
     await expect(applyPlan(be, [baseOp({
       op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
     })], join(dir, "j.jsonl"))).rejects.toThrow(/write inherited label/);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("--check reports an add of an inherited child id as drift (no write)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    be.labels.set("l-child", { id: "l-child", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    const result = await runPlan(fakeClient(be), planWith([baseOp({
+      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["l-child"], remove: [] },
+    })]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toEqual([1]);
     expect(be.mutationCalls).toEqual([]);
   });
 });
