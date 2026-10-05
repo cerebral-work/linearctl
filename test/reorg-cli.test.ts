@@ -682,7 +682,7 @@ describe("team visibility planning", () => {
 
   test("private -> public is refused, with a per team-pair summary", () => {
     expect(() => planFromRules([move()], census(priv({}), dest()), META)).toThrow(
-      /1 op\(s\) would change visibility[\s\S]*move-issue-team EX -> BBB: 1/,
+      /1 op\(s\) would change visibility.*Team pairs: move-issue-team EX -> BBB x1.*Ops: seq 1 EX-1 EX -> BBB: .*every member/,
     );
   });
 
@@ -719,7 +719,7 @@ describe("team visibility planning", () => {
       phase: 5, op: "add-project-team", match: { entity: "project", where: { id: "p-1" } },
       to: { teamId: "t-bb" }, evidence: "membership",
     };
-    expect(() => planFromRules([add], c, META)).toThrow(/add-project-team EX -> BBB: 1/);
+    expect(() => planFromRules([add], c, META)).toThrow(/Team pairs: add-project-team EX -> BBB x1.*Ops: seq 1 .*EX -> BBB/);
     expect(planFromRules([{ ...add, allowVisibilityChange: true }], c, META).visibility?.[0].kind).toBe("add-project-team");
   });
 

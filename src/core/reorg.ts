@@ -1796,23 +1796,26 @@ async function readTeamVisibility(ctx: OpCtx, id: string, members: boolean): Pro
   const d = await reorgRaw<{ team: { id: string; key: string; private: boolean } | null }>(
     ctx.client, TEAM_PRIVACY_Q, { id }, ctx.pace,
   );
-  if (!d.team) throw new Error(`team ${id} not found`);
+  if (!d.team) throw new Error(`team ${id} not found — cannot establish its visibility`);
+  if (typeof d.team.private !== "boolean")
+    throw new Error(`team ${id} returned no boolean private flag — refusing to assume it is public`);
   const memberIds =
     members && d.team.private
       ? (await paged<{ id: string }>(ctx.client, ctx.pace, TEAM_MEMBERS_Q, "team.members", { id }, undefined, true))
           .map((m) => m.id)
           .sort()
       : null;
-  const v: TeamVisibility = { id: d.team.id, key: d.team.key, private: d.team.private === true, memberIds };
+  const v: TeamVisibility = { id: d.team.id, key: d.team.key, private: d.team.private, memberIds };
   cache.set(id, { at: Date.now(), v });
   return v;
 }
 
 /**
- * LIVE check of whether `op` changes visibility; returns what changes, or null.
- * Reads privacy and membership from the teams themselves, never from the census.
+ * LIVE check of whether `op` changes visibility: what changes and between which
+ * teams, or null. Reads privacy and membership from the teams themselves, never
+ * from the census.
  */
-export async function visibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string | null> {
+async function visibilityInfo(ctx: OpCtx, op: ReorgOp): Promise<{ why: string; pair: string } | null> {
   if (op.op === "move-issue-team") {
     if (typeof op.to.teamId !== "string") return null;
     const live = await readIssue(ctx, op.target.id);
@@ -1821,11 +1824,13 @@ export async function visibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string 
     const src = await readTeamVisibility(ctx, srcId, false);
     if (!src.private) return null;
     const dst = await readTeamVisibility(ctx, op.to.teamId, false);
-    if (!dst.private) return moveVisibilityChange(src, dst);
-    return moveVisibilityChange(
-      await readTeamVisibility(ctx, srcId, true),
-      await readTeamVisibility(ctx, op.to.teamId, true),
-    );
+    const why = dst.private
+      ? moveVisibilityChange(
+          await readTeamVisibility(ctx, srcId, true),
+          await readTeamVisibility(ctx, op.to.teamId, true),
+        )
+      : moveVisibilityChange(src, dst);
+    return why ? { why, pair: `${src.key} -> ${dst.key}` } : null;
   }
   if (op.op === "add-project-team") {
     const project = await readProject(ctx, op.target.id);
@@ -1834,9 +1839,15 @@ export async function visibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string 
     if (added.length === 0 || current.length === 0) return null;
     const cur = await Promise.all(current.map((t) => readTeamVisibility(ctx, t, false)));
     if (!cur.every((t) => t.private)) return null;
-    return projectTeamAddVisibilityChange(cur, await Promise.all(added.map((t) => readTeamVisibility(ctx, t, false))));
+    const add = await Promise.all(added.map((t) => readTeamVisibility(ctx, t, false)));
+    const why = projectTeamAddVisibilityChange(cur, add);
+    return why ? { why, pair: `${cur.map((t) => t.key).join("+")} -> ${add.map((t) => t.key).join("+")}` } : null;
   }
   return null;
+}
+
+export async function visibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string | null> {
+  return (await visibilityInfo(ctx, op))?.why ?? null;
 }
 
 /** LIVE count of source-team members who lose access through a private -> private move. */
@@ -1852,16 +1863,20 @@ async function accessLost(ctx: OpCtx, op: ReorgOp): Promise<number> {
   return moveAccessLost(await readTeamVisibility(ctx, srcId, true), await readTeamVisibility(ctx, op.to.teamId, true));
 }
 
-/** Refuse an op that changes visibility unless it carries allowVisibilityChange: true. */
-export async function assertNoVisibilityChange(ctx: OpCtx, op: ReorgOp): Promise<void> {
-  if (op.op !== "move-issue-team" && op.op !== "add-project-team") return;
-  if (op.allowVisibilityChange === true) return;
-  const why = await visibilityChange(ctx, op);
-  if (why)
-    throw new Error(
-      `seq ${op.seq} [${op.op}] ${op.target.identifier}: visibility change refused: ${why}; ` +
-        `set allowVisibilityChange: true on the rule to allow it`,
-    );
+/**
+ * Refuse an op that changes visibility unless it carries allowVisibilityChange:
+ * true. Returns the description of an ALLOWED change (so the caller can report
+ * it), or null. Any failed read refuses: an unknown visibility is never public.
+ */
+export async function assertNoVisibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string | null> {
+  if (op.op !== "move-issue-team" && op.op !== "add-project-team") return null;
+  const info = await visibilityInfo(ctx, op);
+  if (!info) return null;
+  if (op.allowVisibilityChange === true) return `${info.pair}: ${info.why}`;
+  throw new Error(
+    `seq ${op.seq} [${op.op}] ${op.target.identifier}: visibility change refused (${info.pair}): ${info.why}; ` +
+      `set allowVisibilityChange: true on the rule to allow it`,
+  );
 }
 
 /** Every workflow state with its owner link: inherited views are found by
@@ -2302,7 +2317,12 @@ async function executeOne(
   if (op.op === "relabel" || op.op === "move-issue-team")
     await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
-  await assertNoVisibilityChange(ctx, op);
+  const allowedVis = await assertNoVisibilityChange(ctx, op);
+  if (allowedVis)
+    ctx.onEvent?.({
+      kind: "visibility",
+      detail: `visibility change (allowed) seq ${op.seq} [${op.op}] ${op.target.identifier}: ${allowedVis}`,
+    });
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op);
 
   // 3. write
@@ -3367,7 +3387,8 @@ export async function census(
     opts.limit,
   );
   for (const t of teams) {
-    t.private = t.private === true;
+    if (typeof t.private !== "boolean")
+      throw new Error(`census: team ${t.key} returned no boolean private flag — refusing to treat it as public`);
     if (t.private)
       t.memberIds = (
         await paged<{ id: string }>(client, pace, TEAM_MEMBERS_Q, "team.members", { id: t.id }, undefined, true)
@@ -3546,6 +3567,7 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): { rows: Visibil
       );
     return { id: t.id, key: t.key, private: t.private, memberIds: t.memberIds ?? null };
   };
+  const refusedOps: string[] = [];
   const lostBy = new Map<string, { ops: number; lost: number }>();
   const rows = new Map<string, VisibilityPairCount & { why: string; sample: string[] }>();
   for (const op of ops) {
@@ -3575,18 +3597,23 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): { rows: Visibil
     const row = rows.get(k) ?? { from: pair[0], to: pair[1], kind: op.op as VisibilityPairCount["kind"], count: 0, allowed, why, sample: [] };
     row.count++;
     if (row.sample.length < 3) row.sample.push(op.target.identifier);
+    if (!allowed) refusedOps.push(`seq ${op.seq} ${op.target.identifier} ${pair[0]} -> ${pair[1]}: ${why}`);
     rows.set(k, row);
   }
   const all = [...rows.values()];
   const refused = all.filter((r) => !r.allowed);
-  if (refused.length > 0)
+  if (refused.length > 0) {
+    // One line: the CLI prints only the first line of an error message.
+    const shown = refusedOps.slice(0, 20);
     throw new Error(
-      `plan refused: ${refused.reduce((n, r) => n + r.count, 0)} op(s) would change visibility without allowVisibilityChange: true on their rule\n` +
-        refused.map((r) => `  ${r.kind} ${r.from} -> ${r.to}: ${r.count} (e.g. ${r.sample.join(", ")}) — ${r.why}`).join("\n") +
+      `plan refused: ${refusedOps.length} op(s) would change visibility without allowVisibilityChange: true on their rule. ` +
+        `Team pairs: ${refused.map((r) => `${r.kind} ${r.from} -> ${r.to} x${r.count}`).join("; ")}. ` +
+        `Ops: ${shown.join(" | ")}${refusedOps.length > shown.length ? ` | ... and ${refusedOps.length - shown.length} more` : ""}` +
         (all.length > refused.length
-          ? `\nallowed: ${all.filter((r) => r.allowed).map((r) => `${r.from} -> ${r.to} x${r.count}`).join("; ")}`
+          ? `. Allowed: ${all.filter((r) => r.allowed).map((r) => `${r.from} -> ${r.to} x${r.count}`).join("; ")}`
           : ""),
     );
+  }
   return {
     rows: all.map(({ from, to, kind, count, allowed }) => ({ from, to, kind, count, allowed })),
     notes: [...lostBy].map(([pair, n]) => `${pair}: ${n.lost} source member(s) lose access (${n.ops} move(s))`),

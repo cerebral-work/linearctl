@@ -222,6 +222,64 @@ the journal record of that `create-team-label` / `create-workspace-label`).
   `create-team-label`, `add-project-team`, `move-issue-team` (only these kinds
   are reordered; other ops keep their place).
 
+## Team visibility
+
+A team move adopts the destination team's visibility. Moving issues out of a
+private team into a non-private one makes every moved issue visible to all
+workspace members, and to guests who are members of the destination. The same
+holds for a project: adding a non-private team to a project that sits only on
+private teams exposes its page, description and updates. `reorg` refuses such
+ops unless the rule opts in.
+
+An op is refused when it WIDENS visibility:
+
+- `move-issue-team` from a private team to a non-private team;
+- `move-issue-team` from a private team to a private team that has members the
+  source lacks (they gain access, guests included). Members are read live;
+- `add-project-team` of a non-private team to a project whose current teams are
+  all private.
+
+Not refused: public to anything, and private to private with equal member sets.
+A private destination that lacks some source members only removes readers; it is
+reported, not refused: `plan` prints `info: A -> B: N source member(s) lose
+access (M move(s))` and `apply --check` prints `info seq ...`. A rollback that
+moves an issue back into a private team is therefore never refused for
+visibility.
+
+Where it is enforced:
+
+- **census** records `private` for every team, and the member ids of private
+  teams. A team with no boolean `private`, or a members read that fails or
+  cannot finish paging, is an error; `plan` refuses a census without `private`.
+- **plan** throws, before writing a plan file, when a rule would widen
+  visibility without opting in. The one-line error names each team pair with its
+  op count and then each refused op (seq, identifier, source -> destination,
+  reason). On success `plan` prints one `visibility change (allowed): ...` line
+  per team pair.
+- **`apply --check`** reports `REFUSE seq N ... (SRC -> DST): reason` from LIVE
+  reads of team privacy and members, never from the census. An opted-in op is
+  listed as `visibility change (allowed)`.
+- **`apply`** runs the same live check immediately before the first write and
+  refuses with zero mutations. An opted-in change is reported as a
+  `visibility change (allowed) seq ...` line before the write.
+
+Fail-closed: if a team is not found, `private` is not a boolean, or the members
+read errors or is partial, the op is refused. Unknown visibility is never read as
+public.
+
+To opt in, set `"allowVisibilityChange": true` on the rule. The planner copies it
+to every op the rule produces and never infers it. Opt in only after deciding
+that the moved issues, or the project, may be seen by the destination's audience.
+
+Caveats:
+
+- Privacy and members are cached for 30 seconds within a run. A team made public
+  or private mid-run may read with its old value until the entry expires.
+- `rollback` does not run this guard: it restores recorded state, so it must be
+  able to put things back. Rolling back a move out of a private team and into a
+  non-private one (the inverse of a public -> private move) widens visibility;
+  check the teams before rolling back.
+
 ## Inherited workflow states
 
 Workflow states inherit like labels: a sub-team's states carry `inheritedFrom`
