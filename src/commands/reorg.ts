@@ -4,6 +4,7 @@ import { printJson } from "../lib/output.js";
 import {
   RateTracker,
   ReorgMismatch,
+  RollbackRefused,
   TokenBucket,
   census,
   journalRead,
@@ -253,7 +254,7 @@ export async function reorgRollback(journalPath: string, opts: ReorgRollbackOpti
     if (r.dryRun && opts.check && r.drifted.length > 0) process.exit(1);
   } catch (err) {
     if (err instanceof ReorgMismatch) {
-      const msg = `ROLLBACK MISMATCH at seq ${err.seq}: expected ${JSON.stringify(err.diff.expected)}, actual ${JSON.stringify(err.diff.actual)}`;
+      const msg = err instanceof RollbackRefused ? `ROLLBACK REFUSED at seq ${err.seq}: ${err.reason}` : `ROLLBACK MISMATCH at seq ${err.seq}: expected ${JSON.stringify(err.diff.expected)}, actual ${JSON.stringify(err.diff.actual)}`;
       if (opts.json) printJson({ error: "rollback-mismatch", seq: err.seq, expected: err.diff.expected, actual: err.diff.actual, message: msg });
       process.stderr.write(`${msg}\n`);
       process.exit(3);

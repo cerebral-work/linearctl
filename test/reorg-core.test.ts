@@ -6,6 +6,7 @@ import type { LinearClient } from "@linear/sdk";
 import {
   RateTracker,
   ReorgMismatch,
+  RollbackRefused,
   TokenBucket,
   assertFreshBackup,
   assertMovePreconditions,
@@ -1265,6 +1266,54 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       expect(r.drifted[0]).toContain("someone-renamed-it");
       expect(be.mutationCalls).toEqual([]);
       expect(be.readCalls).toBeGreaterThan(0);
+    });
+
+    test("refuses before any write when neither plan nor journal recorded the needed field", async () => {
+      const be = freshBackend();
+      be.labels.set("l-t", { id: "l-t", name: "ci·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      const j = join(dir, "nofield.jsonl");
+      journalAppend(j, {
+        seq: 6, phase: 1, op: "rename-label", at: "t", ok: true,
+        original: baseOp({
+          seq: 6, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/ci" },
+          from: { retired: false }, to: { name: "ci·old-EX" },
+        }),
+        before: { retired: false },
+        after: { retired: false, name: "ci·old-EX" },
+      });
+      for (const mode of [{ apply: true }, { check: true }, {}]) {
+        let err: unknown;
+        try {
+          await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), ...mode });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(RollbackRefused);
+        expect((err as RollbackRefused).message).toContain("seq 6");
+        expect((err as RollbackRefused).message).toContain('"name"');
+        expect((err as RollbackRefused).message).toContain("neither the plan nor the journal");
+      }
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.labels.get("l-t")!.name).toBe("ci·old-EX");
+    });
+
+    test("an unreadable target is drift under --check and refused before any write under --apply", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "ci·old-EX");
+      be.labels.delete("l-t");
+      const chk = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), check: true });
+      expect(chk.drifted).toHaveLength(1);
+      expect(chk.drifted[0]).toContain("unreadable");
+      expect(be.mutationCalls).toEqual([]);
+      let err: unknown;
+      try {
+        await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RollbackRefused);
+      expect((err as RollbackRefused).message).toContain("could not be read");
+      expect(be.mutationCalls).toEqual([]);
     });
 
     test("--check on a clean journal reports no drift", async () => {

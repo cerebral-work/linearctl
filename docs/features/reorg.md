@@ -149,7 +149,10 @@ With `--apply`, each inverse op first pre-reads its target and refuses
 state is not what the journal recorded the forward op leaving. It then applies
 each op's inverse in reverse journal order with the same per-write verify. The
 inverse is built from the plan's `from`, filling any compared field the plan
-omitted (for example a label's old name) from the journaled pre-write read. Reversible inverses: relabel,
+omitted (for example a label's old name) from the journaled pre-write read.
+If neither the plan nor the journal recorded a field the inverse needs, rollback
+refuses (exit 3, `ROLLBACK REFUSED`) before any write. A target that cannot be
+read counts as drift under `--check` and is refused under `--apply`. Reversible inverses: relabel,
 set-state, project/initiative fields, unarchive, label restore, move-back
 (identifier changes again — the identifier map is the record). No inverse
 (skipped, named in the output): `archive-state` (recreate by hand),

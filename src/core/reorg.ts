@@ -1271,6 +1271,14 @@ export class ReorgMismatch extends Error {
   }
 }
 
+/** Rollback refused before any write for this op (not a verify mismatch). */
+export class RollbackRefused extends ReorgMismatch {
+  constructor(seq: number, public readonly reason: string, diff: { expected: unknown; actual: unknown }) {
+    super(seq, diff);
+    this.message = `op seq ${seq} refused: ${reason}`;
+  }
+}
+
 /** Keys of `expected` the live state fails to match (skips absent keys). */
 function compareState(
   expected: Record<string, unknown>,
@@ -1796,6 +1804,9 @@ export async function rollbackPhase(
   const write = opts.apply === true;
   const ctx: OpCtx = { client, pace: opts.pace };
 
+  // Pass 1: build and validate every inverse before any write, so a journal
+  // that cannot be inverted refuses the whole rollback instead of half of it.
+  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp }[] = [];
   for (const rec of journal) {
     const orig = rec.original;
     if (!orig) {
@@ -1808,6 +1819,18 @@ export async function rollbackPhase(
       skipped.push(`seq ${String(rec.seq)} [${orig.op}]: no inverse op (manual restore required)`);
       continue;
     }
+    const post = OP_REGISTRY[inv.op].expectedPost(inv);
+    const missing = post ? Object.keys(post).filter((k) => post[k] === undefined) : [];
+    if (missing.length)
+      throw new RollbackRefused(
+        Number(rec.seq),
+        `cannot invert ${orig.op}: field ${missing.map((k) => `"${k}"`).join(", ")} was recorded by neither the plan nor the journal`,
+        { expected: { missingFields: missing }, actual: "not recorded" },
+      );
+    steps.push({ rec, orig, inv });
+  }
+
+  for (const { rec, orig, inv } of steps) {
     planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
     // (remove-project-team rolls back via add-project-team).
@@ -1819,12 +1842,20 @@ export async function rollbackPhase(
       // Live pre-read: the target must be in the state the journal says the
       // forward op left it in. A mismatch means something else changed it since.
       let live: Record<string, unknown> | null = null;
+      let readError: string | null = null;
       try {
         live = await invDef.readState(ctx, inv);
-      } catch {
-        live = null; // target not readable (e.g. already absent): nothing to compare
+      } catch (e) {
+        readError = e instanceof Error ? e.message : String(e);
       }
-      if (live) {
+      if (readError !== null) {
+        if (write)
+          throw new RollbackRefused(inv.seq, `target ${target} could not be read before the write: ${readError}`, {
+            expected: pick(inv.from, invDef.compareKeys),
+            actual: `unreadable: ${readError}`,
+          });
+        drifted.push(`seq ${String(rec.seq)} [${orig.op}] ${target}: unreadable (${readError})`);
+      } else if (live) {
         const bad = compareState(inv.from, live, invDef.compareKeys);
         if (bad.length) {
           if (write)
