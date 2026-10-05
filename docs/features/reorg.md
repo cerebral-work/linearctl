@@ -149,7 +149,11 @@ Notes per kind:
 - `remove-project-team` computes the post-membership from a LIVE read at apply
   time — a team added after the census is never dropped by a stale plan.
 - `create-project-status` rides `projectStatusCreate`; the inverse is archive
-  in the UI (no inverse op).
+  in the UI (no inverse op). `ProjectStatusCreateInput.position` is required:
+  when `to.position` is absent the executor reads the live statuses and places
+  the new one between its lifecycle neighbours (backlog, planned, started,
+  paused, completed, canceled) at the midpoint of their positions, or last+1
+  when none follows, and journals the position used.
 
 ## Rules and selectors
 

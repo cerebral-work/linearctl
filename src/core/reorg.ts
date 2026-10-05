@@ -735,11 +735,32 @@ const PROJECT_INIT_JOINS_Q = /* GraphQL */ `
   }
 `;
 
+interface StatusNode { id: string; name: string; type: string; position?: number | null }
+
+const STATUS_LIFECYCLE = ["backlog", "planned", "started", "paused", "completed", "canceled"];
+
+/** Place a new status after the last status whose type sorts at or before its
+ *  own in the lifecycle, and before the next one: midpoint of the two
+ *  neighbours, or last+1 when nothing follows. */
+export function projectStatusPosition(all: StatusNode[], type: unknown): number {
+  const rank = (t: unknown) => STATUS_LIFECYCLE.indexOf(String(t));
+  const mine = rank(type);
+  if (mine < 0) throw new Error(`create-project-status: unknown type "${String(type)}"`);
+  const sorted = all
+    .filter((x) => typeof x.position === "number")
+    .sort((a, b) => (a.position as number) - (b.position as number));
+  const before = sorted.filter((x) => rank(x.type) <= mine);
+  const prev = before.length ? (before[before.length - 1].position as number) : null;
+  const next = sorted.find((x) => rank(x.type) > mine && (prev === null || (x.position as number) > prev));
+  if (prev === null) return next ? (next.position as number) - 1 : 0;
+  return next ? (prev + (next.position as number)) / 2 : prev + 1;
+}
+
 /** Every project status (few; paginated) — projectStatuses takes no filter. */
 const PROJECT_STATUSES_Q = /* GraphQL */ `
   query ReorgProjectStatuses($first: Int!, $after: String) {
     projectStatuses(first: $first, after: $after) {
-      nodes { id name type }
+      nodes { id name type position }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -1185,11 +1206,23 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     },
     expectedPost: (op) => ({ statusId: op.to.statusId ?? null }),
     async apply(ctx, op) {
+      // ProjectStatusCreateInput.position is a required Float!.
+      const position =
+        typeof op.to.position === "number"
+          ? op.to.position
+          : projectStatusPosition(
+              await paged<StatusNode>(
+                ctx.client, ctx.pace, PROJECT_STATUSES_Q, "projectStatuses", {},
+              ),
+              op.to.type,
+            );
+      op.to.position = position; // journal `after` carries the position used
       await mutate(ctx, "projectStatusCreate", M.projectStatusCreate, {
         input: {
           name: op.to.name,
           color: op.to.color ?? "#999999",
           type: op.to.type,
+          position,
           ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
         },
       });

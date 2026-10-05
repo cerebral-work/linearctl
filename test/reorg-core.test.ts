@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LinearClient } from "@linear/sdk";
+import { buildSchema, parse, typeFromAST, validateInputValue } from "graphql";
 import {
   RateTracker,
   ReorgMismatch,
@@ -18,6 +19,7 @@ import {
   journalPhaseVerified,
   journalRead,
   parsePlanFile,
+  projectStatusPosition,
   rollbackPhase,
   runPlan,
   verifyPhase,
@@ -67,7 +69,9 @@ interface FakeBackend {
   projects: Map<string, FakeProject>;
   initiatives: Map<string, FakeInitiative>;
   teams: Map<string, FakeTeam>;
-  projectStatuses: Map<string, { id: string; name: string; type?: string }>;
+  projectStatuses: Map<string, { id: string; name: string; type?: string; position?: number }>;
+  /** Mutation names whose variables were validated against the vendored schema. */
+  validatedMutations: Set<string>;
   swallowWrites: boolean;
   /** ids the batch mutation deliberately skips (mid-batch mismatch testing). */
   batchSkip: Set<string>;
@@ -88,12 +92,38 @@ interface FakeBackend {
   createdLabelSeq: number;
 }
 
+const LINEAR_SCHEMA = buildSchema(
+  readFileSync(join(import.meta.dir, "fixtures", "linear-schema.graphql"), "utf8"),
+);
+
+/** Validate a mutation's variable VALUES against the vendored schema's input
+ *  types (missing required fields, wrong types) — what Linear would reject. */
+function assertVariablesValid(be: FakeBackend, query: string, vars: Record<string, unknown>): void {
+  const doc = parse(query);
+  for (const def of doc.definitions) {
+    if (def.kind !== "OperationDefinition" || def.operation !== "mutation") continue;
+    for (const v of def.variableDefinitions ?? []) {
+      const type = typeFromAST(LINEAR_SCHEMA, v.type);
+      if (!type) throw new Error(`unknown variable type for $${v.variable.name.value}`);
+      const errors: string[] = [];
+      validateInputValue(vars[v.variable.name.value], type as never, (err, path) => {
+        errors.push(`${path.join(".") || "(root)"}: ${err.message}`);
+      });
+      if (errors.length)
+        throw new Error(`Variable "$${v.variable.name.value}" invalid: ${errors.join("; ")}`);
+    }
+    for (const sel of def.selectionSet.selections)
+      if (sel.kind === "Field") be.validatedMutations.add(sel.name.value);
+  }
+}
+
 function fakeClient(be: FakeBackend): LinearClient {
   const ok = (payload: Record<string, unknown>) => ({ data: payload, headers: undefined });
   const rawRequest = async (
     query: string,
     vars: Record<string, unknown>,
   ): Promise<{ data: unknown; headers: undefined }> => {
+    assertVariablesValid(be, query, vars);
     // ---- reads -----------------------------------------------------------
     if (query.includes("ReorgIssueState")) {
       be.readCalls++;
@@ -341,9 +371,9 @@ function fakeClient(be: FakeBackend): LinearClient {
       });
     if (query.includes("ReorgProjectStatusCreate"))
       return W("projectStatusCreate", () => {
-        const input = vars.input as { name: string; type?: string };
+        const input = vars.input as { name: string; type?: string; position: number };
         const id = `ps-${be.projectStatuses.size + 1}`;
-        be.projectStatuses.set(id, { id, name: input.name, type: input.type });
+        be.projectStatuses.set(id, { id, name: input.name, type: input.type, position: input.position });
       });
     if (query.includes("ReorgProjectInitJoins")) {
       be.readCalls++;
@@ -376,7 +406,7 @@ function freshBackend(): FakeBackend {
   return {
     issues: new Map(), labels: new Map(), states: new Map(),
     projects: new Map(), initiatives: new Map(), teams: new Map(),
-    projectStatuses: new Map(),
+    projectStatuses: new Map(), validatedMutations: new Set(),
     swallowWrites: false, batchSkip: new Set(), forceProjectPagination: false,
     mutationCalls: [], readCalls: 0, projectProbeCalls: 0,
     createdLabelSeq: 0,
@@ -1192,6 +1222,57 @@ describe("new ops", () => {
       expect(rb.rolledBack).toBe(1);
       expect(be.initiatives.get("in-1")!.ownerId).toBeNull();
     })();
+  });
+
+  test("create-project-status places the new status by lifecycle: after same/earlier types, before later ones", async () => {
+    const be = freshBackend();
+    be.projectStatuses.set("a", { id: "a", name: "Backlog", type: "backlog", position: 0 });
+    be.projectStatuses.set("b", { id: "b", name: "In Progress", type: "started", position: 2 });
+    be.projectStatuses.set("c", { id: "c", name: "Done", type: "completed", position: 4 });
+    const j = join(dir, "pos.jsonl");
+    await applyPlan(be, [baseOp({
+      op: "create-project-status", target: { type: "project", id: "new:Paused", identifier: "Paused" },
+      from: { statusId: null }, to: { name: "Paused", color: "#f59e0b", type: "paused" },
+    })], j);
+    const created = [...be.projectStatuses.values()].find((x) => x.name === "Paused")!;
+    expect(created.position).toBe(3); // midpoint of started(2) and completed(4)
+    expect(journalRead(j)[0].original!.to.position).toBe(3);
+    expect(projectStatusPosition([], "paused")).toBe(0);
+    expect(projectStatusPosition([{ id: "x", name: "x", type: "started", position: 5 }], "completed")).toBe(6);
+  });
+
+  test("every mutation input built by the engine validates against the vendored schema", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds] });
+    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] });
+    be.initiatives.set("in-1", { id: "in-1", name: "I", archivedAt: null, ownerId: null });
+    be.teams.set("t-1", { id: "t-1", key: "EX", triageEnabled: false, deleted: false });
+    be.labels.set("11111111-1111-4111-8111-11111111110a", { id: "11111111-1111-4111-8111-11111111110a", name: "a", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    const ops: ReorgOp[] = [
+      baseOp({ seq: 1, op: "create-project-status", target: { type: "project", id: "new:Paused", identifier: "Paused" }, from: { statusId: null }, to: { name: "Paused", color: "#f59e0b", type: "paused" } }),
+      baseOp({ seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" }, from: { labelId: null }, to: { name: "bug", color: "#ff0000" } }),
+      baseOp({ seq: 3, op: "set-state", from: { stateId: "s-todo" }, to: { stateId: "s-done" } }),
+      baseOp({ seq: 4, op: "rename-label", target: { type: "label", id: "11111111-1111-4111-8111-11111111110a", identifier: "a" }, from: { name: "a", retired: false }, to: { name: "a2" } }),
+      baseOp({ seq: 5, op: "enable-triage", target: { type: "team", id: "t-1", identifier: "EX" }, from: { triageEnabled: false }, to: { triageEnabled: true } }),
+      baseOp({ seq: 6, op: "set-project-lead", target: { type: "project", id: "p-1", identifier: "P" }, from: { leadId: null }, to: { leadId: "u-1" } }),
+      baseOp({ seq: 7, op: "set-initiative-owner", target: { type: "initiative", id: "in-1", identifier: "I" }, from: { ownerId: null }, to: { ownerId: "u-1" } }),
+      baseOp({ seq: 8, op: "move-project-initiative", target: { type: "project", id: "p-1", identifier: "P" }, from: { initiativeIds: ["in-old"], initiativeId: "in-old" }, to: { fromInitiativeToProjectId: "in-old:p-1", fromInitiativeId: "in-old", toInitiativeId: "in-1" } }),
+    ];
+    be.projects.get("p-1")!.initiativeIds = ["in-old"];
+    for (const n of [2, 3]) be.issues.set(`i-${n}`, { ...ISSUE_1, id: `i-${n}`, identifier: `EX-${n}`, labelIds: [...ISSUE_1.labelIds] });
+    const batch = [2, 3].map((n) => baseOp({
+      seq: 20 + n, op: "set-state", target: { type: "issue", id: `i-${n}`, identifier: `EX-${n}` },
+      from: { stateId: "s-todo" }, to: { stateId: "s-done" }, batchKey: "b",
+    }));
+    const j = join(dir, "schema.jsonl");
+    for (const op of ops) await applyPlan(be, [op], j + op.seq);
+    await applyPlan(be, batch, j + "batch");
+    for (const name of [
+      "issueBatchUpdate",
+      "projectStatusCreate", "issueLabelCreate", "issueUpdate", "issueLabelUpdate",
+      "teamUpdate", "projectUpdate", "initiativeUpdate", "initiativeToProjectCreate",
+    ])
+      expect([...be.validatedMutations]).toContain(name);
   });
 
   test("create-project-status: creates, journals the id; rerun drift-aborts", async () => {
