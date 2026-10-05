@@ -67,7 +67,7 @@ interface FakeBackend {
   projects: Map<string, FakeProject>;
   initiatives: Map<string, FakeInitiative>;
   teams: Map<string, FakeTeam>;
-  projectStatuses: Map<string, { id: string; name: string }>;
+  projectStatuses: Map<string, { id: string; name: string; type?: string }>;
   swallowWrites: boolean;
   /** ids the batch mutation deliberately skips (mid-batch mismatch testing). */
   batchSkip: Set<string>;
@@ -151,10 +151,11 @@ function fakeClient(be: FakeBackend): LinearClient {
       const it = be.initiatives.get(vars.id as string);
       return ok({ initiative: it ? { id: it.id, name: it.name, archivedAt: it.archivedAt, owner: it.ownerId ? { id: it.ownerId } : null } : null });
     }
-    if (query.includes("ReorgFindProjectStatus")) {
+    if (query.includes("ReorgProjectStatuses")) {
       be.readCalls++;
-      const nodes = [...be.projectStatuses.values()].filter((s) => s.name === vars.name);
-      return ok({ projectStatuses: { nodes } });
+      // Linear's projectStatuses takes no filter argument — the engine reads
+      // them all and matches by name in code
+      return ok({ projectStatuses: { nodes: [...be.projectStatuses.values()], pageInfo: { hasNextPage: false, endCursor: null } } });
     }
     if (query.includes("ReorgTeamState")) {
       be.readCalls++;
@@ -190,7 +191,8 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgIssuesInState")) {
       be.readCalls++;
-      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.stateId === vars.id && !i.archived).map((i) => ({ id: i.id })) } });
+      const withArchived = query.includes("includeArchived: true");
+      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.stateId === vars.id && (withArchived || !i.archived)).map((i) => ({ id: i.id })) } });
     }
     // The fake honours includeArchived EXACTLY like Linear: archived rows are
     // hidden unless the query carries the flag. An engine that drops the flag
@@ -325,17 +327,16 @@ function fakeClient(be: FakeBackend): LinearClient {
       });
     if (query.includes("ReorgProjectStatusCreate"))
       return W("projectStatusCreate", () => {
-        const input = vars.input as { name: string };
+        const input = vars.input as { name: string; type?: string };
         const id = `ps-${be.projectStatuses.size + 1}`;
-        be.projectStatuses.set(id, { id, name: input.name });
+        be.projectStatuses.set(id, { id, name: input.name, type: input.type });
       });
-    if (query.includes("ReorgInitJoins")) {
+    if (query.includes("ReorgProjectInitJoins")) {
       be.readCalls++;
       // fake join-row id convention: "<initiativeId>:<projectId>"
       const p = be.projects.get(vars.projectId as string);
-      const initId = vars.initiativeId as string;
-      const member = p && p.initiativeIds.includes(initId);
-      return ok({ initiativeToProjects: { nodes: member ? [{ id: `${initId}:${p!.id}` }] : [] } });
+      const nodes = (p?.initiativeIds ?? []).map((initId) => ({ id: `${initId}:${p!.id}`, initiative: { id: initId } }));
+      return ok({ project: p ? { initiativeToProjects: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } : null });
     }
     if (query.includes("ReorgInitToProjDelete"))
       return W("initiativeToProjectDelete", () => {
@@ -1696,7 +1697,7 @@ describe("written-label guard + team-aware child mapping (round 1)", () => {
     expect(be.mutationCalls).toEqual([]);
   });
 
-  test("--check reports an add of an inherited child id as drift (no write)", async () => {
+  test("--check reports an add of an inherited child id as a refusal (no write)", async () => {
     const be = freshBackend();
     be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
     be.labels.set("11111111-1111-4111-8111-111111111002", { id: "11111111-1111-4111-8111-111111111002", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "11111111-1111-4111-8111-111111111001" });
@@ -1707,7 +1708,9 @@ describe("written-label guard + team-aware child mapping (round 1)", () => {
       check: true, apply: false, resume: false, allowIrreversible: false,
       journalPath: join(dir, "j.jsonl"), pace: fastPace(),
     });
-    expect(result.drifted).toEqual([1]);
+    // a precondition refusal (apply would throw), not drift
+    expect(result.drifted).toEqual([]);
+    expect(result.refused).toEqual([1]);
     expect(be.mutationCalls).toEqual([]);
   });
 });
@@ -1936,5 +1939,94 @@ describe("verify retry and already-applied", () => {
     const rows = journalRead(j);
     expect(rows.map((x) => [x.seq, x.ok, x.alreadyApplied === true])).toEqual([[1, true, false], [2, true, true]]);
     expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LB, LC].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --check surfaces apply-time precondition refusals; journal marker ordering;
+// project-status lookup without a server-side filter
+// ---------------------------------------------------------------------------
+
+describe("--check runs precondition reads (no writes)", () => {
+  const checkOpts = () => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+  });
+
+  test("archive-state: occupied state (archived issue included) is a refusal, not drift; no mutation", async () => {
+    const be = freshBackend();
+    be.states.set("s-ready", { id: "s-ready", name: "Ready", type: "unstarted", archivedAt: null });
+    be.issues.set("i-1", { ...ISSUE_1, stateId: "s-ready", labelIds: [], archived: true });
+    const op = baseOp({
+      phase: 2, op: "archive-state", reversible: false, approval: "deck-1",
+      target: { type: "state", id: "s-ready", identifier: "EX/Ready" },
+      from: { archived: false }, to: { archived: true },
+    });
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([op]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([1]);
+    expect(events.some((e) => e.startsWith("refuse: REFUSE seq 1") && e.includes("still in the state"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+    // control: emptied state passes cleanly
+    be.issues.get("i-1")!.stateId = "s-todo";
+    const clean = await runPlan(fakeClient(be), planWith([op]), checkOpts());
+    expect(clean.refused).toEqual([]);
+    expect(clean.drifted).toEqual([]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("delete-team: attached project is a refusal; no mutation", async () => {
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.projects.set("p-9", { id: "p-9", name: "Leftover", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-9"], initiativeIds: [] });
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    const r = await runPlan(fakeClient(be), planWith([del]), checkOpts());
+    expect(r.refused).toEqual([9]);
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+  });
+
+  test("move-issue-team: missing phase-1 verify in the journal is a refusal", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [] });
+    const op = baseOp({
+      phase: 3, op: "move-issue-team",
+      from: { teamId: "t-1", cycleId: null }, to: { teamId: "t-2", reapplyLabelIds: [] },
+    });
+    const r = await runPlan(fakeClient(be), planWith([op]), checkOpts());
+    expect(r.refused).toEqual([1]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+});
+
+describe("journalPhaseVerified uses the latest marker", () => {
+  const mark = (ok: boolean): JournalRecord => ({ seq: "verify", phase: 2, at: "t", ok });
+  test("green then red is not verified", () => {
+    expect(journalPhaseVerified([mark(true), mark(false)], 2)).toBe(false);
+  });
+  test("red then green is verified", () => {
+    expect(journalPhaseVerified([mark(false), mark(true)], 2)).toBe(true);
+  });
+  test("other phases' markers do not count", () => {
+    expect(journalPhaseVerified([mark(true)], 1)).toBe(false);
+  });
+});
+
+describe("create-project-status read", () => {
+  test("matches by exact name and type among all statuses; same name of another type is not a match", async () => {
+    const be = freshBackend();
+    be.projectStatuses.set("ps-a", { id: "ps-a", name: "paused", type: "started" }); // case differs
+    be.projectStatuses.set("ps-b", { id: "ps-b", name: "Paused", type: "paused" }); // type differs
+    const op = baseOp({
+      op: "create-project-status", target: { type: "project", id: "new:Paused", identifier: "Paused" },
+      from: { statusId: null }, to: { name: "Paused", color: "#f59e0b", type: "started" },
+    });
+    const result = await applyPlan(be, [op], join(dir, "j.jsonl"));
+    expect(result.applied).toBe(1);
+    expect(be.mutationCalls).toEqual(["projectStatusCreate"]);
   });
 });

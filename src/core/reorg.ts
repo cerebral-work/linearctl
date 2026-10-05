@@ -329,7 +329,10 @@ export function journalOkSeqs(records: JournalRecord[]): Set<number> {
 
 /** True when the journal carries a green verify marker for the phase. */
 export function journalPhaseVerified(records: JournalRecord[], phase: number): boolean {
-  return records.some((r) => r.seq === "verify" && r.phase === phase && r.ok === true);
+  // The LATEST marker for the phase decides: a later red revokes an earlier green.
+  let latest: JournalRecord | undefined;
+  for (const r of records) if (r.seq === "verify" && r.phase === phase) latest = r;
+  return latest?.ok === true;
 }
 
 // ---------------------------------------------------------------------------
@@ -699,14 +702,36 @@ const LABELS_BY_NAME_ALL_SCOPES_Q = /* GraphQL */ `
 
 /** One issue in a state? (archive-state precondition: only empty states.) */
 const ISSUES_IN_STATE_Q = /* GraphQL */ `
-  query ReorgIssuesInState($id: String!) {
-    issues(filter: { state: { id: { eq: $id } } }, first: 1) { nodes { id } }
+  query ReorgIssuesInState($id: ID!) {
+    issues(filter: { state: { id: { eq: $id } } }, includeArchived: true, first: 1) { nodes { id } }
+  }
+`;
+
+/** A project's initiative joins — initiativeToProjects has no filter argument. */
+const PROJECT_INIT_JOINS_Q = /* GraphQL */ `
+  query ReorgProjectInitJoins($projectId: String!, $after: String) {
+    project(id: $projectId) {
+      initiativeToProjects(first: 100, after: $after, includeArchived: true) {
+        nodes { id initiative { id } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+/** Every project status (few; paginated) — projectStatuses takes no filter. */
+const PROJECT_STATUSES_Q = /* GraphQL */ `
+  query ReorgProjectStatuses($first: Int!, $after: String) {
+    projectStatuses(first: $first, after: $after) {
+      nodes { id name type }
+      pageInfo { hasNextPage endCursor }
+    }
   }
 `;
 
 /** Emptiness probes for delete-team (all must be empty). */
 const TEAM_ISSUES_Q = /* GraphQL */ `
-  query ReorgTeamIssues($id: String!) {
+  query ReorgTeamIssues($id: ID!) {
     issues(filter: { team: { id: { eq: $id } } }, includeArchived: true, first: 1) { nodes { id } }
   }
 `;
@@ -719,7 +744,7 @@ const TEAM_PROJECTS_Q = /* GraphQL */ `
   }
 `;
 const TEAM_LABELS_Q = /* GraphQL */ `
-  query ReorgTeamLabels($id: String!) {
+  query ReorgTeamLabels($id: ID!) {
     issueLabels(filter: { team: { id: { eq: $id } } }, first: 250) { nodes { id retiredAt } }
   }
 `;
@@ -866,15 +891,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     readState: (ctx, op) => readState(ctx, op.target.id),
     expectedPost: () => ({ archived: true }),
     async apply(ctx, op) {
-      // Only empty states may be archived (plan §2c) — live pre-read, refuse
-      // loudly instead of discovering Linear's refusal mid-phase.
-      const d = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
-        ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
-      );
-      if (d.issues.nodes.length > 0)
-        throw new Error(
-          `archive-state ${op.target.identifier}: ${d.issues.nodes.length} issue(s) still in the state — move them first`,
-        );
+      await assertStateEmpty(ctx, op);
       await mutate(ctx, "workflowStateArchive", M.stateArchive, { id: op.target.id });
     },
     inverse: () => null, // no unarchive — recreate is the undo (operator-acknowledged)
@@ -967,18 +984,16 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
         ? op.to.fromInitiativeToProjectId
         : null;
       if (!joinId && typeof op.to.fromInitiativeId === "string") {
-        const d = await reorgRaw<{ initiativeToProjects: { nodes: { id: string }[] } }>(
-          ctx.client,
-          `query ReorgInitJoins($initiativeId: String!, $projectId: String!) {
-            initiativeToProjects(filter: {
-              initiative: { id: { eq: $initiativeId } }
-              project: { id: { eq: $projectId } }
-            }) { nodes { id } }
-          }`,
-          { initiativeId: op.to.fromInitiativeId, projectId: op.target.id },
-          ctx.pace,
-        );
-        joinId = d.initiativeToProjects.nodes[0]?.id ?? null;
+        // initiativeToProjects takes no filter argument: read the project's
+        // own joins (paginated) and match the initiative in code.
+        type Joins = { project: { initiativeToProjects: Page<{ id: string; initiative: { id: string } }> } | null };
+        let after: string | null = null;
+        do {
+          const d: Joins = await reorgRaw<Joins>(ctx.client, PROJECT_INIT_JOINS_Q, { projectId: op.target.id, after }, ctx.pace);
+          const page = d.project?.initiativeToProjects;
+          joinId = page?.nodes.find((n) => n.initiative.id === op.to.fromInitiativeId)?.id ?? null;
+          after = !joinId && page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
+        } while (after);
       }
       if (joinId) {
         await mutate(ctx, "initiativeToProjectDelete", M.initiativeToProjectDelete, { id: joinId });
@@ -1144,15 +1159,13 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     // rollback is archiving the status in the UI (no inverse op here).
     compareKeys: ["statusId"],
     async readState(ctx, op) {
-      const d = await reorgRaw<{ projectStatuses: { nodes: { id: string }[] } }>(
-        ctx.client,
-        `query ReorgFindProjectStatus($name: String!) {
-          projectStatuses(filter: { name: { eq: $name } }) { nodes { id } }
-        }`,
-        { name: op.to.name },
-        ctx.pace,
+      const all = await paged<{ id: string; name: string; type: string }>(
+        ctx.client, ctx.pace, PROJECT_STATUSES_Q, "projectStatuses", {},
       );
-      return { statusId: d.projectStatuses.nodes[0]?.id ?? null };
+      const match = all.find(
+        (st) => st.name === op.to.name && (typeof op.to.type !== "string" || st.type === op.to.type),
+      );
+      return { statusId: match?.id ?? null };
     },
     expectedPost: (op) => ({ statusId: op.to.statusId ?? null }),
     async apply(ctx, op) {
@@ -1177,29 +1190,7 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     readState: (ctx, op) => readTeam(ctx, op.target.id),
     expectedPost: () => null, // the team must be GONE after
     async apply(ctx, op) {
-      // Live emptiness preconditions (plan §2c phase 6): 0 issues (archived
-      // included), 0 projects, 0 non-retired labels — read NOW, not from census.
-      const issues = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
-        ctx.client, TEAM_ISSUES_Q, { id: op.target.id }, ctx.pace,
-      );
-      if (issues.issues.nodes.length > 0)
-        throw new Error(`delete-team ${op.target.identifier}: issues remain`);
-      const labels = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-        ctx.client, TEAM_LABELS_Q, { id: op.target.id }, ctx.pace,
-      );
-      const active = labels.issueLabels.nodes.filter((l) => l.retiredAt == null);
-      if (active.length > 0)
-        throw new Error(`delete-team ${op.target.identifier}: ${active.length} non-retired label(s) remain`);
-      // Paginated, archived-inclusive — a team attached only to an archived
-      // project (or past the first page) must still block the delete.
-      const projects = await paged<{ id: string; teams: { nodes: { id: string }[] } }>(
-        ctx.client, ctx.pace, TEAM_PROJECTS_Q, "projects", {},
-      );
-      const member = projects.filter((p) =>
-        p.teams.nodes.some((t) => t.id === op.target.id),
-      );
-      if (member.length > 0)
-        throw new Error(`delete-team ${op.target.identifier}: ${member.length} project(s) still attached`);
+      await assertTeamEmpty(ctx, op);
       await mutate(ctx, "teamDelete", M.teamDelete, { id: op.target.id });
     },
     inverse: () => null, // 30-day grace via the UI; never an inverse op
@@ -1307,6 +1298,60 @@ export async function assertMovePreconditions(
   }
 }
 
+/** Only empty states may be archived (plan §2c) — live read, refuse loudly
+ *  instead of discovering Linear's refusal mid-phase. Archived issues count:
+ *  they still reference the state. */
+async function assertStateEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const d = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
+    ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
+  );
+  if (d.issues.nodes.length > 0)
+    throw new Error(
+      `archive-state ${op.target.identifier}: ${d.issues.nodes.length} issue(s) still in the state — move them first`,
+    );
+}
+
+/** Live emptiness preconditions (plan §2c phase 6): 0 issues (archived
+ *  included), 0 projects, 0 non-retired labels — read NOW, not from census. */
+async function assertTeamEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  const issues = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
+    ctx.client, TEAM_ISSUES_Q, { id: op.target.id }, ctx.pace,
+  );
+  if (issues.issues.nodes.length > 0)
+    throw new Error(`delete-team ${op.target.identifier}: issues remain`);
+  const labels = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
+    ctx.client, TEAM_LABELS_Q, { id: op.target.id }, ctx.pace,
+  );
+  const active = labels.issueLabels.nodes.filter((l) => l.retiredAt == null);
+  if (active.length > 0)
+    throw new Error(`delete-team ${op.target.identifier}: ${active.length} non-retired label(s) remain`);
+  // Paginated, archived-inclusive — a team attached only to an archived
+  // project (or past the first page) must still block the delete.
+  const projects = await paged<{ id: string; teams: { nodes: { id: string }[] } }>(
+    ctx.client, ctx.pace, TEAM_PROJECTS_Q, "projects", {},
+  );
+  const member = projects.filter((p) => p.teams.nodes.some((t) => t.id === op.target.id));
+  if (member.length > 0)
+    throw new Error(`delete-team ${op.target.identifier}: ${member.length} project(s) still attached`);
+}
+
+/**
+ * The reads an op's apply performs before its first write — also run by
+ * --check, so a dry run surfaces what apply would refuse. READS ONLY; throws
+ * with the refusal text. Skipped by the caller for ops whose live state
+ * already equals the expected end state.
+ */
+export async function assertOpPreconditions(
+  ctx: OpCtx,
+  op: ReorgOp,
+  journal: JournalRecord[],
+): Promise<void> {
+  if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
+  if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
+  if (op.op === "archive-state") await assertStateEmpty(ctx, op);
+  if (op.op === "delete-team") await assertTeamEmpty(ctx, op);
+}
+
 // ---------------------------------------------------------------------------
 // Compare helpers
 // ---------------------------------------------------------------------------
@@ -1385,6 +1430,8 @@ export interface RunResult {
   dryRun: boolean;
   /** --check only: seqs whose live state drifted from `from`. */
   drifted: number[];
+  /** --check only: seqs whose apply-time precondition reads would refuse. */
+  refused: number[];
 }
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -1587,6 +1634,7 @@ export async function runPlan(
   // --check: dry-run PLUS a live drift pre-read per target; no writes.
   if (opts.check && !opts.apply) {
     const drifted: number[] = [];
+    const refused: number[] = [];
     for (const op of ops) {
       const def = OP_REGISTRY[op.op];
       try {
@@ -1598,18 +1646,6 @@ export async function runPlan(
             detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: inherited label (child of ${String(live.inheritedFromId)}) — target the owner`,
           });
           continue;
-        }
-        if (op.op === "relabel" || op.op === "move-issue-team") {
-          try {
-            await assertNoInheritedWrites(ctx, op);
-          } catch (err) {
-            drifted.push(op.seq);
-            opts.onEvent?.({
-              kind: "drift",
-              detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${err instanceof Error ? err.message : String(err)}`,
-            });
-            continue;
-          }
         }
         const drift = compareState(op.from, live, def.compareKeys);
         if (drift.length && isAlreadyApplied(def, op, live)) {
@@ -1624,6 +1660,18 @@ export async function runPlan(
             detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}`,
           });
         } else {
+          // precondition READS apply would run before its first write: a
+          // refusal here is its own finding class, distinct from drift
+          try {
+            await assertOpPreconditions(ctx, op, journal);
+          } catch (err) {
+            refused.push(op.seq);
+            opts.onEvent?.({
+              kind: "refuse",
+              detail: `REFUSE seq ${op.seq} [${op.op}] ${op.target.identifier}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            continue;
+          }
           opts.onEvent?.({ kind: "check", detail: `ok    seq ${op.seq} [${op.op}] ${op.target.identifier}` });
         }
       } catch (err) {
@@ -1663,9 +1711,9 @@ export async function runPlan(
     }
     opts.onEvent?.({
       kind: "budget",
-      detail: `check: ${ops.length} op(s) pre-read live, ${drifted.length} drifted`,
+      detail: `check: ${ops.length} op(s) pre-read live, ${drifted.length} drifted, ${refused.length} would be refused`,
     });
-    return { applied: 0, skipped, dryRun: true, drifted };
+    return { applied: 0, skipped, dryRun: true, drifted, refused };
   }
 
   if (!opts.apply) {
@@ -1682,7 +1730,7 @@ export async function runPlan(
       kind: "budget",
       detail: `${ops.length} op(s), ≈${estimateRequests(ops)} request(s) at ${REORG_RATE_PER_HOUR}/h pace (add --check for a live drift pre-read)`,
     });
-    return { applied: 0, skipped, dryRun: true, drifted: [] };
+    return { applied: 0, skipped, dryRun: true, drifted: [], refused: [] };
   }
 
   if (!opts.backupRecordPath)
@@ -1733,7 +1781,7 @@ export async function runPlan(
     });
     i++;
   }
-  return { applied, skipped, dryRun: false, drifted: [] };
+  return { applied, skipped, dryRun: false, drifted: [], refused: [] };
 }
 
 async function runBatch(
