@@ -677,7 +677,9 @@ const M = {
 /** All-scopes labels by exact name — the --check create-conflict preflight. */
 const LABELS_BY_NAME_ALL_SCOPES_Q = /* GraphQL */ `
   query ReorgLabelsByNameAllScopes($name: String!) {
-    issueLabels(filter: { name: { eq: $name } }, first: 250) { nodes { id name team { id key } } }
+    issueLabels(filter: { name: { eq: $name } }, first: 250) {
+      nodes { id name team { id key } inheritedFrom { id } }
+    }
   }
 `;
 
@@ -1211,7 +1213,8 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
  * write ban is on the label object itself and on ADDING inherited labels.
  */
 export async function assertNoInheritedWrites(ctx: OpCtx, op: ReorgOp): Promise<void> {
-  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds)];
+  const written = [...sortedStrings(op.to.add), ...sortedStrings(op.to.reapplyLabelIds)]
+    .filter((id) => !id.startsWith(LABEL_REF_PREFIX)); // name: refs resolve workspace-scoped only
   if (written.length === 0) return;
   const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
     ctx.client,
@@ -1550,7 +1553,11 @@ export async function runPlan(
       const d = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
         ctx.client, LABELS_BY_NAME_ALL_SCOPES_Q, { name: op.to.name }, ctx.pace,
       );
-      const conflicts = d.issueLabels.nodes.filter((l) => !renamedAway.has(l.id));
+      // planned renames clear their targets AND, by propagation, every
+      // inherited child of those targets
+      const conflicts = d.issueLabels.nodes.filter(
+        (l) => !renamedAway.has(l.id) && !(l.inheritedFrom && renamedAway.has(l.inheritedFrom.id)),
+      );
       if (conflicts.length > 0) {
         drifted.push(op.seq);
         opts.onEvent?.({
