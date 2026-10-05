@@ -2511,8 +2511,29 @@ describe("team-label carry-over", () => {
       expect(bad.lines.join("\n")).toContain(L_DEST);
     });
 
+    test("team differing from the destination is never already applied, even when state/project/labels match", async () => {
+      const be = cascaded({ teamId: "t-p" });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [cascadeOp()], j)).rejects.toThrow(ReorgMismatch);
+      expect(be.mutationCalls).toEqual([]);
+      expect(journalRead(j).some((r) => r.seq === 2)).toBe(false);
+    });
+
     describe("rollback", () => {
       const opts = { pace: fastPace(), apply: true, verifyDelaysMs: [0], sleep: async () => {} };
+
+      test("a non-move inverse already at its end state is still refused as on main", async () => {
+        const be = freshBackend();
+        be.issues.set("i-1", { ...ISSUE_1, labelIds: [L_WS] });
+        const j = join(dir, "j.jsonl");
+        const op = baseOp({ seq: 3, phase: 1, op: "relabel", from: { labelIds: [L_SRC_BUG, L_WS] }, to: { add: [], remove: [L_SRC_BUG] } });
+        journalAppend(j, { seq: 3, phase: 1, op: "relabel", original: op, before: op.from, after: { labelIds: [L_SRC_BUG, L_WS] }, at: "2026-10-05T00:00:04Z", ok: true });
+        // live already holds the inverse's end state ([L_SRC_BUG, L_WS]) but not its from-state
+        be.issues.get("i-1")!.labelIds = [L_SRC_BUG, L_WS];
+        await expect(rollbackPhase(fakeClient(be), j, 1, opts)).rejects.toThrow(ReorgMismatch);
+        expect(be.mutationCalls).toEqual([]);
+      });
       async function movedForward() {
         const be = backend();
         be.labels.set(L_DEST, { id: L_DEST, name: "bug-ws", retiredAt: null, teamId: null, teamKey: null });

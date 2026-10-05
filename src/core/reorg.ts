@@ -2804,7 +2804,8 @@ export async function rollbackPhase(
     if (!bad.length) return null;
     // Inverting a parent's move carries its sub-issues back too: a child whose
     // live state already equals ITS inverse's full end state needs no write.
-    const done = await isAlreadyApplied(ctx, invDef, inv, live);
+    const done: AppliedCheck =
+      inv.op === "move-issue-team" ? await isAlreadyApplied(ctx, invDef, inv, live) : { applied: false };
     if (done.applied) return "cascade";
     const error = new ReorgMismatch(inv.seq, {
       expected: pick(inv.from, invDef.compareKeys),
