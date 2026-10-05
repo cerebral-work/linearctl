@@ -1179,12 +1179,14 @@ describe("verifyPhase supersede", () => {
     from: { teamIds: ["d", "s"] }, to: { teamIds: ["d"] },
   });
   const rec = (o: ReorgOp, ok = true) => ({ seq: o.seq, phase: o.phase, op: o.op, original: o, at: "a", ok });
+  const mark = (phase: number, ok: boolean) => ({ seq: "verify" as const, phase, ok, at: "a" });
 
   test("add then remove on the same project verifies green, add listed superseded", async () => {
     const be = freshBackend();
     be.projects.set("p-1", { ...P });
     const j = join(dir, "j.jsonl");
     journalAppend(j, rec(addOp)); journalAppend(j, rec(rmOp));
+    journalAppend(j, mark(6, true));
     const v = await verifyPhase(fakeClient(be), planWith([addOp, rmOp]), 5, { journalPath: j, pace: fastPace() });
     expect(v.failures).toEqual([]);
     expect(v.ok).toBe(true);
@@ -1207,7 +1209,7 @@ describe("verifyPhase supersede", () => {
     expect(v2.ok).toBe(false);
   });
 
-  test("move then archive on the same issue: move superseded, archive still checked", async () => {
+  test("move then archive on the same issue: both still checked (archive sets only archived)", async () => {
     const be = freshBackend();
     be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds], teamId: "t-9", archived: true });
     const mv = baseOp({
@@ -1215,15 +1217,115 @@ describe("verifyPhase supersede", () => {
       from: { teamId: "t-1", projectId: "p-1", stateId: "s-todo" },
       to: { teamId: "t-2", projectId: "p-1", stateId: "s-todo" },
     });
-    const ar = baseOp({ seq: 2, phase: 6, op: "archive-issue", from: { archived: false }, to: { archived: true } });
+    const ar = baseOp({ seq: 2, phase: 5, op: "archive-issue", from: { archived: false }, to: { archived: true } });
     const j = join(dir, "j.jsonl");
     journalAppend(j, rec(mv)); journalAppend(j, rec(ar));
     const v = await verifyPhase(fakeClient(be), planWith([mv, ar]), 5, { journalPath: j, pace: fastPace() });
-    expect(v.ok).toBe(true);
-    expect(v.superseded[0]).toContain("superseded by seq 2");
+    expect(v.ok).toBe(false);
+    expect(v.failures.some((f) => f.startsWith("seq 1") && f.includes("teamId"))).toBe(true);
+    expect(v.superseded).toEqual([]);
+    be.issues.get("i-1")!.teamId = "t-2";
+    const v2 = await verifyPhase(fakeClient(be), planWith([mv, ar]), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.ok).toBe(true);
     be.issues.get("i-1")!.archived = false;
-    const v2 = await verifyPhase(fakeClient(be), planWith([mv, ar]), 6, { journalPath: j, pace: fastPace() });
-    expect(v2.ok).toBe(false);
+    const v3 = await verifyPhase(fakeClient(be), planWith([mv, ar]), 5, { journalPath: j, pace: fastPace() });
+    expect(v3.failures.some((f) => f.startsWith("seq 2") && f.includes("archived"))).toBe(true);
+  });
+
+  test("remove-project-team then archive-project: teamIds still checked", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { ...P, teamIds: ["d", "x"], archived: true });
+    const ar = baseOp({
+      seq: 3, phase: 5, op: "archive-project",
+      target: { type: "project", id: "p-1", identifier: "P" },
+      from: { archived: false }, to: { archived: true },
+    });
+    const rm = { ...rmOp, phase: 5, from: { teamIds: ["d", "x"] }, to: { teamId: "x", teamIds: ["d"] } };
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(rm)); journalAppend(j, rec(ar));
+    const v = await verifyPhase(fakeClient(be), planWith([rm, ar]), 5, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(false);
+    expect(v.failures.some((f) => f.startsWith("seq 2") && f.includes("teamIds"))).toBe(true);
+    be.projects.get("p-1")!.teamIds = ["d"];
+    const v2 = await verifyPhase(fakeClient(be), planWith([rm, ar]), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.failures).toEqual([]);
+  });
+
+  test("archive, unarchive, re-archive: only the last archive is checked", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds], archived: true });
+    const mk = (seq: number, archived: boolean) =>
+      baseOp({ seq, phase: 5, op: "archive-issue", from: { archived: !archived }, to: { archived } });
+    const ops = [mk(1, true), mk(2, false), mk(3, true)];
+    const j = join(dir, "j.jsonl");
+    for (const o of ops) journalAppend(j, rec(o));
+    const v = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+    expect(v.failures).toEqual([]);
+    expect(v.superseded).toHaveLength(2);
+    be.issues.get("i-1")!.archived = false;
+    const v2 = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.failures).toHaveLength(1);
+    expect(v2.failures[0]).toContain("seq 3");
+  });
+
+  test("creates of different labels in one team never supersede each other", async () => {
+    const be = freshBackend();
+    const T = { type: "team" as const, id: "t-1", identifier: "EX" };
+    const mkc = (seq: number, name: string) =>
+      baseOp({ seq, phase: 5, op: "create-team-label", target: T, from: { labelId: null }, to: { name, labelId: `l-${name}` } });
+    const ops = [mkc(1, "a"), mkc(2, "b"), mkc(3, "c")];
+    for (const n of ["a", "b", "c"])
+      be.labels.set(`l-${n}`, { id: `l-${n}`, name: n, retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    const j = join(dir, "j.jsonl");
+    for (const o of ops) journalAppend(j, rec(o));
+    const v = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+    expect(v.failures).toEqual([]);
+    expect(v.superseded).toEqual([]);
+    be.labels.delete("l-a");
+    const v2 = await verifyPhase(fakeClient(be), planWith(ops), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.failures.some((f) => f.startsWith("seq 1"))).toBe(true);
+    // a later retire of THAT label supersedes its create
+    const ret = baseOp({
+      seq: 4, phase: 5, op: "retire-or-delete-label",
+      target: { type: "label", id: "l-a", identifier: "EX/a" }, from: { retired: false }, to: { retired: true },
+    });
+    journalAppend(j, rec(ret));
+    be.labels.set("l-a", { id: "l-a", name: "a", retiredAt: "x", teamId: "t-1", teamKey: "EX" });
+    const v3 = await verifyPhase(fakeClient(be), planWith([...ops, ret]), 5, { journalPath: j, pace: fastPace() });
+    expect(v3.failures).toEqual([]);
+    expect(v3.superseded).toHaveLength(1);
+    expect(v3.superseded[0]).toContain("seq 1");
+  });
+
+  test("a later op journaled from another plan supersedes; a plan op without an ok row still fails", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { ...P });
+    const j = join(dir, "j.jsonl");
+    const rm5 = { ...rmOp, phase: 5 };
+    journalAppend(j, rec(addOp)); journalAppend(j, rec(rm5));
+    const v = await verifyPhase(fakeClient(be), planWith([addOp]), 5, { journalPath: j, pace: fastPace() });
+    expect(v.failures).toEqual([]);
+    expect(v.superseded[0]).toContain("superseded by seq 2");
+    const missing = baseOp({ seq: 9, phase: 5, from: { stateId: "s-todo" }, to: { stateId: "s-done" } });
+    const v2 = await verifyPhase(fakeClient(be), planWith([addOp, missing]), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.failures.some((f) => f.startsWith("seq 9") && f.includes("no ok journal entry"))).toBe(true);
+  });
+
+  test("a later op in an unverified phase supersedes nothing; green marker enables it", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { ...P });
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(addOp)); journalAppend(j, rec(rmOp));
+    const plan = planWith([addOp, rmOp]);
+    const v = await verifyPhase(fakeClient(be), plan, 5, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(false);
+    expect(v.superseded).toEqual([]);
+    journalAppend(j, mark(6, true));
+    const v2 = await verifyPhase(fakeClient(be), plan, 5, { journalPath: j, pace: fastPace() });
+    expect(v2.ok).toBe(true);
+    journalAppend(j, mark(6, false));
+    const v3 = await verifyPhase(fakeClient(be), plan, 5, { journalPath: j, pace: fastPace() });
+    expect(v3.ok).toBe(false);
   });
 
   test("partial overlap: only the non-superseded key is checked", async () => {
