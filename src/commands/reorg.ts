@@ -128,6 +128,11 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
   const out = opts.out ?? "reorg-plan.jsonl";
   writeFileSync(out, lines);
   for (const w of plan.warnings) process.stderr.write(`warning: ${w}\n`);
+  for (const v of plan.visibility ?? [])
+    process.stdout.write(
+      `visibility change (${v.allowed ? "allowed" : "refused"}): ${v.kind} ${v.from} -> ${v.to}: ${v.count}\n`,
+    );
+  for (const n of plan.notes ?? []) process.stdout.write(`info: ${n}\n`);
   process.stdout.write(
     `plan: ${plan.ops.length} op(s) across phases ${[...new Set(plan.ops.map((o) => o.phase))].sort().join(", ")} → ${out}\n` +
       `review the file, then: linearctl reorg apply ${out} --phase N --apply --backup-record <backup.verified.json>\n`,

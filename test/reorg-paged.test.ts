@@ -50,6 +50,7 @@ const team = (key: string) => ({
   key,
   name: key,
   triageEnabled: false,
+  private: false,
   archivedAt: null,
   issueCount: 0,
   states: { nodes: [] },

@@ -13,6 +13,9 @@ import {
   assertFreshBackup,
   assertFromAnchors,
   assertMovePreconditions,
+  moveAccessLost,
+  moveVisibilityChange,
+  projectTeamAddVisibilityChange,
   census,
   estimateRequests,
   journalAppend,
@@ -62,7 +65,7 @@ function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
 interface FakeState { id: string; name: string; type: string; archivedAt: string | null; inheritedFrom?: string | null; teamKey?: string }
 interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; archived?: boolean; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
-interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean; parentId?: string | null }
+interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean; parentId?: string | null; private?: boolean | null; memberIds?: string[]; membersFail?: boolean; membersStuck?: boolean }
 
 interface FakeBackend {
   issues: Map<string, FakeIssue>;
@@ -207,6 +210,18 @@ function fakeClient(be: FakeBackend): LinearClient {
       // Linear's projectStatuses takes no filter argument — the engine reads
       // them all and matches by name in code
       return ok({ projectStatuses: { nodes: [...be.projectStatuses.values()], pageInfo: { hasNextPage: false, endCursor: null } } });
+    }
+    if (query.includes("ReorgTeamPrivacy")) {
+      // unknown teams read as public: most tests never declare privacy
+      const t = be.teams.get(vars.id as string);
+      if (t?.deleted) return ok({ team: null });
+      return ok({ team: { id: vars.id, key: t?.key ?? String(vars.id), private: t && "private" in t ? t.private : false } });
+    }
+    if (query.includes("ReorgTeamMembers")) {
+      const t = be.teams.get(vars.id as string);
+      if (t?.membersFail) throw new Error("members read failed");
+      if (t?.membersStuck) return ok({ team: { members: { nodes: [{ id: "u1" }], pageInfo: { hasNextPage: true, endCursor: "same" } } } });
+      return ok({ team: { members: { nodes: (t?.memberIds ?? []).map((id) => ({ id })), pageInfo: { hasNextPage: false, endCursor: null } } } });
     }
     if (query.includes("ReorgTeamState")) {
       be.readCalls++;
@@ -1979,7 +1994,7 @@ describe("census capture (CER-2353 round 1)", () => {
       seen.push(query);
       const page = (nodes: unknown[]) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: null } });
       if (query.includes("ReorgCensusTeams"))
-        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
+        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, private: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
       if (query.includes("ReorgCensusLabels"))
         return { data: { issueLabels: page([
           { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
@@ -1993,6 +2008,57 @@ describe("census capture (CER-2353 round 1)", () => {
     };
     return { client: { rawRequest } } as unknown as LinearClient;
   }
+
+  test("a team with no boolean private flag fails the census", async () => {
+    const stub = {
+      client: {
+        rawRequest: async (query: string) => {
+          if (query.includes("ReorgCensusTeams"))
+            return { data: { teams: { nodes: [{ id: "t-x", key: "XXX", name: "X", private: null, states: { nodes: [] } }], pageInfo: { hasNextPage: false, endCursor: null } } } };
+          throw new Error("unexpected " + query.slice(0, 40));
+        },
+      },
+    } as unknown as LinearClient;
+    await expect(census(stub, {}, fastPace())).rejects.toThrow("no boolean private flag");
+  });
+
+  test("a stuck members cursor fails the census", async () => {
+    const stub = {
+      client: {
+        rawRequest: async (query: string) => {
+          if (query.includes("ReorgCensusTeams"))
+            return { data: { teams: { nodes: [{ id: "t-x", key: "XXX", name: "X", private: true, states: { nodes: [] } }], pageInfo: { hasNextPage: false, endCursor: null } } } };
+          if (query.includes("ReorgTeamMembers"))
+            return { data: { team: { members: { nodes: [{ id: "u" }], pageInfo: { hasNextPage: true, endCursor: "same" } } } } };
+          throw new Error("unexpected " + query.slice(0, 40));
+        },
+      },
+    } as unknown as LinearClient;
+    await expect(census(stub, {}, fastPace())).rejects.toThrow("did not advance");
+  });
+
+  test("records Team.private, and the members of private teams only", async () => {
+    const seen: string[] = [];
+    const base = censusStub(seen);
+    const stub = {
+      client: {
+        rawRequest: async (query: string, vars: Record<string, unknown>) => {
+          if (query.includes("ReorgCensusTeams")) seen.push(query);
+          if (query.includes("ReorgCensusTeams"))
+            return { data: { teams: { nodes: [
+              { id: "t-pub", key: "PUB", name: "P", private: false, states: { nodes: [] } },
+              { id: "t-priv", key: "PRV", name: "Q", private: true, states: { nodes: [] } },
+            ], pageInfo: { hasNextPage: false, endCursor: null } } } };
+          if (query.includes("ReorgTeamMembers"))
+            return { data: { team: { members: { nodes: vars.id === "t-priv" ? [{ id: "u2" }, { id: "u1" }] : [], pageInfo: { hasNextPage: false, endCursor: null } } } } };
+          return (base as unknown as { client: { rawRequest: (q: string) => Promise<unknown> } }).client.rawRequest(query);
+        },
+      },
+    } as unknown as LinearClient;
+    const d = await census(stub, {}, fastPace());
+    expect(d.teams.map((t) => [t.key, t.private, t.memberIds])).toEqual([["PUB", false, undefined], ["PRV", true, ["u1", "u2"]]]);
+    expect(seen.find((q) => q.includes("ReorgCensusTeams"))).toContain("private");
+  });
 
   test("captures inheritedFrom on labels and parent on teams", async () => {
     const seen: string[] = [];
@@ -3177,5 +3243,172 @@ describe("archive-state and inherited workflow states", () => {
     await expect(applyPlan(be, [archive("s-owner", "PPP/Review")], join(dir, "j.jsonl"), { allowIrreversible: true }))
       .rejects.toThrow("inherited view SSS/Review still holds issue(s)");
     expect(be.mutationCalls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Team visibility guard
+// ---------------------------------------------------------------------------
+
+describe("team visibility", () => {
+  const T = (id: string, priv: boolean, memberIds: string[] | null = null) => ({ id, key: id.toUpperCase(), private: priv, memberIds });
+
+  test("rule: the move and project-add matrix", () => {
+    expect(moveVisibilityChange(T("a", true), T("b", false))).toContain("every member of the workspace");
+    // destination has a member the source lacks: that member GAINS access
+    expect(moveVisibilityChange(T("a", true, ["u1"]), T("b", true, ["u1", "u2"]))).toContain("1 member(s) of B");
+    // destination lacks source members: readers removed, not a widening
+    expect(moveVisibilityChange(T("a", true, ["u1", "u2"]), T("b", true, ["u1"]))).toBeNull();
+    expect(moveAccessLost(T("a", true, ["u1", "u2"]), T("b", true, ["u1"]))).toBe(1);
+    expect(moveAccessLost(T("a", true, ["u1"]), T("b", true, ["u1"]))).toBe(0);
+    expect(moveVisibilityChange(T("a", true, ["u1"]), T("b", true, ["u1"]))).toBeNull();
+    expect(moveVisibilityChange(T("a", true, null), T("b", true, ["u1"]))).not.toBeNull(); // unknown fails closed
+    expect(moveVisibilityChange(T("a", false), T("b", true, ["u1"]))).toBeNull();
+    expect(moveVisibilityChange(T("a", false), T("b", false))).toBeNull();
+    expect(projectTeamAddVisibilityChange([T("a", true)], [T("b", false)])).toContain("project page");
+    expect(projectTeamAddVisibilityChange([T("a", true)], [T("b", true)])).toBeNull();
+    expect(projectTeamAddVisibilityChange([T("a", true), T("c", false)], [T("b", false)])).toBeNull();
+    expect(projectTeamAddVisibilityChange([], [T("b", false)])).toBeNull();
+  });
+
+  function visBackend(src: { private: boolean; memberIds?: string[] }, dst: { private: boolean; memberIds?: string[] }): FakeBackend {
+    const be = freshBackend();
+    be.teams.set("t-1", { id: "t-1", key: "EX", triageEnabled: true, deleted: false, ...src });
+    be.teams.set("t-2", { id: "t-2", key: "NEW", triageEnabled: true, deleted: false, ...dst });
+    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1", "t-2"], initiativeIds: [] });
+    be.labels.set("11111111-1111-4111-8111-1111111110c5", { id: "11111111-1111-4111-8111-1111111110c5", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["11111111-1111-4111-8111-1111111110c5"], stateId: "s-todo" });
+    return be;
+  }
+  const moveOp = (over: Partial<ReorgOp> = {}) => baseOp({
+    seq: 5, op: "move-issue-team",
+    from: { teamId: "t-1", projectId: "p-1", cycleId: null, labelIds: ["11111111-1111-4111-8111-1111111110c5"] },
+    to: { teamId: "t-2", reapplyLabelIds: ["11111111-1111-4111-8111-1111111110c5"], stateId: "s-new-todo" },
+    ...over,
+  });
+  function journal(): string {
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, { seq: "verify", phase: 1, at: "a", ok: true });
+    journalAppend(j, { seq: "verify", phase: 2, at: "b", ok: true });
+    return j;
+  }
+  async function check(be: FakeBackend, ops: ReorgOp[]) {
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith(ops), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: journal(), pace: fastPace(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`),
+    });
+    return { r, events };
+  }
+
+  test("private -> public: apply refuses before any write, naming both teams", async () => {
+    const be = visBackend({ private: true }, { private: false });
+    await expect(applyPlan(be, [moveOp()], journal())).rejects.toThrow(/visibility change refused \(EX -> NEW\).*every member of the workspace/s);
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.issues.get("i-1")!.teamId).toBe("t-1");
+  });
+
+  test("private -> public: --check reports REFUSE", async () => {
+    const be = visBackend({ private: true }, { private: false });
+    const { r, events } = await check(be, [moveOp()]);
+    expect(r.refused).toEqual([5]);
+    expect(events.some((e) => e.includes("REFUSE seq 5") && e.includes("(EX -> NEW)") && e.includes("every member of the workspace"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("private -> private: gaining members refused; equal and fewer allowed", async () => {
+    const gain = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1", "u2"] });
+    await expect(applyPlan(gain, [moveOp()], journal())).rejects.toThrow(/visibility change refused.*1 member\(s\) of NEW/s);
+    expect(gain.mutationCalls).toEqual([]);
+    expect((await check(gain, [moveOp()])).r.refused).toEqual([5]);
+    const equal = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1"] });
+    expect((await applyPlan(equal, [moveOp()], journal())).applied).toBe(1);
+    const fewer = visBackend({ private: true, memberIds: ["u1", "u2"] }, { private: true, memberIds: ["u1"] });
+    const { r, events } = await check(fewer, [moveOp()]);
+    expect(r.refused).toEqual([]);
+    expect(events.some((e) => e.includes("info seq 5") && e.includes("1 source member(s) lose access"))).toBe(true);
+    expect((await applyPlan(fewer, [moveOp()], journal())).applied).toBe(1);
+    expect(fewer.issues.get("i-1")!.teamId).toBe("t-2");
+  });
+
+  test("public -> private and public -> public are allowed", async () => {
+    for (const dst of [{ private: true, memberIds: ["u1"] }, { private: false }]) {
+      const be = visBackend({ private: false }, dst);
+      expect((await applyPlan(be, [moveOp()], journal())).applied).toBe(1);
+    }
+  });
+
+  test("opt-in allows the move and --check lists it as allowed", async () => {
+    const op = moveOp({ allowVisibilityChange: true });
+    const { r, events } = await check(visBackend({ private: true }, { private: false }), [op]);
+    expect(r.refused).toEqual([]);
+    expect(events.some((e) => e.includes("visibility change (allowed) seq 5"))).toBe(true);
+    const be = visBackend({ private: true }, { private: false });
+    expect((await applyPlan(be, [op], journal())).applied).toBe(1);
+    expect(be.issues.get("i-1")!.teamId).toBe("t-2");
+  });
+
+  test("apply reports an opted-in visibility change as an event", async () => {
+    const be = visBackend({ private: true }, { private: false });
+    const events: string[] = [];
+    await applyPlan(be, [moveOp({ allowVisibilityChange: true })], journal(), { onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(events.some((e) => e.startsWith("visibility: visibility change (allowed) seq 5") && e.includes("EX -> NEW"))).toBe(true);
+  });
+
+  describe("fails closed when visibility cannot be established", () => {
+    const cases: [string, (be: FakeBackend) => void][] = [
+      ["source team not found", (be) => { be.teams.get("t-1")!.deleted = true; }],
+      ["private flag is null", (be) => { be.teams.get("t-1")!.private = null; }],
+      ["destination private flag is null", (be) => { be.teams.get("t-2")!.private = null; }],
+      ["members read fails", (be) => { be.teams.get("t-2")!.membersFail = true; }],
+      ["members read stuck cursor", (be) => { be.teams.get("t-1")!.membersStuck = true; }],
+    ];
+    test.each(cases)("%s: --check refuses, apply writes nothing", async (_n, break_) => {
+      const mk = () => {
+        const be = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1"] });
+        break_(be);
+        return be;
+      };
+      const c = mk();
+      expect((await check(c, [moveOp()])).r.refused).toEqual([5]);
+      const be = mk();
+      await expect(applyPlan(be, [moveOp()], journal())).rejects.toThrow();
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-1");
+    });
+  });
+
+  test("add-project-team of a public team to an all-private project is refused", async () => {
+    const be = visBackend({ private: true }, { private: false });
+    be.projects.get("p-1")!.teamIds = ["t-1"];
+    const op = baseOp({
+      op: "add-project-team", target: { type: "project", id: "p-1", identifier: "P" },
+      from: { teamIds: ["t-1"] }, to: { teamId: "t-2", teamIds: ["t-1", "t-2"] },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"))).rejects.toThrow(/visibility change refused.*project page/s);
+    expect(be.mutationCalls).toEqual([]);
+    expect((await check(be, [op])).r.refused).toEqual([1]);
+    expect((await applyPlan(be, [{ ...op, allowVisibilityChange: true }], join(dir, "j2.jsonl"))).applied).toBe(1);
+  });
+
+  test("a private team added to a private project is not a visibility change", async () => {
+    const be = visBackend({ private: true }, { private: true, memberIds: [] });
+    be.projects.get("p-1")!.teamIds = ["t-1"];
+    const op = baseOp({
+      op: "add-project-team", target: { type: "project", id: "p-1", identifier: "P" },
+      from: { teamIds: ["t-1"] }, to: { teamId: "t-2", teamIds: ["t-1", "t-2"] },
+    });
+    expect((await applyPlan(be, [op], join(dir, "j.jsonl"))).applied).toBe(1);
+  });
+
+  test("rollback of an allowed private -> public move (a move back into the private team) is not refused", async () => {
+    const be = visBackend({ private: true }, { private: false });
+    const j = journal();
+    expect((await applyPlan(be, [moveOp({ allowVisibilityChange: true })], j)).applied).toBe(1);
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+    expect(rb.rolledBack).toBe(1);
+    expect(be.issues.get("i-1")!.teamId).toBe("t-1");
+    // and the rule itself: public -> private is never a change
+    expect(moveVisibilityChange(T("b", false), T("a", true, ["u1"]))).toBeNull();
   });
 });
