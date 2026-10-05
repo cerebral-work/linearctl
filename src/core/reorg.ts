@@ -2582,6 +2582,44 @@ async function runBatch(
 // Verify — per-phase: journal completeness + live re-check of expected state
 // ---------------------------------------------------------------------------
 
+/**
+ * After-the-fact verification compares an op's expected end state to the
+ * live target, so an earlier op whose key a later applied op changed again
+ * would always read as failed. Returns, for one op, the compared keys that a
+ * LATER op (seq order, any phase of the plan) journaled ok has superseded,
+ * with the superseding seq. Superseding is per (target type, target id, key);
+ * a later archive, or a delete, also supersedes every key of earlier ops on
+ * that target, and a retire supersedes an earlier create's label lookup.
+ */
+function supersededKeys(
+  op: ReorgOp,
+  keys: string[],
+  plan: ReorgPlan,
+  bySeq: Map<number, JournalRecord>,
+  okSeqs: Set<number>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const later of plan.ops) {
+    if (later.seq <= op.seq || !okSeqs.has(later.seq)) continue;
+    const eff = bySeq.get(later.seq)?.original ?? later;
+    if (eff.target.type !== op.target.type || eff.target.id !== op.target.id) continue;
+    const ldef = OP_REGISTRY[eff.op];
+    const lexp = ldef.expectedPost(eff);
+    const all =
+      lexp === null ||
+      ((eff.op === "archive-issue" || eff.op === "archive-project" || eff.op === "archive-initiative") &&
+        lexp.archived === true);
+    for (const k of keys) {
+      if (out.has(k)) continue;
+      const retiresCreate =
+        eff.op === "retire-or-delete-label" && k === "labelId" && lexp !== null && lexp.retired === true;
+      if (all || retiresCreate || (lexp !== null && ldef.compareKeys.includes(k) && k in lexp))
+        out.set(k, later.seq);
+    }
+  }
+  return out;
+}
+
 export async function verifyPhase(
   client: LinearClient,
   plan: ReorgPlan,
@@ -2593,13 +2631,14 @@ export async function verifyPhase(
     /** Earlier journals whose verify markers feed `gateGreen` (read-only). */
     priorJournalPaths?: string[];
   },
-): Promise<{ ok: boolean; failures: string[]; gateGreen: boolean }> {
+): Promise<{ ok: boolean; failures: string[]; gateGreen: boolean; superseded: string[] }> {
   const ops = plan.ops.filter((o) => o.phase === phase);
   const journal = journalRead(opts.journalPath);
   const okSeqs = journalOkSeqs(journal);
   const bySeq = new Map<number, JournalRecord>();
   for (const r of journal) if (typeof r.seq === "number") bySeq.set(r.seq, r);
   const failures: string[] = [];
+  const superseded: string[] = [];
   const ctx: OpCtx = { client, pace: opts.pace };
 
   for (const op of ops) {
@@ -2616,13 +2655,26 @@ export async function verifyPhase(
     // correction owns it during apply; by verify time it must BE there)
     if (expected && effective.op === "move-issue-team" && typeof effective.to.stateId === "string")
       expected.stateId = effective.to.stateId;
+    let checkKeys = def.compareKeys;
+    if (expected !== null) {
+      const sup = supersededKeys(effective, def.compareKeys.filter((k) => k in expected), plan, bySeq, okSeqs);
+      if (sup.size) {
+        checkKeys = def.compareKeys.filter((k) => !sup.has(k));
+        const by = [...new Set(sup.values())].sort((a, b) => a - b).join(", ");
+        superseded.push(
+          `seq ${op.seq} [${op.op}] ${op.target.identifier}: ${[...sup.keys()].join(", ")} superseded by seq ${by}`,
+        );
+        // every compared key superseded: nothing left to check live
+        if (!def.compareKeys.some((k) => k in expected && !sup.has(k))) continue;
+      }
+    }
     try {
       const live = await def.readState(ctx, effective);
       if (expected === null) {
         failures.push(`seq ${op.seq} [${op.op}] ${op.target.identifier}: expected absent, still present`);
         continue;
       }
-      const bad = compareState(expected, live, def.compareKeys);
+      const bad = compareState(expected, live, checkKeys);
       if (effective.op === "move-issue-team" && Array.isArray(effective.to.labelIdsComputed)) {
         const want = sortedStrings(effective.to.labelIdsComputed);
         if (JSON.stringify(sortedStrings(live.labelIds)) !== JSON.stringify(want))
@@ -2641,13 +2693,13 @@ export async function verifyPhase(
   }
 
   const ok = failures.length === 0;
-  const report = { phase, ok, ops: ops.length, failures, at: new Date().toISOString() };
+  const report = { phase, ok, ops: ops.length, failures, superseded, at: new Date().toISOString() };
   if (opts.reportPath) writeFsync(opts.reportPath, JSON.stringify(report, null, 2) + "\n", "w");
   const marker: JournalRecord = { seq: "verify", phase, ok, at: report.at };
   journalAppend(opts.journalPath, marker);
   // what the phase gate reads after this run: latest marker across all journals
   const gateGreen = journalPhaseVerifiedAcross(loadPriorMarkers(opts.priorJournalPaths), [...journal, marker], phase);
-  return { ok, failures, gateGreen };
+  return { ok, failures, gateGreen, superseded };
 }
 
 // ---------------------------------------------------------------------------

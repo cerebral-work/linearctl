@@ -1166,6 +1166,86 @@ describe("emptiness pre-reads", () => {
 // verifyPhase + rollback discipline
 // ---------------------------------------------------------------------------
 
+describe("verifyPhase supersede", () => {
+  const P = { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["d"], initiativeIds: [] };
+  const addOp = baseOp({
+    seq: 1, phase: 5, op: "add-project-team",
+    target: { type: "project", id: "p-1", identifier: "P" },
+    from: { teamIds: ["s"] }, to: { teamIds: ["d", "s"] },
+  });
+  const rmOp = baseOp({
+    seq: 2, phase: 6, op: "remove-project-team",
+    target: { type: "project", id: "p-1", identifier: "P" },
+    from: { teamIds: ["d", "s"] }, to: { teamIds: ["d"] },
+  });
+  const rec = (o: ReorgOp, ok = true) => ({ seq: o.seq, phase: o.phase, op: o.op, original: o, at: "a", ok });
+
+  test("add then remove on the same project verifies green, add listed superseded", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { ...P });
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(addOp)); journalAppend(j, rec(rmOp));
+    const v = await verifyPhase(fakeClient(be), planWith([addOp, rmOp]), 5, { journalPath: j, pace: fastPace() });
+    expect(v.failures).toEqual([]);
+    expect(v.ok).toBe(true);
+    expect(v.superseded).toHaveLength(1);
+    expect(v.superseded[0]).toContain("superseded by seq 2");
+  });
+
+  test("later remove not journaled still checks the add (red)", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", { ...P });
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(addOp));
+    const v = await verifyPhase(fakeClient(be), planWith([addOp, rmOp]), 5, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(false);
+    expect(v.failures[0]).toContain("teamIds");
+    expect(v.superseded).toEqual([]);
+    // a journaled-but-failed later op supersedes nothing either
+    journalAppend(j, rec(rmOp, false));
+    const v2 = await verifyPhase(fakeClient(be), planWith([addOp, rmOp]), 5, { journalPath: j, pace: fastPace() });
+    expect(v2.ok).toBe(false);
+  });
+
+  test("move then archive on the same issue: move superseded, archive still checked", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds], teamId: "t-9", archived: true });
+    const mv = baseOp({
+      seq: 1, phase: 5, op: "move-issue-team",
+      from: { teamId: "t-1", projectId: "p-1", stateId: "s-todo" },
+      to: { teamId: "t-2", projectId: "p-1", stateId: "s-todo" },
+    });
+    const ar = baseOp({ seq: 2, phase: 6, op: "archive-issue", from: { archived: false }, to: { archived: true } });
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(mv)); journalAppend(j, rec(ar));
+    const v = await verifyPhase(fakeClient(be), planWith([mv, ar]), 5, { journalPath: j, pace: fastPace() });
+    expect(v.ok).toBe(true);
+    expect(v.superseded[0]).toContain("superseded by seq 2");
+    be.issues.get("i-1")!.archived = false;
+    const v2 = await verifyPhase(fakeClient(be), planWith([mv, ar]), 6, { journalPath: j, pace: fastPace() });
+    expect(v2.ok).toBe(false);
+  });
+
+  test("partial overlap: only the non-superseded key is checked", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds], teamId: "t-2", stateId: "s-other" });
+    const mv = baseOp({
+      seq: 1, phase: 1, op: "move-issue-team",
+      from: { teamId: "t-1", projectId: "p-1", stateId: "s-todo" },
+      to: { teamId: "t-2", projectId: "p-1", stateId: "s-todo" },
+    });
+    const st = baseOp({ seq: 2, phase: 1, op: "set-state", from: { stateId: "s-todo" }, to: { stateId: "s-other" } });
+    const j = join(dir, "j.jsonl");
+    journalAppend(j, rec(mv)); journalAppend(j, rec(st));
+    const v = await verifyPhase(fakeClient(be), planWith([mv, st]), 1, { journalPath: j, pace: fastPace() });
+    expect(v.failures.filter((f) => f.startsWith("seq 1"))).toEqual([]);
+    expect(v.superseded[0]).toContain("stateId");
+    be.issues.get("i-1")!.teamId = "t-1"; // teamId is still checked
+    const v2 = await verifyPhase(fakeClient(be), planWith([mv, st]), 1, { journalPath: j, pace: fastPace() });
+    expect(v2.failures.some((f) => f.startsWith("seq 1") && f.includes("teamId"))).toBe(true);
+  });
+});
+
 describe("verifyPhase", () => {
   test("red without journal ok; green after apply; red on later live drift", async () => {
     const be = freshBackend();

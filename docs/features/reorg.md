@@ -231,6 +231,21 @@ the owner state"; `REFUSE` under `--check`). For an owner state, the dry run
 and `--check` list the inherited views that will archive with it, and the
 executor refuses while any of those views still holds issues.
 
+## Superseded ops in verify
+
+`verify` compares each journaled op's expected end state with the live target.
+When a later op in the plan (any phase, seq order) that is journaled ok changes
+the same key of the same target, only that last op is checked against live; an
+earlier one is reported as `superseded by seq N`, counts as ok, and is listed
+separately (`SUPERSEDED ...` lines, `superseded` in the JSON and the report
+file), never dropped. An op that is only partly superseded is still checked on
+its other keys. A later op that is not journaled ok supersedes nothing, so the
+earlier op is still checked. Examples: an add of a project's team followed by
+the removal of another team, a rename followed by a later rename, and an
+issue move followed by an archive of the same issue (a later archive or delete
+supersedes every key of earlier ops on that target; a retire supersedes an
+earlier label create).
+
 ## Prior journals
 
 `apply`, `--check` and `verify` accept `--prior-journal <file>` (repeatable).
