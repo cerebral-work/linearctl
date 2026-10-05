@@ -2429,6 +2429,116 @@ describe("team-label carry-over", () => {
     }).then((r) => ({ r, lines }));
   };
 
+  describe("move already completed by a parent's cascade", () => {
+    const L_DEST = lid(9); // workspace label the source team label maps to
+    const DEST_STATE = "s-dest";
+    const cascadeOp = () =>
+      moveWith(2, { [L_SRC_BUG]: L_DEST }, {
+        to: { teamId: "t-b", labelMap: { [L_SRC_BUG]: L_DEST }, reapplyLabelIds: [], stateId: DEST_STATE },
+      });
+    /** The issue as Linear leaves a sub-issue after its parent's move. */
+    function cascaded(over: Partial<{ teamId: string; stateId: string; labelIds: string[]; projectId: string | null }> = {}): FakeBackend {
+      const be = backend();
+      be.labels.set(L_DEST, { id: L_DEST, name: "bug-ws", retiredAt: null, teamId: null, teamKey: null });
+      be.issues.set("i-1", {
+        ...ISSUE_1, teamId: "t-b", teamKey: "BBB", stateId: DEST_STATE,
+        labelIds: [L_DEST, L_WS], projectId: "p-1", ...over,
+      });
+      return be;
+    }
+
+    test("full end state matches: journaled alreadyApplied + cascade, zero writes", async () => {
+      const be = cascaded();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const res = await applyPlan(be, [cascadeOp()], j);
+      expect(res.applied).toBe(1);
+      expect(be.mutationCalls).toEqual([]);
+      const rec = journalRead(j).find((r) => r.seq === 2)!;
+      expect(rec.ok).toBe(true);
+      expect(rec.alreadyApplied).toBe(true);
+      expect(rec.cascade).toBe(true);
+      expect((rec.after as { teamId: string }).teamId).toBe("t-b");
+    });
+
+    test("a mapped label dropped by the cascade is a mismatch naming the label", async () => {
+      const be = cascaded({ labelIds: [L_WS] });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [cascadeOp()], j)).rejects.toThrow(
+        new RegExp(`parent's cascade.*missing \\["${L_DEST}"\\]`),
+      );
+      expect(be.mutationCalls).toEqual([]);
+      expect(journalRead(j).some((r) => r.seq === 2)).toBe(false);
+    });
+
+    test("an unexpected extra label is a mismatch", async () => {
+      const be = cascaded({ labelIds: [L_DEST, L_WS, L_PARENT] });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [cascadeOp()], j)).rejects.toThrow(/unexpected/);
+    });
+
+    test("wrong state is a mismatch", async () => {
+      const be = cascaded({ stateId: "s-other" });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [cascadeOp()], j)).rejects.toThrow(/state differs/);
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("lost project membership is a mismatch", async () => {
+      const be = cascaded({ projectId: null });
+      const j = join(dir, "j.jsonl");
+      green(j);
+      await expect(applyPlan(be, [cascadeOp()], j)).rejects.toThrow(/project membership/);
+    });
+
+    test("an op with no to.stateId is never already applied", async () => {
+      const be = cascaded();
+      const j = join(dir, "j.jsonl");
+      green(j);
+      const op = moveWith(2, { [L_SRC_BUG]: L_DEST }, { to: { teamId: "t-b", labelMap: { [L_SRC_BUG]: L_DEST }, reapplyLabelIds: [] } });
+      await expect(applyPlan(be, [op], j)).rejects.toThrow(/no to\.stateId/);
+    });
+
+    test("--check reports the matching cascade as already applied and the incomplete one as drift", async () => {
+      const ok = await events(cascaded(), [cascadeOp()]);
+      expect(ok.r.drifted).toEqual([]);
+      expect(ok.lines.some((l) => l.includes("already applied seq 2"))).toBe(true);
+      const bad = await events(cascaded({ labelIds: [L_WS] }), [cascadeOp()]);
+      expect(bad.r.drifted).toEqual([2]);
+      expect(bad.lines.join("\n")).toContain(L_DEST);
+    });
+
+    describe("rollback", () => {
+      const opts = { pace: fastPace(), apply: true, verifyDelaysMs: [0], sleep: async () => {} };
+      async function movedForward() {
+        const be = backend();
+        be.labels.set(L_DEST, { id: L_DEST, name: "bug-ws", retiredAt: null, teamId: null, teamKey: null });
+        const j = join(dir, "j.jsonl");
+        green(j);
+        await applyPlan(be, [cascadeOp()], j);
+        return { be, j };
+      }
+
+      test("a sub-issue already carried back by its parent's inverse is accepted without a write", async () => {
+        const { be, j } = await movedForward();
+        Object.assign(be.issues.get("i-1")!, { teamId: "t-a", teamKey: "AAA", stateId: "s-todo", labelIds: [L_SRC_BUG, L_WS], projectId: "p-1" });
+        const before = be.mutationCalls.length;
+        const rb = await rollbackPhase(fakeClient(be), j, 5, opts);
+        expect(rb.rolledBack).toBe(1);
+        expect(be.mutationCalls.length).toBe(before);
+      });
+
+      test("a half-reverted sub-issue (source label missing) still refuses", async () => {
+        const { be, j } = await movedForward();
+        Object.assign(be.issues.get("i-1")!, { teamId: "t-a", teamKey: "AAA", stateId: "s-todo", labelIds: [L_WS], projectId: "p-1" });
+        await expect(rollbackPhase(fakeClient(be), j, 5, opts)).rejects.toThrow(ReorgMismatch);
+      });
+    });
+  });
+
   describe("create-team-label name conflicts", () => {
     test("--check: free in an unrelated team, even when the name exists elsewhere", async () => {
       const be = backend();

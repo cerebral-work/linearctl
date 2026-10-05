@@ -315,6 +315,9 @@ export interface JournalRecord {
    *  (an earlier write landed but was never journaled); nothing was written.
    *  `before` is the planned from-state so rollback inverts it like any ok row. */
   alreadyApplied?: boolean;
+  /** With alreadyApplied (move-issue-team): the issue was carried to the
+   *  destination team by another move (a parent's cascade). Informational. */
+  cascade?: boolean;
 }
 
 function writeFsync(path: string, content: string, mode: "a" | "w"): void {
@@ -1001,9 +1004,10 @@ function hasLabelMap(op: ReorgOp): boolean {
  * to.reapplyLabelIds. Mapping entries for labels the issue does not carry add
  * nothing.
  */
-async function computeMoveLabelSet(ctx: OpCtx, op: ReorgOp): Promise<string[]> {
-  const live = await readIssue(ctx, op.target.id);
-  const ids = sortedStrings(live.labelIds);
+async function computeMoveLabelSet(ctx: OpCtx, op: ReorgOp, sourceIds?: string[]): Promise<string[]> {
+  // sourceIds: the labels the issue carried BEFORE the move, when the live
+  // read can no longer supply them (the move already happened).
+  const ids = sourceIds ?? sortedStrings((await readIssue(ctx, op.target.id)).labelIds);
   const out = new Set<string>(sortedStrings(op.to.reapplyLabelIds));
   const map = (isRecord(op.to.labelMapResolved) ? op.to.labelMapResolved : {}) as Record<string, string>;
   if (ids.length > 0) {
@@ -1941,19 +1945,69 @@ export interface RunResult {
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+interface AppliedCheck {
+  applied: boolean;
+  /** move-issue-team only: the issue sits in the destination team. */
+  cascade?: boolean;
+  /** Why a move in the destination team is NOT already applied. */
+  reason?: string;
+}
+
+const sameSet = (a: string[], b: string[]) => JSON.stringify(sortedStrings(a)) === JSON.stringify(sortedStrings(b));
+
+/**
+ * move-issue-team: moving a parent issue moves its sub-issues (same source
+ * team) with it, so a later move of such a child finds it already in the
+ * destination. That counts as applied only when the live issue equals the op's
+ * FULL planned end state: team, project membership, destination state, and the
+ * exact label set the apply path would have sent (computed from the recorded
+ * source labels, because the live labels are post-move).
+ */
+async function moveAlreadyApplied(
+  ctx: OpCtx,
+  op: ReorgOp,
+  live: Record<string, unknown>,
+): Promise<AppliedCheck> {
+  if (typeof op.to.teamId !== "string" || live.teamId !== op.to.teamId) return { applied: false };
+  const no = (reason: string): AppliedCheck => ({
+    applied: false,
+    reason: `the issue is already in the destination team (likely moved by a parent's cascade) but ${reason}`,
+  });
+  if (typeof op.to.stateId !== "string") return no("the op has no to.stateId to confirm the end state against");
+  if (live.stateId !== op.to.stateId)
+    return no(`its state differs from the planned end state: expected=${JSON.stringify(op.to.stateId)} actual=${JSON.stringify(live.stateId)}`);
+  const project = op.from.projectId ?? null;
+  if ((live.projectId ?? null) !== project)
+    return no(`its project membership did not survive: expected=${JSON.stringify(project)} actual=${JSON.stringify(live.projectId ?? null)}`);
+  let want: string[];
+  if (Array.isArray(op.to.labelIdsComputed)) want = sortedStrings(op.to.labelIdsComputed);
+  else if (Array.isArray(op.from.labelIds)) want = await computeMoveLabelSet(ctx, op, sortedStrings(op.from.labelIds));
+  else return no("no source labels were recorded to compute the expected label set from");
+  const got = sortedStrings(live.labelIds);
+  if (!sameSet(got, want)) {
+    const missing = want.filter((l) => !got.includes(l));
+    const extra = got.filter((l) => !want.includes(l));
+    return no(
+      `its labels differ from the planned set: missing ${JSON.stringify(missing)}, unexpected ${JSON.stringify(extra)}`,
+    );
+  }
+  return { applied: true, cascade: true };
+}
+
 /** True when `live` already equals the op's expected end state. Never vacuous:
- *  the expected state must constrain at least one compared key. move-issue-team
- *  is excluded (its end state is also checked via label/state post-steps). */
-function isAlreadyApplied(
+ *  the expected state must constrain at least one compared key. A
+ *  move-issue-team needs the full end state (see moveAlreadyApplied). */
+async function isAlreadyApplied(
+  ctx: OpCtx,
   def: OpDef,
   op: ReorgOp,
   live: Record<string, unknown>,
-): boolean {
-  if (op.op === "move-issue-team") return false;
+): Promise<AppliedCheck> {
+  if (op.op === "move-issue-team") return moveAlreadyApplied(ctx, op, live);
   const expected = def.expectedPost(op);
-  if (expected === null) return false;
-  if (!def.compareKeys.some((k) => k in expected)) return false;
-  return compareState(expected, live, def.compareKeys).length === 0;
+  if (expected === null) return { applied: false };
+  if (!def.compareKeys.some((k) => k in expected)) return { applied: false };
+  return { applied: compareState(expected, live, def.compareKeys).length === 0 };
 }
 
 /** Re-read until the state matches `expected`, backing off between reads. */
@@ -2018,8 +2072,10 @@ async function executeOne(
   const liveBefore = await def.readState(ctx, op);
   const drift = compareState(op.from, liveBefore, def.compareKeys);
   if (drift.length) {
-    if (isAlreadyApplied(def, op, liveBefore)) {
-      // An earlier write landed but was never journaled: record it, write nothing.
+    const done = await isAlreadyApplied(ctx, def, op, liveBefore);
+    if (done.applied) {
+      // An earlier write landed but was never journaled (or a parent's move
+      // carried this issue along): record it, write nothing.
       const rec: JournalRecord = {
         seq: op.seq,
         phase: op.phase,
@@ -2030,6 +2086,7 @@ async function executeOne(
         at: new Date().toISOString(),
         ok: true,
         alreadyApplied: true,
+        ...(done.cascade ? { cascade: true } : {}),
       };
       journalAppend(journalPath, rec);
       journal.push(rec);
@@ -2039,10 +2096,12 @@ async function executeOne(
       });
       return "already-applied";
     }
-    throw new ReorgMismatch(op.seq, {
+    const mismatch = new ReorgMismatch(op.seq, {
       expected: pick(op.from, def.compareKeys),
       actual: pick(liveBefore, def.compareKeys),
     });
+    if (done.reason) mismatch.message += ` — ${done.reason}`;
+    throw mismatch;
   }
 
   // 2. op-specific preconditions (live reads)
@@ -2190,7 +2249,10 @@ export async function runPlan(
           continue;
         }
         const drift = compareState(op.from, live, def.compareKeys);
-        if (drift.length && isAlreadyApplied(def, op, live)) {
+        const done = drift.length
+          ? await isAlreadyApplied(ctx, def, await resolveOpLabelRefs(ctx, journal, op), live)
+          : { applied: false };
+        if (drift.length && done.applied) {
           opts.onEvent?.({
             kind: "check",
             detail: `already applied seq ${op.seq} [${op.op}] ${op.target.identifier}`,
@@ -2199,7 +2261,7 @@ export async function runPlan(
           drifted.push(op.seq);
           opts.onEvent?.({
             kind: "drift",
-            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}`,
+            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}${"reason" in done && done.reason ? ` — ${done.reason}` : ""}`,
           });
         } else {
           // precondition READS apply would run before its first write: a
@@ -2368,7 +2430,7 @@ async function runBatch(
     const live = await def.readState(ctx, op);
     const drift = compareState(op.from, live, def.compareKeys);
     if (drift.length) {
-      if (!isAlreadyApplied(def, op, live))
+      if (!(await isAlreadyApplied(ctx, def, op, live)).applied)
         throw new ReorgMismatch(op.seq, {
           expected: pick(op.from, def.compareKeys),
           actual: pick(live, def.compareKeys),
@@ -2721,7 +2783,7 @@ export async function rollbackPhase(
     rec: JournalRecord,
     orig: ReorgOp,
     inv: ReorgOp,
-  ): Promise<{ line: string; error: ReorgMismatch } | null> => {
+  ): Promise<{ line: string; error: ReorgMismatch } | "cascade" | null> => {
     const invDef = OP_REGISTRY[inv.op];
     const target = inv.target.identifier || inv.target.id;
     const head = `seq ${String(rec.seq)} [${orig.op}] ${target}`;
@@ -2740,13 +2802,16 @@ export async function rollbackPhase(
     }
     const bad = compareState(inv.from, live, invDef.compareKeys);
     if (!bad.length) return null;
-    return {
-      line: `${head}: ${bad.join("; ")}`,
-      error: new ReorgMismatch(inv.seq, {
-        expected: pick(inv.from, invDef.compareKeys),
-        actual: pick(live, invDef.compareKeys),
-      }),
-    };
+    // Inverting a parent's move carries its sub-issues back too: a child whose
+    // live state already equals ITS inverse's full end state needs no write.
+    const done = await isAlreadyApplied(ctx, invDef, inv, live);
+    if (done.applied) return "cascade";
+    const error = new ReorgMismatch(inv.seq, {
+      expected: pick(inv.from, invDef.compareKeys),
+      actual: pick(live, invDef.compareKeys),
+    });
+    if (done.reason) error.message += ` — ${done.reason}`;
+    return { line: `${head}: ${bad.join("; ")}${done.reason ? ` — ${done.reason}` : ""}`, error };
   };
 
   // Pass 2 (--apply): read every target and refuse before the FIRST write if any
@@ -2760,7 +2825,7 @@ export async function rollbackPhase(
       if (seen.has(key)) continue;
       seen.add(key);
       const problem = await preRead(rec, orig, inv);
-      if (problem) throw problem.error;
+      if (problem && problem !== "cascade") throw problem.error;
     }
   }
 
@@ -2774,6 +2839,14 @@ export async function rollbackPhase(
 
     if (write || opts.check) {
       const problem = await preRead(rec, orig, inv);
+      if (problem === "cascade") {
+        opts.onEvent?.({
+          kind: "rollback",
+          detail: `already reverted ${intent}: the issue was carried back by a parent's move`,
+        });
+        if (write) rolledBack++;
+        continue;
+      }
       if (problem) {
         if (write) throw problem.error;
         drifted.push(problem.line);

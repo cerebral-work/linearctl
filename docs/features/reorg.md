@@ -57,8 +57,21 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   batch members in this state are left out of the batch write. `--check`
   reports it as already applied, not drift. Rollback skips these rows unless
   `--include-already-applied` is given. Live state matching neither `from` nor
-  the end state is still drift. `move-issue-team` is excluded from this
-  detection.
+  the end state is still drift.
+- **Cascaded moves.** Moving a parent issue to another team moves its
+  sub-issues (in the same source team) with it, so a later `move-issue-team`
+  for such a sub-issue finds it already in the destination. It is journaled
+  `alreadyApplied` (with `cascade: true`) only when the live issue equals the
+  op's full planned end state: destination team, `from.projectId` membership,
+  `to.stateId` (an op without one is never already applied), and exactly the
+  label set the apply path would have sent, computed from the recorded source
+  labels (mapped `labelMap` targets, kept non-team labels, `reapplyLabelIds`).
+  Anything short of that, such as a mapped label the cascade dropped, is a
+  mismatch whose message says the issue was likely moved by a parent's cascade
+  and lists the missing and unexpected labels. `--check` applies the same
+  rule. Rollback accepts the mirror case: inverting a parent's move carries
+  its sub-issues back, so a sub-issue already at its own inverse's full end
+  state is counted as reverted without a write.
 - **`--check`** is the dry-run with teeth: a live drift pre-read of every
   target, reporting each op OK/DRIFT without writing (exit 1 on any drift).
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
