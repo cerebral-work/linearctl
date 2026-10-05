@@ -147,7 +147,9 @@ Notes per kind:
   owner frees its inherited views). When the source team is a sub-team of the
   destination, rename its own labels first (e.g. `name·old-<src>`). The
   created id is journaled so `created:<seq>` refs can resolve to it. Inverse:
-  retire the created label.
+  retire the created label. The conflict set above (destination, parent,
+  sub-teams, workspace; case-insensitive) is this engine's model of Linear's
+  rule; Linear's own refusal at create time remains the backstop.
 - **Inherited labels** (sub-team copies mirroring an owner team's label) are
   read-only — Linear refuses writes on them. The census captures
   `inheritedFrom` (+ `team.parent`); the planner groups by owner
@@ -187,8 +189,15 @@ the journal record of that `create-team-label` / `create-workspace-label`).
   `to.reapplyLabelIds`. The set is journaled as `to.labelIdsComputed`. The
   post-move check, `verify`, and rollback all require the issue to carry
   exactly that set (and the destination team); a mismatch stops the run.
+- A `created:<seq>` that names a `create-team-label` must target the move's
+  destination team or its parent (workspace creates are fine anywhere); the
+  planner, `--check` and the apply preflight (before any write, including the
+  create itself) refuse otherwise, naming both teams.
 - Rollback moves the issue back to the source team with the source label set
-  recorded in the journal's `before` read (not the plan's census copy).
+  recorded in the journal's `before` read (not the plan's census copy). If a
+  source label has been retired since, rollback (dry run and apply) refuses
+  naming it; `--restore-retired` restores it (`issueLabelRestore`, verified)
+  before moving back.
 - `--check` also verifies that every `created:<seq>` ref resolves to a
   journaled or lower-seq planned create, and that plain destination ids are
   usable in the destination team.
@@ -213,10 +222,10 @@ executor refuses while any of those views still holds issues.
 
 `apply`, `--check` and `verify` accept `--prior-journal <file>` (repeatable).
 Only the `verify` markers of those journals are read, and they count for the
-phase gates together with the current journal. Within one journal the latest
-marker by file order wins; across journals each journal's latest marker
-competes and the one with the latest timestamp wins, so a later red marker
-anywhere fails the gate. Prior journals are never written, resumed or rolled back, and
+phase gates, with no clock involved: if the current journal has any verify
+marker for the phase, its latest marker (file order) decides alone; prior
+journals are consulted only when the current one has none, and then every prior
+journal that has a marker must end green (any red fails). Prior journals are never written, resumed or rolled back, and
 a missing file is an error. `verify` additionally prints the gate state across
 journals after its own marker is appended.
 

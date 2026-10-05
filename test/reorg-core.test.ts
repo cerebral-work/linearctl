@@ -2532,6 +2532,20 @@ describe("team-label carry-over", () => {
       expect(be.issues.get("i-1")!.teamId).toBe("t-b");
     });
 
+    test("a restore that does not land stops the rollback before the move", async () => {
+      const { be, j } = await moved();
+      // only the restore is acknowledged but not applied
+      const inner = (fakeClient(be) as unknown as { client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> } }).client;
+      const client = {
+        client: {
+          rawRequest: async (q: string, v: Record<string, unknown>) =>
+            q.includes("ReorgLabelRestore") ? { data: { issueLabelRestore: { success: true } }, headers: undefined } : inner.rawRequest(q, v),
+        },
+      } as unknown as LinearClient;
+      await expect(rollbackPhase(client, j, 5, { ...opts, apply: true, restoreRetired: true })).rejects.toThrow(ReorgMismatch);
+      expect(be.issues.get("i-1")!.teamId).toBe("t-b");
+    });
+
     test("--restore-retired restores it (verified) and then moves back with the source labels", async () => {
       const { be, j } = await moved();
       const lines: string[] = [];
