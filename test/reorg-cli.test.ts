@@ -37,7 +37,7 @@ const TOY_CENSUS: CensusData = {
   teamLabels: [{ id: "l-team-bug", name: "bug", retiredAt: null, team: { id: "t-ex", key: "EX" }, teamKey: "EX", issueCount: 1, inheritedFromId: null }],
   projects: [
     {
-      id: "p-1", name: "Toy Project", trashed: false,
+      id: "p-1", name: "Toy Project", archivedAt: null, trashed: false,
       status: { id: "st-started", name: "Started" },
       lead: null, targetDate: null,
       teams: { nodes: [{ id: "t-ex", key: "EX" }] },
@@ -236,12 +236,12 @@ describe("by-id selection + duplicate refusal", () => {
   test("name match hitting two projects refuses; id selects exactly one", () => {
     expect(() =>
       planFromRules(
-        [rule({ op: "archive-project", match: { entity: "project", where: { name: "Toy Project" } }, to: { trashed: true } })],
+        [rule({ op: "archive-project", match: { entity: "project", where: { name: "Toy Project" } }, to: { archived: true } })],
         dupCensus, META,
       ),
     ).toThrow("matches 2 projects");
     const plan = planFromRules(
-      [rule({ op: "archive-project", match: { entity: "project", where: { id: "p-2" } }, to: { trashed: true } })],
+      [rule({ op: "archive-project", match: { entity: "project", where: { id: "p-2" } }, to: { archived: true } })],
       dupCensus, META,
     );
     expect(plan.ops).toHaveLength(1);

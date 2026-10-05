@@ -56,7 +56,7 @@ function labelRetired(be: FakeBackend, l: FakeLabel): string | null {
   return null;
 }
 interface FakeState { id: string; name: string; type: string; archivedAt: string | null }
-interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
+interface FakeProject { id: string; name: string; statusId: string; leadId: string | null; targetDate: string | null; archived?: boolean; trashed: boolean; teamIds: string[]; initiativeIds: string[] }
 interface FakeInitiative { id: string; name: string; archivedAt: string | null; ownerId: string | null }
 interface FakeTeam { id: string; key: string; triageEnabled: boolean; deleted: boolean }
 
@@ -78,6 +78,7 @@ interface FakeBackend {
   forceLabelPagination?: boolean;
   stuckCursor?: boolean;
   mutationCalls: string[];
+  projectArchiveTrashes?: boolean;
   readCalls: number;
   /** ReorgTeamProjects calls — the pagination test asserts the second page. */
   projectProbeCalls: number;
@@ -139,7 +140,7 @@ function fakeClient(be: FakeBackend): LinearClient {
               id: p.id, name: p.name,
               status: { id: p.statusId, name: "Started" },
               lead: p.leadId ? { id: p.leadId } : null,
-              targetDate: p.targetDate, trashed: p.trashed,
+              targetDate: p.targetDate, archivedAt: p.archived ? "2026-01-01T00:00:00Z" : null, trashed: p.trashed,
               teams: { nodes: p.teamIds.map((id) => ({ id, key: be.teams.get(id)?.key ?? id })) },
               initiatives: { nodes: p.initiativeIds.map((id) => ({ id })) },
             }
@@ -319,9 +320,15 @@ function fakeClient(be: FakeBackend): LinearClient {
         if (input.teamIds) p.teamIds = [...input.teamIds].sort();
       });
     if (query.includes("ReorgProjectArchive"))
-      return W("projectArchive", () => { be.projects.get(vars.id as string)!.trashed = true; });
+      return W("projectArchive", () => {
+        const p = be.projects.get(vars.id as string)!;
+        p.archived = true;
+        // The server trashes unless told otherwise; projectArchiveTrashes
+        // simulates a live response that trashed anyway.
+        p.trashed = !!be.projectArchiveTrashes || !query.includes("trash: false");
+      });
     if (query.includes("ReorgProjectUnarchive"))
-      return W("projectUnarchive", () => { be.projects.get(vars.id as string)!.trashed = false; });
+      return W("projectUnarchive", () => { const p = be.projects.get(vars.id as string)!; p.archived = false; p.trashed = false; });
     if (query.includes("ReorgInitiativeArchive"))
       return W("initiativeArchive", () => { be.initiatives.get(vars.id as string)!.archivedAt = "2026-01-02T00:00:00Z"; });
     if (query.includes("ReorgInitiativeUnarchive"))
@@ -636,16 +643,40 @@ describe("op triples (apply → verify → rollback)", () => {
     });
   });
 
-  test("archive-project", async () => {
+  const P1 = { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] };
+  const archiveOp = () => baseOp({
+    op: "archive-project", target: { type: "project", id: "p-1", identifier: "P" },
+    from: { archived: false, trashed: false }, to: { archived: true },
+  });
+
+  test("archive-project archives without trashing, rollback unarchives", async () => {
     const be = freshBackend();
-    be.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: [] });
-    await triple(be, baseOp({
-      op: "archive-project", target: { type: "project", id: "p-1", identifier: "P" },
-      from: { trashed: false }, to: { trashed: true },
-    }), {
-      afterApply: () => expect(be.projects.get("p-1")!.trashed).toBe(true),
-      afterRollback: () => expect(be.projects.get("p-1")!.trashed).toBe(false),
+    be.projects.set("p-1", { ...P1 });
+    await triple(be, archiveOp(), {
+      afterApply: () => {
+        expect(be.projects.get("p-1")!.archived).toBe(true);
+        expect(be.projects.get("p-1")!.trashed).toBe(false);
+      },
+      afterRollback: () => {
+        expect(be.projects.get("p-1")!.archived).toBe(false);
+        expect(be.mutationCalls).toContain("projectUnarchive");
+      },
     });
+  });
+
+  test("archive-project post-apply check FAILS when the live project came back trashed", async () => {
+    const be = freshBackend();
+    be.projectArchiveTrashes = true;
+    be.projects.set("p-1", { ...P1 });
+    const j = join(mkdtempSync(join(tmpdir(), "reorg-trash-")), "j.jsonl");
+    await expect(applyPlan(be, [archiveOp()], j)).rejects.toThrow('"trashed":true');
+  });
+
+  test("parsePlanFile refuses archive-project with to.trashed:true", () => {
+    const p = join(dir, "plan.jsonl");
+    const op = { ...archiveOp(), to: { trashed: true } };
+    writeFileSync(p, JSON.stringify({ _meta: planWith([]).meta }) + "\n" + JSON.stringify(op) + "\n");
+    expect(() => parsePlanFile(p)).toThrow("delayed permanent delete");
   });
 
   test("archive-initiative", async () => {
