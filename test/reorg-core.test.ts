@@ -169,7 +169,7 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgLabelsByNameAllScopes")) {
       be.readCalls++;
       const nodes = [...be.labels.values()].filter((l) => labelName(be, l) === vars.name);
-      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null })) } });
+      return ok({ issueLabels: { nodes: nodes.map((l) => ({ id: l.id, name: labelName(be, l), team: l.teamId ? { id: l.teamId, key: l.teamKey } : null, inheritedFrom: l.inheritedFrom ? { id: l.inheritedFrom } : null })) } });
     }
     if (query.includes("ReorgLabelScopes")) {
       be.readCalls++;
@@ -1617,6 +1617,42 @@ describe("census capture (CER-2353 round 1)", () => {
     const d = await census(censusStub([]), { teamKeys: ["EX"] }, fastPace());
     const ids = d.teamLabels.map((l) => l.id).sort();
     expect(ids).toEqual(["l-child", "l-owner"]);
+  });
+});
+
+describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
+  test("a name: ref in to.add does NOT trip the inherited-write guard in --check", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: ["l-a"] });
+    const result = await runPlan(fakeClient(be), planWith([baseOp({
+      op: "relabel", from: { labelIds: ["l-a"] }, to: { add: ["name:security"], remove: [] },
+    })]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    // refs resolve workspace-scoped only; nothing inherited can arrive via name:
+    expect(result.drifted).toEqual([]);
+  });
+
+  test("create preflight excludes inherited children of renamed owners (rename propagates)", async () => {
+    const be = freshBackend();
+    be.labels.set("l-owner", { id: "l-owner", name: "security", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+    // the inherited views still hold the name until the owner rename propagates
+    be.labels.set("l-ch-1", { id: "l-ch-1", name: "security", retiredAt: null, teamId: "t-sub", teamKey: "SUB", inheritedFrom: "l-owner" });
+    be.labels.set("l-ch-2", { id: "l-ch-2", name: "security", retiredAt: null, teamId: "t-sub2", teamKey: "SB2", inheritedFrom: "l-owner" });
+    const rename = baseOp({
+      seq: 1, op: "rename-label", target: { type: "label", id: "l-owner", identifier: "EX/security" },
+      from: { name: "security", retired: false }, to: { name: "security·old-EX" },
+    });
+    const create = baseOp({
+      seq: 2, op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    });
+    const result = await runPlan(fakeClient(be), planWith([rename, create]), {
+      check: true, apply: false, resume: false, allowIrreversible: false,
+      journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+    });
+    expect(result.drifted).toEqual([]); // children of the renamed owner are not conflicts
   });
 });
 
