@@ -16,7 +16,7 @@ const TOY_CENSUS: CensusData = {
   workspace: { id: "ws-toy", urlKey: "toy" },
   teams: [
     {
-      id: "t-ex", key: "EX", name: "Example", triageEnabled: false, archivedAt: null,
+      id: "t-ex", key: "EX", name: "Example", triageEnabled: false, private: false, archivedAt: null,
       issueCount: 3,
       states: {
         nodes: [
@@ -255,7 +255,7 @@ describe("planner warnings + coercion", () => {
       ...TOY_CENSUS,
       teams: [
         ...TOY_CENSUS.teams,
-        { id: "t-old", key: "OLD", name: "Old", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
+        { id: "t-old", key: "OLD", name: "Old", triageEnabled: false, private: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
       ],
       projects: [
         { ...TOY_CENSUS.projects[0], teams: { nodes: [{ id: "t-ex", key: "EX" }, { id: "t-old", key: "OLD" }] } },
@@ -306,7 +306,7 @@ describe("planner warnings + coercion", () => {
       ...TOY_CENSUS,
       teams: [
         ...TOY_CENSUS.teams,
-        { id: "t-old", key: "OLD", name: "Old", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
+        { id: "t-old", key: "OLD", name: "Old", triageEnabled: false, private: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
       ],
       projects: [
         { ...TOY_CENSUS.projects[0], teams: { nodes: [{ id: "t-ex", key: "EX" }, { id: "t-old", key: "OLD" }] } },
@@ -548,7 +548,7 @@ describe("team-label carry-over planning", () => {
     ...TOY_CENSUS,
     teams: [
       ...TOY_CENSUS.teams,
-      { id: "t-bb", key: "BBB", name: "Dest", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
+      { id: "t-bb", key: "BBB", name: "Dest", triageEnabled: false, private: false, archivedAt: null, issueCount: 0, states: { nodes: [] } },
     ],
     issues: [
       ...TOY_CENSUS.issues,
@@ -618,7 +618,7 @@ describe("team-label carry-over planning", () => {
   test("a ref to a create in a team that is neither the destination nor its parent is refused", () => {
     const census = {
       ...CENSUS,
-      teams: [...CENSUS.teams, { id: "t-cc", key: "CCC", name: "Other", triageEnabled: false, archivedAt: null, issueCount: 0, states: { nodes: [] } }],
+      teams: [...CENSUS.teams, { id: "t-cc", key: "CCC", name: "Other", triageEnabled: false, private: false, archivedAt: null, issueCount: 0, states: { nodes: [] } }],
     };
     expect(() =>
       planFromRules(
@@ -653,5 +653,75 @@ describe("team-label carry-over planning", () => {
     await reorgPlan({ rules: rulesPath, census: censusPath, out });
     const parsed = parsePlanFile(out);
     expect(parsed.ops.map((o) => o.op)).toEqual(["create-team-label", "move-issue-team", "move-issue-team"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Planner: team visibility guard
+// ---------------------------------------------------------------------------
+
+describe("team visibility planning", () => {
+  const priv = (over: Partial<CensusData["teams"][number]>) => ({
+    id: "t-ex", key: "EX", name: "Example", triageEnabled: false, private: true, memberIds: ["u1"],
+    archivedAt: null, issueCount: 3, states: { nodes: [] }, ...over,
+  });
+  const dest = (over: Partial<CensusData["teams"][number]> = {}) => ({
+    id: "t-bb", key: "BBB", name: "Dest", triageEnabled: false, private: false,
+    archivedAt: null, issueCount: 0, states: { nodes: [] }, ...over,
+  });
+  const census = (src: ReturnType<typeof priv>, dst: ReturnType<typeof dest>): CensusData => ({
+    ...TOY_CENSUS,
+    teams: [src, dst],
+    issues: [{ ...TOY_CENSUS.issues[0], labelIds: [] }],
+  });
+  const move = (over: Partial<ReorgRule> = {}): ReorgRule => ({
+    phase: 5, op: "move-issue-team",
+    match: { entity: "issue", where: { teamKey: "EX" } },
+    to: { teamId: "t-bb", reapplyLabelIds: [] }, evidence: "fold", ...over,
+  });
+
+  test("private -> public is refused, with a per team-pair summary", () => {
+    expect(() => planFromRules([move()], census(priv({}), dest()), META)).toThrow(
+      /1 op\(s\) would change visibility[\s\S]*move-issue-team EX -> BBB: 1/,
+    );
+  });
+
+  test("private -> private with fewer members is refused; a superset plans", () => {
+    expect(() =>
+      planFromRules([move()], census(priv({ memberIds: ["u1", "u2"] }), dest({ private: true, memberIds: ["u1"] })), META),
+    ).toThrow("would change visibility");
+    const plan = planFromRules([move()], census(priv({}), dest({ private: true, memberIds: ["u1", "u2"] })), META);
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.visibility).toBeUndefined();
+  });
+
+  test("public -> private and public -> public plan without a flag", () => {
+    expect(planFromRules([move()], census(priv({ private: false, memberIds: undefined }), dest({ private: true, memberIds: ["u1"] })), META).ops).toHaveLength(1);
+    expect(planFromRules([move()], census(priv({ private: false, memberIds: undefined }), dest()), META).ops).toHaveLength(1);
+  });
+
+  test("the rule's allowVisibilityChange is copied to the op and counted in the summary; never inferred", () => {
+    const c = census(priv({}), dest());
+    const plan = planFromRules([move({ allowVisibilityChange: true })], c, META);
+    expect(plan.ops[0].allowVisibilityChange).toBe(true);
+    expect(plan.visibility).toEqual([{ from: "EX", to: "BBB", kind: "move-issue-team", count: 1, allowed: true }]);
+    const plain = planFromRules([move()], census(priv({ private: false, memberIds: undefined }), dest()), META);
+    expect("allowVisibilityChange" in plain.ops[0]).toBe(false);
+  });
+
+  test("add-project-team of a public team to an all-private project is refused unless opted in", () => {
+    const c = { ...census(priv({}), dest()), projects: [{ ...TOY_CENSUS.projects[0] }] };
+    const add: ReorgRule = {
+      phase: 5, op: "add-project-team", match: { entity: "project", where: { id: "p-1" } },
+      to: { teamId: "t-bb" }, evidence: "membership",
+    };
+    expect(() => planFromRules([add], c, META)).toThrow(/add-project-team EX -> BBB: 1/);
+    expect(planFromRules([{ ...add, allowVisibilityChange: true }], c, META).visibility?.[0].kind).toBe("add-project-team");
+  });
+
+  test("a census without team privacy is refused, not assumed public", () => {
+    const c = census(priv({}), dest());
+    delete (c.teams[0] as { private?: boolean }).private;
+    expect(() => planFromRules([move()], c, META)).toThrow("re-run reorg census");
   });
 });
