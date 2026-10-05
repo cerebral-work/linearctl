@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/cerebral-work/linearctl/compare/v0.9.2...v0.10.0) (2026-10-05)
+
+
+### Features
+
+* **reorg:** carry source-team labels into the destination on team moves ([3746a8b](https://github.com/cerebral-work/linearctl/commit/3746a8b0fcd8e59ebcdd5551dc5b15ebc75653d8))
+
 ## [0.9.2](https://github.com/cerebral-work/linearctl/compare/v0.9.1...v0.9.2) (2026-10-05)
 
 
