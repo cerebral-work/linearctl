@@ -678,6 +678,7 @@ reorgCmd
   .option("--allow-irreversible", "permit reversible:false ops (phase 6, deck-approved)")
   .option("--backup-record <file>", "backup.verified.json (required with --apply; < 24 h old)")
   .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
+  .option("--prior-journal <file>", "earlier journal whose verify markers count for the phase gates (read-only, repeatable)", (v: string, prev: string[] = []) => [...prev, v])
   .action((plan, opts) => reorgApply(plan, opts));
 reorgCmd
   .command("verify")
@@ -686,6 +687,7 @@ reorgCmd
   .requiredOption("--phase <n>", "phase to verify")
   .option("--journal <file>", "journal path (default <plan>.applied.jsonl)")
   .option("--report <file>", "report output path")
+  .option("--prior-journal <file>", "earlier journal whose verify markers count for the phase gates (read-only, repeatable)", (v: string, prev: string[] = []) => [...prev, v])
   .option("--json", "emit JSON")
   .action((opts) => reorgVerify(opts));
 reorgCmd
