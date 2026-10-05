@@ -686,13 +686,17 @@ describe("team visibility planning", () => {
     );
   });
 
-  test("private -> private with fewer members is refused; a superset plans", () => {
+  test("private -> private: gaining members refused; fewer members plans with an info note", () => {
     expect(() =>
-      planFromRules([move()], census(priv({ memberIds: ["u1", "u2"] }), dest({ private: true, memberIds: ["u1"] })), META),
+      planFromRules([move()], census(priv({ memberIds: ["u1"] }), dest({ private: true, memberIds: ["u1", "u2"] })), META),
     ).toThrow("would change visibility");
-    const plan = planFromRules([move()], census(priv({}), dest({ private: true, memberIds: ["u1", "u2"] })), META);
-    expect(plan.ops).toHaveLength(1);
-    expect(plan.visibility).toBeUndefined();
+    const fewer = planFromRules([move()], census(priv({ memberIds: ["u1", "u2"] }), dest({ private: true, memberIds: ["u1"] })), META);
+    expect(fewer.ops).toHaveLength(1);
+    expect(fewer.visibility).toBeUndefined();
+    expect(fewer.notes).toEqual(["EX -> BBB: 1 source member(s) lose access (1 move(s))"]);
+    const equal = planFromRules([move()], census(priv({}), dest({ private: true, memberIds: ["u1"] })), META);
+    expect(equal.ops).toHaveLength(1);
+    expect(equal.notes).toBeUndefined();
   });
 
   test("public -> private and public -> public plan without a flag", () => {

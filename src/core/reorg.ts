@@ -122,6 +122,8 @@ export interface ReorgPlan {
   /** Per team-pair count of visibility-changing ops (all allowed here: the
    *  planner throws, listing the same table, when any is not). */
   visibility?: VisibilityPairCount[];
+  /** Informational planner lines (e.g. source members who lose access). */
+  notes?: string[];
 }
 
 export function sha256File(path: string): string {
@@ -1720,9 +1722,11 @@ export interface VisibilityPairCount {
 
 /**
  * Pure rule: does moving an issue from `src` to `dst` change who can see it?
- * Returns what changes, or null. private -> non-private, and private -> private
- * whose member set is not a superset of the source's, both change it.
- * public -> anything does not (a rollback into a private team is not a widening).
+ * Returns what widens, or null. private -> non-private widens it, and so does
+ * private -> private when the destination has members the source lacks.
+ * A destination missing some source members only removes readers (see
+ * moveAccessLost). public -> anything is not a widening, so a rollback into a
+ * private team is never refused.
  */
 export function moveVisibilityChange(src: TeamVisibility, dst: TeamVisibility): string | null {
   if (src.id === dst.id || !src.private) return null;
@@ -1730,10 +1734,18 @@ export function moveVisibilityChange(src: TeamVisibility, dst: TeamVisibility): 
     return `${src.key} is private and ${dst.key} is not: the moved issues become visible to every member of the workspace, and to guests who are members of ${dst.key}`;
   if (src.memberIds === null || dst.memberIds === null)
     return `${src.key} and ${dst.key} are both private but their members could not be compared`;
+  const srcMembers = new Set(src.memberIds);
+  const gained = dst.memberIds.filter((m) => !srcMembers.has(m));
+  if (gained.length === 0) return null;
+  return `${src.key} and ${dst.key} are both private but ${gained.length} member(s) of ${dst.key} are not members of ${src.key}: they gain access to the moved issues`;
+}
+
+/** Source members absent from a private destination: they lose access (readers
+ *  removed, not added, so this is information and never a refusal). */
+export function moveAccessLost(src: TeamVisibility, dst: TeamVisibility): number {
+  if (src.id === dst.id || !src.private || !dst.private || !src.memberIds || !dst.memberIds) return 0;
   const dstMembers = new Set(dst.memberIds);
-  const lost = src.memberIds.filter((m) => !dstMembers.has(m));
-  if (lost.length === 0) return null;
-  return `${src.key} and ${dst.key} are both private but ${lost.length} member(s) of ${src.key} are not members of ${dst.key}: the moved issues stop being visible to them`;
+  return src.memberIds.filter((m) => !dstMembers.has(m)).length;
 }
 
 /**
@@ -1825,6 +1837,19 @@ export async function visibilityChange(ctx: OpCtx, op: ReorgOp): Promise<string 
     return projectTeamAddVisibilityChange(cur, await Promise.all(added.map((t) => readTeamVisibility(ctx, t, false))));
   }
   return null;
+}
+
+/** LIVE count of source-team members who lose access through a private -> private move. */
+async function accessLost(ctx: OpCtx, op: ReorgOp): Promise<number> {
+  if (op.op !== "move-issue-team" || typeof op.to.teamId !== "string") return 0;
+  const live = await readIssue(ctx, op.target.id);
+  const srcId = typeof live.teamId === "string" ? live.teamId : op.from.teamId;
+  if (typeof srcId !== "string" || srcId === op.to.teamId) return 0;
+  const src = await readTeamVisibility(ctx, srcId, false);
+  if (!src.private) return 0;
+  const dst = await readTeamVisibility(ctx, op.to.teamId, false);
+  if (!dst.private) return 0;
+  return moveAccessLost(await readTeamVisibility(ctx, srcId, true), await readTeamVisibility(ctx, op.to.teamId, true));
 }
 
 /** Refuse an op that changes visibility unless it carries allowVisibilityChange: true. */
@@ -2437,6 +2462,12 @@ export async function runPlan(
             continue;
           }
           opts.onEvent?.({ kind: "check", detail: `ok    seq ${op.seq} [${op.op}] ${op.target.identifier}` });
+          const lost = await accessLost(ctx, op);
+          if (lost > 0)
+            opts.onEvent?.({
+              kind: "check",
+              detail: `info seq ${op.seq} [${op.op}] ${op.target.identifier}: ${lost} source member(s) lose access`,
+            });
           if (op.allowVisibilityChange === true) {
             const why = await visibilityChange(ctx, op);
             if (why)
@@ -3505,7 +3536,7 @@ export function assertFromAnchors(ops: ReorgOp[]): void {
  * Planner-side visibility pass (census data only; apply and --check re-read live).
  * Throws, listing every team pair, when a visibility-changing op has no opt-in.
  */
-function planVisibility(ops: ReorgOp[], censusData: CensusData): VisibilityPairCount[] {
+function planVisibility(ops: ReorgOp[], censusData: CensusData): { rows: VisibilityPairCount[]; notes: string[] } {
   const teams = new Map(censusData.teams.map((t) => [t.id, t] as const));
   const vis = (id: string): TeamVisibility => {
     const t = teams.get(id);
@@ -3515,6 +3546,7 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): VisibilityPairC
       );
     return { id: t.id, key: t.key, private: t.private, memberIds: t.memberIds ?? null };
   };
+  const lostBy = new Map<string, { ops: number; lost: number }>();
   const rows = new Map<string, VisibilityPairCount & { why: string; sample: string[] }>();
   for (const op of ops) {
     let why: string | null = null;
@@ -3524,6 +3556,12 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): VisibilityPairC
       const dst = vis(op.to.teamId);
       why = moveVisibilityChange(src, dst);
       pair = [src.key, dst.key];
+      const lost = moveAccessLost(src, dst);
+      if (lost > 0) {
+        const n = lostBy.get(`${src.key} -> ${dst.key}`) ?? { ops: 0, lost };
+        n.ops++;
+        lostBy.set(`${src.key} -> ${dst.key}`, n);
+      }
     } else if (op.op === "add-project-team") {
       const current = sortedStrings(op.from.teamIds);
       const added = sortedStrings(op.to.teamIds).filter((t) => !current.includes(t));
@@ -3549,7 +3587,10 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): VisibilityPairC
           ? `\nallowed: ${all.filter((r) => r.allowed).map((r) => `${r.from} -> ${r.to} x${r.count}`).join("; ")}`
           : ""),
     );
-  return all.map(({ from, to, kind, count, allowed }) => ({ from, to, kind, count, allowed }));
+  return {
+    rows: all.map(({ from, to, kind, count, allowed }) => ({ from, to, kind, count, allowed })),
+    notes: [...lostBy].map(([pair, n]) => `${pair}: ${n.lost} source member(s) lose access (${n.ops} move(s))`),
+  };
 }
 
 /**
@@ -3632,7 +3673,7 @@ export function planFromRules(
       });
     }
   }
-  const visibility = planVisibility(ops, censusData);
+  const { rows: visibility, notes } = planVisibility(ops, censusData);
 
   // Warnings: a team scheduled for deletion must not be referenced by other
   // rules nor still listed on census projects (the phase-5c dependency).
@@ -3758,7 +3799,7 @@ export function planFromRules(
     op.to.labelMap = next;
     if (Object.keys(next).length === 0 && !Array.isArray(op.to.reapplyLabelIds)) op.to.reapplyLabelIds = [];
   }
-  return { meta, ops: ordered, warnings, ...(visibility.length ? { visibility } : {}) };
+  return { meta, ops: ordered, warnings, ...(visibility.length ? { visibility } : {}), ...(notes.length ? { notes } : {}) };
 }
 
 function selectTargets(

@@ -13,6 +13,7 @@ import {
   assertFreshBackup,
   assertFromAnchors,
   assertMovePreconditions,
+  moveAccessLost,
   moveVisibilityChange,
   projectTeamAddVisibilityChange,
   census,
@@ -3223,8 +3224,13 @@ describe("team visibility", () => {
 
   test("rule: the move and project-add matrix", () => {
     expect(moveVisibilityChange(T("a", true), T("b", false))).toContain("every member of the workspace");
-    expect(moveVisibilityChange(T("a", true, ["u1", "u2"]), T("b", true, ["u1"]))).toContain("1 member(s)");
-    expect(moveVisibilityChange(T("a", true, ["u1"]), T("b", true, ["u1", "u2"]))).toBeNull();
+    // destination has a member the source lacks: that member GAINS access
+    expect(moveVisibilityChange(T("a", true, ["u1"]), T("b", true, ["u1", "u2"]))).toContain("1 member(s) of B");
+    // destination lacks source members: readers removed, not a widening
+    expect(moveVisibilityChange(T("a", true, ["u1", "u2"]), T("b", true, ["u1"]))).toBeNull();
+    expect(moveAccessLost(T("a", true, ["u1", "u2"]), T("b", true, ["u1"]))).toBe(1);
+    expect(moveAccessLost(T("a", true, ["u1"]), T("b", true, ["u1"]))).toBe(0);
+    expect(moveVisibilityChange(T("a", true, ["u1"]), T("b", true, ["u1"]))).toBeNull();
     expect(moveVisibilityChange(T("a", true, null), T("b", true, ["u1"]))).not.toBeNull(); // unknown fails closed
     expect(moveVisibilityChange(T("a", false), T("b", true, ["u1"]))).toBeNull();
     expect(moveVisibilityChange(T("a", false), T("b", false))).toBeNull();
@@ -3279,13 +3285,19 @@ describe("team visibility", () => {
     expect(be.mutationCalls).toEqual([]);
   });
 
-  test("private -> private with fewer members refused; with a superset allowed", async () => {
+  test("private -> private: gaining members refused; equal and fewer allowed", async () => {
+    const gain = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1", "u2"] });
+    await expect(applyPlan(gain, [moveOp()], journal())).rejects.toThrow(/visibility change refused.*1 member\(s\) of NEW/s);
+    expect(gain.mutationCalls).toEqual([]);
+    expect((await check(gain, [moveOp()])).r.refused).toEqual([5]);
+    const equal = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1"] });
+    expect((await applyPlan(equal, [moveOp()], journal())).applied).toBe(1);
     const fewer = visBackend({ private: true, memberIds: ["u1", "u2"] }, { private: true, memberIds: ["u1"] });
-    await expect(applyPlan(fewer, [moveOp()], journal())).rejects.toThrow("visibility change refused");
-    expect(fewer.mutationCalls).toEqual([]);
-    const superset = visBackend({ private: true, memberIds: ["u1"] }, { private: true, memberIds: ["u1", "u2"] });
-    expect((await applyPlan(superset, [moveOp()], journal())).applied).toBe(1);
-    expect(superset.issues.get("i-1")!.teamId).toBe("t-2");
+    const { r, events } = await check(fewer, [moveOp()]);
+    expect(r.refused).toEqual([]);
+    expect(events.some((e) => e.includes("info seq 5") && e.includes("1 source member(s) lose access"))).toBe(true);
+    expect((await applyPlan(fewer, [moveOp()], journal())).applied).toBe(1);
+    expect(fewer.issues.get("i-1")!.teamId).toBe("t-2");
   });
 
   test("public -> private and public -> public are allowed", async () => {
