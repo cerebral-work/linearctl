@@ -72,6 +72,8 @@ interface FakeBackend {
   initiatives: Map<string, FakeInitiative>;
   teams: Map<string, FakeTeam>;
   projectStatuses: Map<string, { id: string; name: string; type?: string; position?: number }>;
+  /** Test hook: the LabelsByNameCI read explodes (refusal failure path). */
+  failLabelsByNameCI?: boolean;
   /** Mutation names whose variables were validated against the vendored schema. */
   validatedMutations: Set<string>;
   swallowWrites: boolean;
@@ -231,6 +233,7 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgLabelsByNameCI")) {
       be.readCalls++;
+      if (be.failLabelsByNameCI) throw new Error("conflict re-read exploded");
       // Honour the comparator the query ACTUALLY carries: eq is exact,
       // eqIgnoreCase is case-folded (critic round 1: reverting the query to
       // eq must turn a test red).
@@ -1911,6 +1914,20 @@ describe("check-mode ref handling (found by the v4 phase-1 check)", () => {
       op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
       from: { labelId: null }, to: { name: "security" },
     })], join(dir, "j.jsonl"))).rejects.toThrow(/"Security"/);
+  });
+
+  test("apply refusal survives a failing conflict re-read", async () => {
+    const be = freshBackend();
+    be.labels.set("11111111-1111-4111-8111-111111111001", { id: "11111111-1111-4111-8111-111111111001", name: "Security", retiredAt: null, teamId: "t-1", teamKey: "TOD" });
+    be.failLabelsByNameCI = true;
+    const err = await applyPlan(be, [baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:security", identifier: "security" },
+      from: { labelId: null }, to: { name: "security" },
+    })], join(dir, "j.jsonl")).catch((e) => e);
+    expect(String(err)).toContain("refused by Linear");
+    expect(String(err)).toContain("already exists"); // Linear's original text survives
+    expect(String(err)).toContain('"security"'); // the requested name is named
+    expect(String(err)).not.toContain("conflict re-read exploded");
   });
 
   test("absence anchor is case-insensitive: workspace 'Security' is found for a 'security' create", async () => {
