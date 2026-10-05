@@ -29,7 +29,8 @@ linearctl reorg apply reorg-plan.jsonl --phase N --check            # dry-run + 
 linearctl reorg apply reorg-plan.jsonl --phase N --apply \
   --backup-record backup.verified.json [--resume] [--max-ops N]
 linearctl reorg verify --plan reorg-plan.jsonl --phase N            # journal + live re-check → report
-linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N   # inverse ops, reverse order
+linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N   # dry-run: previews inverse ops, reverse order
+linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # writes
 ```
 
 ## Safety contract
@@ -140,8 +141,18 @@ Notes per kind:
 
 ## Rollback
 
-`rollback <applied.jsonl> --phase N` applies each op's inverse in reverse
-journal order with the same per-write verify. Reversible inverses: relabel,
+`rollback <applied.jsonl> --phase N` is a dry-run by default: it prints each
+inverse op it would apply and makes no mutation calls. `--check` adds a live
+pre-read of every target and reports drift (exit 1 when any); `--apply` writes.
+With `--apply`, each inverse op first pre-reads its target and refuses
+(exit 3, `ROLLBACK MISMATCH` naming field, expected and actual) when the live
+state is not what the journal recorded the forward op leaving. It then applies
+each op's inverse in reverse journal order with the same per-write verify. The
+inverse is built from the plan's `from`, filling any compared field the plan
+omitted (for example a label's old name) from the journaled pre-write read.
+If neither the plan nor the journal recorded a field the inverse needs, rollback
+refuses (exit 3, `ROLLBACK REFUSED`) before any write. A target that cannot be
+read counts as drift under `--check` and is refused under `--apply`. Reversible inverses: relabel,
 set-state, project/initiative fields, unarchive, label restore, move-back
 (identifier changes again — the identifier map is the record). No inverse
 (skipped, named in the output): `archive-state` (recreate by hand),

@@ -4,6 +4,7 @@ import { printJson } from "../lib/output.js";
 import {
   RateTracker,
   ReorgMismatch,
+  RollbackRefused,
   TokenBucket,
   census,
   journalRead,
@@ -214,25 +215,48 @@ export async function reorgVerify(opts: ReorgVerifyOptions): Promise<void> {
 
 export interface ReorgRollbackOptions {
   phase: string;
+  apply?: boolean;
+  check?: boolean;
   json?: boolean;
 }
 
 export async function reorgRollback(journalPath: string, opts: ReorgRollbackOptions): Promise<void> {
   const client = makeClient();
   try {
-    const { rolledBack, skipped } = await rollbackPhase(
-      client,
-      journalPath,
-      Number.parseInt(opts.phase, 10),
-      { pace: makePace(), onEvent: (ev) => process.stdout.write(`${ev.detail}\n`) },
-    );
-    for (const s of skipped) process.stdout.write(`skipped: ${s}\n`);
-    const summary = `rolled back ${rolledBack} op(s), ${skipped.length} skipped`;
-    if (opts.json) printJson({ rolledBack, skipped });
-    else process.stdout.write(`${summary}\n`);
+    const r = await rollbackPhase(client, journalPath, Number.parseInt(opts.phase, 10), {
+      pace: makePace(),
+      apply: opts.apply === true,
+      check: opts.check === true,
+      // --json keeps stdout a single document; progress goes to stderr
+      onEvent: (ev) => (opts.json ? process.stderr : process.stdout).write(`${ev.detail}\n`),
+    });
+    const out = opts.json ? process.stderr : process.stdout;
+    for (const s of r.skipped) out.write(`skipped: ${s}\n`);
+    for (const d of r.drifted) out.write(`drift: ${d}\n`);
+    if (opts.json) {
+      printJson({
+        dryRun: r.dryRun,
+        planned: r.planned,
+        rolledBack: r.rolledBack,
+        skipped: r.skipped,
+        drifted: r.drifted,
+      });
+    } else if (r.dryRun) {
+      const tail = opts.check
+        ? r.drifted.length > 0
+          ? `check: ${r.drifted.length} op(s) drifted from the journaled state`
+          : `check: no drift across ${r.planned} op(s)`
+        : `dry-run: ${r.planned} inverse op(s), ${r.skipped.length} skipped; re-run with --apply to write`;
+      process.stdout.write(`${tail}\n`);
+    } else {
+      process.stdout.write(`rolled back ${r.rolledBack} op(s), ${r.skipped.length} skipped\n`);
+    }
+    if (r.dryRun && opts.check && r.drifted.length > 0) process.exit(1);
   } catch (err) {
     if (err instanceof ReorgMismatch) {
-      process.stderr.write(`ROLLBACK MISMATCH at seq ${err.seq}\n`);
+      const msg = err instanceof RollbackRefused ? `ROLLBACK REFUSED at seq ${err.seq}: ${err.reason}` : `ROLLBACK MISMATCH at seq ${err.seq}: expected ${JSON.stringify(err.diff.expected)}, actual ${JSON.stringify(err.diff.actual)}`;
+      if (opts.json) printJson({ error: "rollback-mismatch", seq: err.seq, expected: err.diff.expected, actual: err.diff.actual, message: msg });
+      process.stderr.write(`${msg}\n`);
       process.exit(3);
     }
     throw err;

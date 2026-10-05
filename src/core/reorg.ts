@@ -1266,8 +1266,16 @@ export class ReorgMismatch extends Error {
     public readonly seq: number,
     public readonly diff: { expected: unknown; actual: unknown },
   ) {
-    super(`op seq ${seq} verify mismatch`);
+    super(`op seq ${seq} verify mismatch: expected ${JSON.stringify(diff.expected)}, actual ${JSON.stringify(diff.actual)}`);
     this.name = "ReorgMismatch";
+  }
+}
+
+/** Rollback refused before any write for this op (not a verify mismatch). */
+export class RollbackRefused extends ReorgMismatch {
+  constructor(seq: number, public readonly reason: string, diff: { expected: unknown; actual: unknown }) {
+    super(seq, diff);
+    this.message = `op seq ${seq} refused: ${reason}`;
   }
 }
 
@@ -1743,19 +1751,62 @@ export async function verifyPhase(
 // Rollback — inverse ops in reverse journal order, same per-write verify
 // ---------------------------------------------------------------------------
 
+export interface RollbackOptions {
+  pace: ApplyOptions["pace"];
+  onEvent?: ApplyOptions["onEvent"];
+  /** Write the inverse ops. Default false: preview only, zero mutation calls. */
+  apply?: boolean;
+  /** Preview plus a live pre-read of every target, reporting drift (no writes). */
+  check?: boolean;
+}
+
+export interface RollbackResult {
+  /** Ops actually reverted (always 0 unless apply). */
+  rolledBack: number;
+  skipped: string[];
+  /** Inverse ops in the order they would run / ran. */
+  planned: number;
+  /** Per-op drift lines from the live pre-read (check mode). */
+  drifted: string[];
+  dryRun: boolean;
+}
+
+/** The original op with keys the planner left out of from/to filled from the
+ *  journaled live reads. The planner can emit a `from` without the compared
+ *  field (rename-label carries {retired} but not the old name); the inverse is
+ *  built from `from`, so without this it would restore an undefined value. The
+ *  plan's own keys always win; only compareKeys are filled. */
+function withJournaledState(rec: JournalRecord, orig: ReorgOp): ReorgOp {
+  const keys = OP_REGISTRY[orig.op].compareKeys;
+  const fill = (planned: Record<string, unknown>, live: Record<string, unknown> | undefined) => {
+    const out = { ...planned };
+    if (live && !("absent" in live))
+      for (const k of keys) if (!(k in out) && k in live) out[k] = live[k];
+    return out;
+  };
+  const st = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : undefined);
+  return { ...orig, from: fill(orig.from, st(rec.before)), to: fill(orig.to, st(rec.after)) };
+}
+
 export async function rollbackPhase(
   client: LinearClient,
   journalPath: string,
   phase: number,
-  opts: { pace: ApplyOptions["pace"]; onEvent?: ApplyOptions["onEvent"] },
-): Promise<{ rolledBack: number; skipped: string[] }> {
+  opts: RollbackOptions,
+): Promise<RollbackResult> {
   const journal = journalRead(journalPath)
     .filter((r) => r.ok && typeof r.seq === "number" && r.phase === phase)
     .reverse();
   const skipped: string[] = [];
+  const drifted: string[] = [];
   let rolledBack = 0;
+  let planned = 0;
+  const write = opts.apply === true;
   const ctx: OpCtx = { client, pace: opts.pace };
 
+  // Pass 1: build and validate every inverse before any write, so a journal
+  // that cannot be inverted refuses the whole rollback instead of half of it.
+  const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp }[] = [];
   for (const rec of journal) {
     const orig = rec.original;
     if (!orig) {
@@ -1763,17 +1814,91 @@ export async function rollbackPhase(
       continue;
     }
     const def = OP_REGISTRY[orig.op];
-    const inv = def.inverse(orig);
+    const inv = def.inverse(withJournaledState(rec, orig));
     if (!inv) {
       skipped.push(`seq ${String(rec.seq)} [${orig.op}]: no inverse op (manual restore required)`);
       continue;
     }
+    const post = OP_REGISTRY[inv.op].expectedPost(inv);
+    const missing = post ? Object.keys(post).filter((k) => post[k] === undefined) : [];
+    if (missing.length)
+      throw new RollbackRefused(
+        Number(rec.seq),
+        `cannot invert ${orig.op}: field ${missing.map((k) => `"${k}"`).join(", ")} was recorded by neither the plan nor the journal`,
+        { expected: { missingFields: missing }, actual: "not recorded" },
+      );
+    steps.push({ rec, orig, inv });
+  }
+
+  // Live pre-read: the target must be in the state the journal says the forward
+  // op left it in. Unreadable or changed targets are problems, never a pass.
+  const preRead = async (
+    rec: JournalRecord,
+    orig: ReorgOp,
+    inv: ReorgOp,
+  ): Promise<{ line: string; error: ReorgMismatch } | null> => {
+    const invDef = OP_REGISTRY[inv.op];
+    const target = inv.target.identifier || inv.target.id;
+    const head = `seq ${String(rec.seq)} [${orig.op}] ${target}`;
+    let live: Record<string, unknown>;
+    try {
+      live = await invDef.readState(ctx, inv);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        line: `${head}: unreadable (${msg})`,
+        error: new RollbackRefused(inv.seq, `target ${target} could not be read before the write: ${msg}`, {
+          expected: pick(inv.from, invDef.compareKeys),
+          actual: `unreadable: ${msg}`,
+        }),
+      };
+    }
+    const bad = compareState(inv.from, live, invDef.compareKeys);
+    if (!bad.length) return null;
+    return {
+      line: `${head}: ${bad.join("; ")}`,
+      error: new ReorgMismatch(inv.seq, {
+        expected: pick(inv.from, invDef.compareKeys),
+        actual: pick(live, invDef.compareKeys),
+      }),
+    };
+  };
+
+  // Pass 2 (--apply): read every target and refuse before the FIRST write if any
+  // is unreadable or drifted. A target touched by several ops is read once, for
+  // the op processed first; later ops on it expect the earlier rollback's state
+  // and are re-checked just before their own write below.
+  if (write) {
+    const seen = new Set<string>();
+    for (const { rec, orig, inv } of steps) {
+      const key = `${inv.target.type}:${inv.target.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const problem = await preRead(rec, orig, inv);
+      if (problem) throw problem.error;
+    }
+  }
+
+  for (const { rec, orig, inv } of steps) {
+    planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
     // (remove-project-team rolls back via add-project-team).
     const invDef = OP_REGISTRY[inv.op];
-    // Inverse ops bypass the drift check — the point is the current state
-    // differs from the original `from`. Write, then verify the inverse's own
-    // expected end state.
+    const target = inv.target.identifier || inv.target.id;
+    const intent = `seq ${String(rec.seq)} [${orig.op}] ${target}: ${JSON.stringify(pick(inv.from, invDef.compareKeys))} -> ${JSON.stringify(pick(inv.to, invDef.compareKeys))}`;
+
+    if (write || opts.check) {
+      const problem = await preRead(rec, orig, inv);
+      if (problem) {
+        if (write) throw problem.error;
+        drifted.push(problem.line);
+      }
+    }
+    if (!write) {
+      opts.onEvent?.({ kind: "rollback", detail: `would revert ${intent}` });
+      continue;
+    }
+
     await invDef.apply(ctx, inv);
     const expected = invDef.expectedPost(inv);
     if (expected === null) {
@@ -1794,12 +1919,9 @@ export async function rollbackPhase(
         });
     }
     rolledBack++;
-    opts.onEvent?.({
-      kind: "rollback",
-      detail: `seq ${String(rec.seq)} [${orig.op}] reverted`,
-    });
+    opts.onEvent?.({ kind: "rollback", detail: `reverted ${intent}` });
   }
-  return { rolledBack, skipped };
+  return { rolledBack, skipped, planned, drifted, dryRun: !write };
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import type { LinearClient } from "@linear/sdk";
 import {
   RateTracker,
   ReorgMismatch,
+  RollbackRefused,
   TokenBucket,
   assertFreshBackup,
   assertMovePreconditions,
@@ -541,7 +542,7 @@ describe("op triples (apply → verify → rollback)", () => {
     const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(v.failures).toEqual([]);
     expect(v.ok).toBe(true);
-    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace() });
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
     expect(rb.rolledBack).toBe(1);
     assert.afterRollback();
   }
@@ -1018,7 +1019,7 @@ describe("rollbackPhase", () => {
         from: { archived: false }, to: { archived: true },
       }),
     });
-    const { rolledBack, skipped } = await rollbackPhase(fakeClient(be), j, 2, { pace: fastPace() });
+    const { rolledBack, skipped } = await rollbackPhase(fakeClient(be), j, 2, { pace: fastPace(), apply: true });
     expect(rolledBack).toBe(0);
     expect(skipped[0]).toContain("no inverse");
   });
@@ -1097,7 +1098,7 @@ describe("new ops", () => {
     const result = await applyPlan(be, [op], j);
     expect(result.applied).toBe(1);
     expect(be.projects.get("p-1")!.teamIds).toEqual(["t-1", "t-3"]); // t-3 preserved
-    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace() });
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
     expect(rb.rolledBack).toBe(1);
     expect(be.projects.get("p-1")!.teamIds).toEqual(["t-1", "t-2", "t-3"]);
   });
@@ -1115,7 +1116,7 @@ describe("new ops", () => {
       expect(be.initiatives.get("in-1")!.ownerId).toBe("u-9");
       const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
       expect(v.ok).toBe(true);
-      const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace() });
+      const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
       expect(rb.rolledBack).toBe(1);
       expect(be.initiatives.get("in-1")!.ownerId).toBeNull();
     })();
@@ -1190,9 +1191,166 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
     expect(be.labels.get("l-t")!.name).toBe("bug·old-EX");
     const v = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(v.ok).toBe(true);
-    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace() });
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
     expect(rb.rolledBack).toBe(1);
     expect(be.labels.get("l-t")!.name).toBe("bug");
+  });
+
+  describe("rollback gate + planner-shaped rename journal", () => {
+    // Planner-shaped row: `from` carries {retired} but NOT the old name; the old
+    // name lives only in the journaled live read (`before`).
+    function seedRename(be: FakeBackend, liveName: string): string {
+      be.labels.set("l-t", { id: "l-t", name: liveName, retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      const j = join(dir, "rb.jsonl");
+      journalAppend(j, {
+        seq: 6, phase: 1, op: "rename-label", at: "t", ok: true,
+        original: baseOp({
+          seq: 6, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/ci" },
+          from: { retired: false }, to: { name: "ci·old-EX" },
+        }),
+        before: { retired: false, name: "ci" },
+        after: { retired: false, name: "ci·old-EX" },
+      });
+      return j;
+    }
+
+    test("default is a dry-run: lists the inverse op, makes zero mutation calls", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "ci·old-EX");
+      const events: string[] = [];
+      const r = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), onEvent: (e) => events.push(e.detail) });
+      expect(r.dryRun).toBe(true);
+      expect(r.planned).toBe(1);
+      expect(r.rolledBack).toBe(0);
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.readCalls).toBe(0);
+      expect(be.labels.get("l-t")!.name).toBe("ci·old-EX");
+      expect(events[0]).toContain("would revert");
+      expect(events[0]).toContain('"name":"ci"');
+    });
+
+    test("--apply restores the name when live equals the journaled after-state", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "ci·old-EX");
+      const r = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      expect(r.rolledBack).toBe(1);
+      expect(be.labels.get("l-t")!.name).toBe("ci");
+    });
+
+    test("real drift fails, names field + both values, and writes nothing", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "someone-renamed-it");
+      let err: unknown;
+      try {
+        await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ReorgMismatch);
+      const m = err as ReorgMismatch;
+      expect(m.diff.expected).toEqual({ name: "ci·old-EX" });
+      expect(m.diff.actual).toEqual({ name: "someone-renamed-it" });
+      expect(m.message).toContain("ci·old-EX");
+      expect(m.message).toContain("someone-renamed-it");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.labels.get("l-t")!.name).toBe("someone-renamed-it");
+    });
+
+    test("--check reports drift without writing", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "someone-renamed-it");
+      const r = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), check: true });
+      expect(r.dryRun).toBe(true);
+      expect(r.drifted).toHaveLength(1);
+      expect(r.drifted[0]).toContain("name");
+      expect(r.drifted[0]).toContain("someone-renamed-it");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.readCalls).toBeGreaterThan(0);
+    });
+
+    test("refuses before any write when neither plan nor journal recorded the needed field", async () => {
+      const be = freshBackend();
+      be.labels.set("l-t", { id: "l-t", name: "ci·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      const j = join(dir, "nofield.jsonl");
+      journalAppend(j, {
+        seq: 6, phase: 1, op: "rename-label", at: "t", ok: true,
+        original: baseOp({
+          seq: 6, op: "rename-label", target: { type: "label", id: "l-t", identifier: "EX/ci" },
+          from: { retired: false }, to: { name: "ci·old-EX" },
+        }),
+        before: { retired: false },
+        after: { retired: false, name: "ci·old-EX" },
+      });
+      for (const mode of [{ apply: true }, { check: true }, {}]) {
+        let err: unknown;
+        try {
+          await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), ...mode });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(RollbackRefused);
+        expect((err as RollbackRefused).message).toContain("seq 6");
+        expect((err as RollbackRefused).message).toContain('"name"');
+        expect((err as RollbackRefused).message).toContain("neither the plan nor the journal");
+      }
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.labels.get("l-t")!.name).toBe("ci·old-EX");
+    });
+
+    test("an unreadable target is drift under --check and refused before any write under --apply", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "ci·old-EX");
+      be.labels.delete("l-t");
+      const chk = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), check: true });
+      expect(chk.drifted).toHaveLength(1);
+      expect(chk.drifted[0]).toContain("unreadable");
+      expect(be.mutationCalls).toEqual([]);
+      let err: unknown;
+      try {
+        await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RollbackRefused);
+      expect((err as RollbackRefused).message).toContain("could not be read");
+      expect(be.mutationCalls).toEqual([]);
+    });
+
+    test("--apply reads every target first: an unreadable second-processed target means zero writes", async () => {
+      const be = freshBackend();
+      be.labels.set("l-a", { id: "l-a", name: "a·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      const j = join(dir, "two.jsonl");
+      // seq 2 is processed first (reverse order); seq 1's label does not exist
+      for (const [seq, id, name] of [[1, "l-gone", "g"], [2, "l-a", "a"]] as const) {
+        journalAppend(j, {
+          seq, phase: 1, op: "rename-label", at: "t", ok: true,
+          original: baseOp({
+            seq, op: "rename-label", target: { type: "label", id, identifier: `EX/${name}` },
+            from: { retired: false }, to: { name: `${name}·old-EX` },
+          }),
+          before: { retired: false, name },
+          after: { retired: false, name: `${name}·old-EX` },
+        });
+      }
+      let err: unknown;
+      try {
+        await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RollbackRefused);
+      expect((err as RollbackRefused).message).toContain("seq 1");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.labels.get("l-a")!.name).toBe("a·old-EX");
+    });
+
+    test("--check on a clean journal reports no drift", async () => {
+      const be = freshBackend();
+      const j = seedRename(be, "ci·old-EX");
+      const r = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), check: true });
+      expect(r.drifted).toEqual([]);
+      expect(be.mutationCalls).toEqual([]);
+    });
   });
 
   test("the fake enforces cross-scope uniqueness like Linear (create fails on any copy)", async () => {
