@@ -19,3 +19,7 @@ linearctl reorg census --team ENG --limit 50 --out /tmp/reorg-census.json --json
 linearctl reorg plan --rules rules.json --census /tmp/reorg-census.json --out /tmp/reorg-plan.jsonl
 linearctl reorg apply /tmp/reorg-plan.jsonl --phase 1            # dry-run
 linearctl reorg apply /tmp/reorg-plan.jsonl --phase 1 --check    # + live drift pre-read
+# Roll a phase back from its journal. Dry-run by default (prints each inverse
+# op, zero writes); --check adds a live drift pre-read; --apply writes.
+linearctl reorg rollback /tmp/reorg-plan.jsonl.applied.jsonl --phase 1          # dry-run
+linearctl reorg rollback /tmp/reorg-plan.jsonl.applied.jsonl --phase 1 --check  # + live drift pre-read

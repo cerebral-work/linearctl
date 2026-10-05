@@ -690,9 +690,11 @@ reorgCmd
   .action((opts) => reorgVerify(opts));
 reorgCmd
   .command("rollback")
-  .description("Apply inverse ops in reverse journal order for a phase")
+  .description("Apply inverse ops in reverse journal order for a phase (dry-run default; --apply writes)")
   .argument("<journal>", "applied.jsonl from an apply run")
   .requiredOption("--phase <n>", "phase to roll back")
+  .option("--apply", "write the inverse ops (default is a dry-run preview, zero mutations)")
+  .option("--check", "dry-run PLUS a live drift pre-read of every target (no writes)")
   .option("--json", "emit JSON")
   .action((journal, opts) => reorgRollback(journal, opts));
 

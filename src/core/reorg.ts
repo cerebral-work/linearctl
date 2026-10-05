@@ -1266,7 +1266,7 @@ export class ReorgMismatch extends Error {
     public readonly seq: number,
     public readonly diff: { expected: unknown; actual: unknown },
   ) {
-    super(`op seq ${seq} verify mismatch`);
+    super(`op seq ${seq} verify mismatch: expected ${JSON.stringify(diff.expected)}, actual ${JSON.stringify(diff.actual)}`);
     this.name = "ReorgMismatch";
   }
 }
@@ -1743,17 +1743,57 @@ export async function verifyPhase(
 // Rollback — inverse ops in reverse journal order, same per-write verify
 // ---------------------------------------------------------------------------
 
+export interface RollbackOptions {
+  pace: ApplyOptions["pace"];
+  onEvent?: ApplyOptions["onEvent"];
+  /** Write the inverse ops. Default false: preview only, zero mutation calls. */
+  apply?: boolean;
+  /** Preview plus a live pre-read of every target, reporting drift (no writes). */
+  check?: boolean;
+}
+
+export interface RollbackResult {
+  /** Ops actually reverted (always 0 unless apply). */
+  rolledBack: number;
+  skipped: string[];
+  /** Inverse ops in the order they would run / ran. */
+  planned: number;
+  /** Per-op drift lines from the live pre-read (check mode). */
+  drifted: string[];
+  dryRun: boolean;
+}
+
+/** The original op with keys the planner left out of from/to filled from the
+ *  journaled live reads. The planner can emit a `from` without the compared
+ *  field (rename-label carries {retired} but not the old name); the inverse is
+ *  built from `from`, so without this it would restore an undefined value. The
+ *  plan's own keys always win; only compareKeys are filled. */
+function withJournaledState(rec: JournalRecord, orig: ReorgOp): ReorgOp {
+  const keys = OP_REGISTRY[orig.op].compareKeys;
+  const fill = (planned: Record<string, unknown>, live: Record<string, unknown> | undefined) => {
+    const out = { ...planned };
+    if (live && !("absent" in live))
+      for (const k of keys) if (!(k in out) && k in live) out[k] = live[k];
+    return out;
+  };
+  const st = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : undefined);
+  return { ...orig, from: fill(orig.from, st(rec.before)), to: fill(orig.to, st(rec.after)) };
+}
+
 export async function rollbackPhase(
   client: LinearClient,
   journalPath: string,
   phase: number,
-  opts: { pace: ApplyOptions["pace"]; onEvent?: ApplyOptions["onEvent"] },
-): Promise<{ rolledBack: number; skipped: string[] }> {
+  opts: RollbackOptions,
+): Promise<RollbackResult> {
   const journal = journalRead(journalPath)
     .filter((r) => r.ok && typeof r.seq === "number" && r.phase === phase)
     .reverse();
   const skipped: string[] = [];
+  const drifted: string[] = [];
   let rolledBack = 0;
+  let planned = 0;
+  const write = opts.apply === true;
   const ctx: OpCtx = { client, pace: opts.pace };
 
   for (const rec of journal) {
@@ -1763,17 +1803,44 @@ export async function rollbackPhase(
       continue;
     }
     const def = OP_REGISTRY[orig.op];
-    const inv = def.inverse(orig);
+    const inv = def.inverse(withJournaledState(rec, orig));
     if (!inv) {
       skipped.push(`seq ${String(rec.seq)} [${orig.op}]: no inverse op (manual restore required)`);
       continue;
     }
+    planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
     // (remove-project-team rolls back via add-project-team).
     const invDef = OP_REGISTRY[inv.op];
-    // Inverse ops bypass the drift check — the point is the current state
-    // differs from the original `from`. Write, then verify the inverse's own
-    // expected end state.
+    const target = inv.target.identifier || inv.target.id;
+    const intent = `seq ${String(rec.seq)} [${orig.op}] ${target}: ${JSON.stringify(pick(inv.from, invDef.compareKeys))} -> ${JSON.stringify(pick(inv.to, invDef.compareKeys))}`;
+
+    if (write || opts.check) {
+      // Live pre-read: the target must be in the state the journal says the
+      // forward op left it in. A mismatch means something else changed it since.
+      let live: Record<string, unknown> | null = null;
+      try {
+        live = await invDef.readState(ctx, inv);
+      } catch {
+        live = null; // target not readable (e.g. already absent): nothing to compare
+      }
+      if (live) {
+        const bad = compareState(inv.from, live, invDef.compareKeys);
+        if (bad.length) {
+          if (write)
+            throw new ReorgMismatch(inv.seq, {
+              expected: pick(inv.from, invDef.compareKeys),
+              actual: pick(live, invDef.compareKeys),
+            });
+          drifted.push(`seq ${String(rec.seq)} [${orig.op}] ${target}: ${bad.join("; ")}`);
+        }
+      }
+    }
+    if (!write) {
+      opts.onEvent?.({ kind: "rollback", detail: `would revert ${intent}` });
+      continue;
+    }
+
     await invDef.apply(ctx, inv);
     const expected = invDef.expectedPost(inv);
     if (expected === null) {
@@ -1794,12 +1861,9 @@ export async function rollbackPhase(
         });
     }
     rolledBack++;
-    opts.onEvent?.({
-      kind: "rollback",
-      detail: `seq ${String(rec.seq)} [${orig.op}] reverted`,
-    });
+    opts.onEvent?.({ kind: "rollback", detail: `reverted ${intent}` });
   }
-  return { rolledBack, skipped };
+  return { rolledBack, skipped, planned, drifted, dryRun: !write };
 }
 
 // ---------------------------------------------------------------------------
