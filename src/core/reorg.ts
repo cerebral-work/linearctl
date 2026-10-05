@@ -121,6 +121,15 @@ export function sha256File(path: string): string {
 }
 
 /** Parse + validate a reorg plan file (header `_meta` line + one op per line). */
+/** Trashing is a delayed permanent delete (Linear purges after 30 days), so an
+ *  `archive-project` that asks for it is refused outright. */
+export function assertArchiveProjectNotTrash(op: string, to: Record<string, unknown>, where: string): void {
+  if (op === "archive-project" && to.trashed === true)
+    throw new Error(
+      `${where}: archive-project must not trash — trashing is a delayed permanent delete and belongs in a gated phase-6 op, not a reversible one (use to: { archived: true })`,
+    );
+}
+
 export function parsePlanFile(path: string): ReorgPlan {
   const lines = readFileSync(path, "utf8").split("\n").filter((l) => l.trim());
   if (lines.length === 0) throw new Error(`plan file ${path} is empty`);
@@ -146,6 +155,7 @@ export function parsePlanFile(path: string): ReorgPlan {
     if (typeof o.from !== "object" || o.from === null)
       throw new Error(`${where}: from required (captured at census)`);
     if (typeof o.to !== "object" || o.to === null) throw new Error(`${where}: to required`);
+    assertArchiveProjectNotTrash(o.op, o.to, where);
     if (typeof o.evidence !== "string") throw new Error(`${where}: evidence required`);
     if (typeof o.reversible !== "boolean") throw new Error(`${where}: reversible required`);
     if (o.op === "archive-state" && o.reversible !== false)
@@ -414,6 +424,7 @@ interface ReorgProjectNode {
   status?: { id: string; name: string } | null;
   lead?: { id: string } | null;
   targetDate?: string | null;
+  archivedAt?: string | null;
   trashed?: boolean | null;
   teams?: { nodes: { id: string; key: string }[] } | null;
   initiatives?: { nodes: { id: string }[] } | null;
@@ -468,6 +479,7 @@ const PROJECT_STATE_Q = /* GraphQL */ `
       status { id name }
       lead { id }
       targetDate
+      archivedAt
       trashed
       teams { nodes { id key } }
       initiatives { nodes { id } }
@@ -599,6 +611,7 @@ async function readProject(ctx: OpCtx, id: string): Promise<Record<string, unkno
     statusId: p.status?.id ?? null,
     leadId: p.lead?.id ?? null,
     targetDate: p.targetDate ?? null,
+    archived: p.archivedAt != null,
     trashed: p.trashed === true,
     teamIds: (p.teams?.nodes ?? []).map((t) => t.id).sort(),
     initiativeIds: (p.initiatives?.nodes ?? []).map((x) => x.id).sort(),
@@ -671,8 +684,11 @@ const M = {
     teamDelete(id: $id) { success } }`,
   projectUpdate: /* GraphQL */ `mutation ReorgProjectUpdate($id: String!, $input: ProjectUpdateInput!) {
     projectUpdate(id: $id, input: $input) { success } }`,
+  // projectArchive is @deprecated in the schema, but it is the only plain-archive
+  // mutation (projectDelete trashes). trash:false is explicit so a server-side
+  // default can never turn an archive into a delayed permanent delete.
   projectArchive: /* GraphQL */ `mutation ReorgProjectArchive($id: String!) {
-    projectArchive(id: $id) { success } }`,
+    projectArchive(id: $id, trash: false) { success } }`,
   projectUnarchive: /* GraphQL */ `mutation ReorgProjectUnarchive($id: String!) {
     projectUnarchive(id: $id) { success } }`,
   initiativeArchive: /* GraphQL */ `mutation ReorgInitiativeArchive($id: String!) {
@@ -719,11 +735,32 @@ const PROJECT_INIT_JOINS_Q = /* GraphQL */ `
   }
 `;
 
+interface StatusNode { id: string; name: string; type: string; position?: number | null }
+
+const STATUS_LIFECYCLE = ["backlog", "planned", "started", "paused", "completed", "canceled"];
+
+/** Place a new status after the last status whose type sorts at or before its
+ *  own in the lifecycle, and before the next one: midpoint of the two
+ *  neighbours, or last+1 when nothing follows. */
+export function projectStatusPosition(all: StatusNode[], type: unknown): number {
+  const rank = (t: unknown) => STATUS_LIFECYCLE.indexOf(String(t));
+  const mine = rank(type);
+  if (mine < 0) throw new Error(`create-project-status: unknown type "${String(type)}"`);
+  const sorted = all
+    .filter((x) => typeof x.position === "number")
+    .sort((a, b) => (a.position as number) - (b.position as number));
+  const before = sorted.filter((x) => rank(x.type) <= mine);
+  const prev = before.length ? (before[before.length - 1].position as number) : null;
+  const next = sorted.find((x) => rank(x.type) > mine && (prev === null || (x.position as number) > prev));
+  if (prev === null) return next ? (next.position as number) - 1 : 0;
+  return next ? (prev + (next.position as number)) / 2 : prev + 1;
+}
+
 /** Every project status (few; paginated) — projectStatuses takes no filter. */
 const PROJECT_STATUSES_Q = /* GraphQL */ `
   query ReorgProjectStatuses($first: Int!, $after: String) {
     projectStatuses(first: $first, after: $after) {
-      nodes { id name type }
+      nodes { id name type position }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -1035,18 +1072,18 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
   },
 
   "archive-project": {
-    compareKeys: ["trashed"],
+    compareKeys: ["archived", "trashed"],
     readState: (ctx, op) => readProject(ctx, op.target.id),
-    expectedPost: (op) => ({ trashed: op.to.trashed !== false }),
+    // Archive never trashes: trashed projects are permanently removed after
+    // 30 days, archived ones stay restorable. parsePlanFile refuses to:{trashed:true}.
+    expectedPost: (op) => ({ archived: op.to.archived !== false, trashed: false }),
     async apply(ctx, op) {
-      // archiveProject is deprecated → trash semantics, restorable via
-      // projectUnarchive. The phase-3 canary settles which mutation plans emit.
-      const restoring = op.to.trashed === false;
+      const restoring = op.to.archived === false;
       await mutate(ctx, restoring ? "projectUnarchive" : "projectArchive",
         restoring ? M.projectUnarchive : M.projectArchive, { id: op.target.id });
     },
     inverse(op) {
-      return { ...op, from: op.to, to: { trashed: false }, evidence: `rollback of seq ${op.seq}` };
+      return { ...op, from: op.to, to: { archived: false, trashed: false }, evidence: `rollback of seq ${op.seq}` };
     },
   },
 
@@ -1169,11 +1206,23 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     },
     expectedPost: (op) => ({ statusId: op.to.statusId ?? null }),
     async apply(ctx, op) {
+      // ProjectStatusCreateInput.position is a required Float!.
+      const position =
+        typeof op.to.position === "number"
+          ? op.to.position
+          : projectStatusPosition(
+              await paged<StatusNode>(
+                ctx.client, ctx.pace, PROJECT_STATUSES_Q, "projectStatuses", {},
+              ),
+              op.to.type,
+            );
+      op.to.position = position; // journal `after` carries the position used
       await mutate(ctx, "projectStatusCreate", M.projectStatusCreate, {
         input: {
           name: op.to.name,
           color: op.to.color ?? "#999999",
           type: op.to.type,
+          position,
           ...(typeof op.to.description === "string" ? { description: op.to.description } : {}),
         },
       });
@@ -2345,7 +2394,7 @@ const CENSUS_PROJECTS_Q = /* GraphQL */ `
   query ReorgCensusProjects($first: Int!, $after: String) {
     projects(first: $first, after: $after, includeArchived: true) {
       nodes {
-        id name targetDate trashed
+        id name targetDate archivedAt trashed
         status { id name }
         lead { id }
         teams { nodes { id key } }
@@ -2527,7 +2576,7 @@ export function assertFromAnchors(ops: ReorgOp[]): void {
     "move-project-initiative": ["initiativeIds"],
     "set-initiative-owner": ["ownerId"],
     "archive-issue": ["archived"],
-    "archive-project": ["trashed"],
+    "archive-project": ["archived", "trashed"],
     "archive-initiative": ["archived"],
     "move-issue-team": ["teamId", "stateId", "labelIds", "projectId", "cycleId"],
     "create-project-status": ["statusId"],
@@ -2589,6 +2638,7 @@ export function planFromRules(
       throw new Error(
         `archive-state rule needs an approval id (no unarchive exists): ${rule.evidence}`,
       );
+    assertArchiveProjectNotTrash(rule.op, rule.to, `rule "${rule.evidence}"`);
     for (const t of targets) {
       seq++;
       const to = { ...rule.to };
@@ -2823,13 +2873,14 @@ function selectTargets(
     case "project": {
       const out: { target: ReorgTarget; from: Record<string, unknown> }[] = [];
       for (const p of censusData.projects) {
-        if (!hit({ id: p.id, name: p.name, trashed: p.trashed === true })) continue;
+        if (!hit({ id: p.id, name: p.name, archived: p.archivedAt != null, trashed: p.trashed === true })) continue;
         out.push({
           target: { type: "project", id: p.id, identifier: p.name },
           from: {
             statusId: p.status?.id ?? null,
             leadId: p.lead?.id ?? null,
             targetDate: p.targetDate ?? null,
+            archived: p.archivedAt != null,
             trashed: p.trashed === true,
             teamIds: (p.teams?.nodes ?? []).map((x) => x.id).sort(),
             initiativeIds: (p.initiatives?.nodes ?? []).map((x) => x.id).sort(),
