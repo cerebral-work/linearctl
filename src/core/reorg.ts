@@ -703,15 +703,15 @@ const LABELS_BY_NAME_ALL_SCOPES_Q = /* GraphQL */ `
 /** One issue in a state? (archive-state precondition: only empty states.) */
 const ISSUES_IN_STATE_Q = /* GraphQL */ `
   query ReorgIssuesInState($id: ID!) {
-    issues(filter: { state: { id: { eq: $id } } }, includeArchived: true, first: 1) { nodes { id } }
+    issues(filter: { state: { id: { eq: $id } } }, includeArchived: true, first: 10) { nodes { id identifier archivedAt } }
   }
 `;
 
 /** A project's initiative joins — initiativeToProjects has no filter argument. */
 const PROJECT_INIT_JOINS_Q = /* GraphQL */ `
-  query ReorgProjectInitJoins($projectId: String!, $after: String) {
+  query ReorgProjectInitJoins($projectId: String!, $first: Int!, $after: String) {
     project(id: $projectId) {
-      initiativeToProjects(first: 100, after: $after, includeArchived: true) {
+      initiativeToProjects(first: $first, after: $after, includeArchived: true) {
         nodes { id initiative { id } }
         pageInfo { hasNextPage endCursor }
       }
@@ -744,8 +744,11 @@ const TEAM_PROJECTS_Q = /* GraphQL */ `
   }
 `;
 const TEAM_LABELS_Q = /* GraphQL */ `
-  query ReorgTeamLabels($id: ID!) {
-    issueLabels(filter: { team: { id: { eq: $id } } }, first: 250) { nodes { id retiredAt } }
+  query ReorgTeamLabels($id: ID!, $first: Int!, $after: String) {
+    issueLabels(filter: { team: { id: { eq: $id } } }, first: $first, after: $after) {
+      nodes { id retiredAt }
+      pageInfo { hasNextPage endCursor }
+    }
   }
 `;
 
@@ -985,15 +988,12 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
         : null;
       if (!joinId && typeof op.to.fromInitiativeId === "string") {
         // initiativeToProjects takes no filter argument: read the project's
-        // own joins (paginated) and match the initiative in code.
-        type Joins = { project: { initiativeToProjects: Page<{ id: string; initiative: { id: string } }> } | null };
-        let after: string | null = null;
-        do {
-          const d: Joins = await reorgRaw<Joins>(ctx.client, PROJECT_INIT_JOINS_Q, { projectId: op.target.id, after }, ctx.pace);
-          const page = d.project?.initiativeToProjects;
-          joinId = page?.nodes.find((n) => n.initiative.id === op.to.fromInitiativeId)?.id ?? null;
-          after = !joinId && page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
-        } while (after);
+        // own joins (guarded paging) and match the initiative in code.
+        const joins = await paged<{ id: string; initiative: { id: string } }>(
+          ctx.client, ctx.pace, PROJECT_INIT_JOINS_Q, "project.initiativeToProjects",
+          { projectId: op.target.id }, undefined, true,
+        );
+        joinId = joins.find((n) => n.initiative.id === op.to.fromInitiativeId)?.id ?? null;
       }
       if (joinId) {
         await mutate(ctx, "initiativeToProjectDelete", M.initiativeToProjectDelete, { id: joinId });
@@ -1302,13 +1302,19 @@ export async function assertMovePreconditions(
  *  instead of discovering Linear's refusal mid-phase. Archived issues count:
  *  they still reference the state. */
 async function assertStateEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
-  const d = await reorgRaw<{ issues: { nodes: { id: string }[] } }>(
+  const d = await reorgRaw<{ issues: { nodes: { id: string; identifier?: string; archivedAt?: string | null }[] } }>(
     ctx.client, ISSUES_IN_STATE_Q, { id: op.target.id }, ctx.pace,
   );
-  if (d.issues.nodes.length > 0)
+  const nodes = d.issues.nodes;
+  if (nodes.length > 0) {
+    const archived = nodes.filter((n) => n.archivedAt).map((n) => n.identifier ?? n.id);
+    const note = archived.length
+      ? ` (archived: ${archived.join(", ")}). Linear may allow archiving a state that holds only archived issues; the engine refuses conservatively`
+      : "";
     throw new Error(
-      `archive-state ${op.target.identifier}: ${d.issues.nodes.length} issue(s) still in the state — move them first`,
+      `archive-state ${op.target.identifier}: ${nodes.length === 10 ? "10+" : nodes.length} issue(s) still in the state — move them first${note}`,
     );
+  }
 }
 
 /** Live emptiness preconditions (plan §2c phase 6): 0 issues (archived
@@ -1319,16 +1325,16 @@ async function assertTeamEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
   );
   if (issues.issues.nodes.length > 0)
     throw new Error(`delete-team ${op.target.identifier}: issues remain`);
-  const labels = await reorgRaw<{ issueLabels: { nodes: ReorgLabelNode[] } }>(
-    ctx.client, TEAM_LABELS_Q, { id: op.target.id }, ctx.pace,
+  const labels = await paged<ReorgLabelNode>(
+    ctx.client, ctx.pace, TEAM_LABELS_Q, "issueLabels", { id: op.target.id }, undefined, true,
   );
-  const active = labels.issueLabels.nodes.filter((l) => l.retiredAt == null);
+  const active = labels.filter((l) => l.retiredAt == null);
   if (active.length > 0)
     throw new Error(`delete-team ${op.target.identifier}: ${active.length} non-retired label(s) remain`);
   // Paginated, archived-inclusive — a team attached only to an archived
   // project (or past the first page) must still block the delete.
   const projects = await paged<{ id: string; teams: { nodes: { id: string }[] } }>(
-    ctx.client, ctx.pace, TEAM_PROJECTS_Q, "projects", {},
+    ctx.client, ctx.pace, TEAM_PROJECTS_Q, "projects", {}, undefined, true,
   );
   const member = projects.filter((p) => p.teams.nodes.some((t) => t.id === op.target.id));
   if (member.length > 0)
@@ -2270,6 +2276,9 @@ async function paged<T>(
   connection: string,
   vars: Record<string, unknown>,
   limit?: number,
+  /** Emptiness/lookup probes: a stuck cursor throws instead of ending the scan
+   *  (a partial read must not pass for a complete one). */
+  strict = false,
 ): Promise<T[]> {
   // A bad cap is a usage error, not a silently unbounded scan. The previous
   // `limit &&` guard treated 0 as "no limit" and NaN as falsy, so both fetched
@@ -2283,10 +2292,16 @@ async function paged<T>(
     const d: Record<string, Page<T>> = await reorgRaw<Record<string, Page<T>>>(
       client, query, { ...vars, first: 100, after }, pace,
     );
-    const page: Page<T> = d[connection];
+    // `connection` may be a dotted path ("project.initiativeToProjects")
+    let page: Page<T> | undefined = d as unknown as Page<T>;
+    for (const key of connection.split("."))
+      page = (page as unknown as Record<string, Page<T> | undefined> | null | undefined)?.[key];
+    if (!page) throw new Error(`graphql: no ${connection} in the response`);
     out.push(...(page.nodes ?? []));
     const next = page.pageInfo?.hasNextPage ? page.pageInfo.endCursor ?? null : null;
     // A cursor that does not advance would loop forever.
+    if (strict && next !== null && next === after)
+      throw new Error(`graphql: ${connection} cursor did not advance (stuck at ${next}) — refusing to treat a partial read as complete`);
     after = next !== null && next === after ? null : next;
     // Stop fetching as soon as the cap is met. Unlike a user-facing listing,
     // census `--limit` is a smoke-test cap on what is FETCHED: it exists to

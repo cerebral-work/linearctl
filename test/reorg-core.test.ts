@@ -74,6 +74,9 @@ interface FakeBackend {
   /** When set, the projects probe answers in two pages: the blocking project
    *  arrives on page two — an engine that drops the pagination loop misses it. */
   forceProjectPagination: boolean;
+  /** Page-2 delivery of team labels / a cursor that never advances (init joins, labels). */
+  forceLabelPagination?: boolean;
+  stuckCursor?: boolean;
   mutationCalls: string[];
   readCalls: number;
   /** ReorgTeamProjects calls — the pagination test asserts the second page. */
@@ -192,7 +195,7 @@ function fakeClient(be: FakeBackend): LinearClient {
     if (query.includes("ReorgIssuesInState")) {
       be.readCalls++;
       const withArchived = query.includes("includeArchived: true");
-      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.stateId === vars.id && (withArchived || !i.archived)).map((i) => ({ id: i.id })) } });
+      return ok({ issues: { nodes: [...be.issues.values()].filter((i) => i.stateId === vars.id && (withArchived || !i.archived)).map((i) => ({ id: i.id, identifier: i.identifier, archivedAt: i.archived ? "2026-01-01T00:00:00Z" : null })) } });
     }
     // The fake honours includeArchived EXACTLY like Linear: archived rows are
     // hidden unless the query carries the flag. An engine that drops the flag
@@ -204,7 +207,11 @@ function fakeClient(be: FakeBackend): LinearClient {
     }
     if (query.includes("ReorgTeamLabels")) {
       be.readCalls++;
-      return ok({ issueLabels: { nodes: [...be.labels.values()].filter((l) => l.teamId === vars.id).map((l) => ({ id: l.id, retiredAt: l.retiredAt })) } });
+      const nodes = [...be.labels.values()].filter((l) => l.teamId === vars.id).map((l) => ({ id: l.id, retiredAt: l.retiredAt }));
+      if (be.stuckCursor) return ok({ issueLabels: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "same" } } });
+      if (be.forceLabelPagination && !vars.after)
+        return ok({ issueLabels: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "l2" } } });
+      return ok({ issueLabels: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } });
     }
     if (query.includes("ReorgTeamProjects")) {
       be.readCalls++;
@@ -336,6 +343,7 @@ function fakeClient(be: FakeBackend): LinearClient {
       // fake join-row id convention: "<initiativeId>:<projectId>"
       const p = be.projects.get(vars.projectId as string);
       const nodes = (p?.initiativeIds ?? []).map((initId) => ({ id: `${initId}:${p!.id}`, initiative: { id: initId } }));
+      if (be.stuckCursor) return ok({ project: { initiativeToProjects: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "same" } } } });
       return ok({ project: p ? { initiativeToProjects: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } : null });
     }
     if (query.includes("ReorgInitToProjDelete"))
@@ -2028,5 +2036,53 @@ describe("create-project-status read", () => {
     const result = await applyPlan(be, [op], join(dir, "j.jsonl"));
     expect(result.applied).toBe(1);
     expect(be.mutationCalls).toEqual(["projectStatusCreate"]);
+  });
+});
+
+describe("guarded paging and refusal messages", () => {
+  const teamDel = () => baseOp({
+    seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+    target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+  });
+
+  test("delete-team: an active label on page 2 blocks the delete (labels are paginated)", async () => {
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.labels.set("l-1", { id: "l-1", name: "stray", retiredAt: null, teamId: "t-9", teamKey: "OLD" });
+    be.forceLabelPagination = true;
+    await expect(applyPlan(be, [teamDel()], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("non-retired label(s) remain");
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("a cursor that does not advance throws instead of spinning (labels and initiative joins)", async () => {
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.stuckCursor = true;
+    await expect(applyPlan(be, [teamDel()], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow("cursor did not advance");
+
+    const be2 = freshBackend();
+    be2.projects.set("p-1", { id: "p-1", name: "P", statusId: "st", leadId: null, targetDate: null, trashed: false, teamIds: ["t-1"], initiativeIds: ["in-1"] });
+    be2.stuckCursor = true;
+    const mv = baseOp({
+      phase: 4, op: "move-project-initiative", target: { type: "project", id: "p-1", identifier: "P" },
+      from: { initiativeIds: ["in-1"] }, to: { fromInitiativeId: "in-1", toInitiativeId: "in-2" },
+    });
+    await expect(applyPlan(be2, [mv], join(dir, "j2.jsonl"))).rejects.toThrow("cursor did not advance");
+    expect(be2.mutationCalls).toEqual([]);
+  });
+
+  test("archive-state refusal names archived issues and says the refusal is conservative", async () => {
+    const be = freshBackend();
+    be.states.set("s-ready", { id: "s-ready", name: "Ready", type: "unstarted", archivedAt: null });
+    be.issues.set("i-1", { ...ISSUE_1, stateId: "s-ready", labelIds: [], archived: true });
+    const op = baseOp({
+      phase: 2, op: "archive-state", reversible: false, approval: "deck-1",
+      target: { type: "state", id: "s-ready", identifier: "EX/Ready" },
+      from: { archived: false }, to: { archived: true },
+    });
+    await expect(applyPlan(be, [op], join(dir, "j.jsonl"), { allowIrreversible: true }))
+      .rejects.toThrow(/archived: EX-1\)\. Linear may allow archiving .* refuses conservatively/);
   });
 });
