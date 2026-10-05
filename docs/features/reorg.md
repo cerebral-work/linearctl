@@ -46,6 +46,19 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   fsync. First mismatch stops the run with exit 3; batch members are journaled
   individually (the mismatching one `ok:false`) before the stop, so resume and
   rollback never lose track of a write.
+- **Read-after-write lag.** The post-write re-read can briefly return the
+  pre-write state. A differing re-read is retried up to 4 times (0.5 s, 1 s,
+  2 s, 4 s backoff, each retry reported as a `verify-retry` event) before it is
+  declared a mismatch.
+- **Already applied.** If the pre-read differs from `from` but equals the op's
+  expected end state, the write evidently landed earlier without being
+  journaled. The op is journaled `ok` with `alreadyApplied: true` (`before` is
+  the planned from-state, `after` the live read) and nothing is written;
+  batch members in this state are left out of the batch write. `--check`
+  reports it as already applied, not drift. Rollback skips these rows unless
+  `--include-already-applied` is given. Live state matching neither `from` nor
+  the end state is still drift. `move-issue-team` is excluded from this
+  detection.
 - **`--check`** is the dry-run with teeth: a live drift pre-read of every
   target, reporting each op OK/DRIFT without writing (exit 1 on any drift).
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
@@ -155,7 +168,11 @@ pre-read of every target and reports drift (exit 1 when any); `--apply` writes.
 With `--apply`, each inverse op first pre-reads its target and refuses
 (exit 3, `ROLLBACK MISMATCH` naming field, expected and actual) when the live
 state is not what the journal recorded the forward op leaving. It then applies
-each op's inverse in reverse journal order with the same per-write verify. The
+each op's inverse in reverse journal order with the same per-write verify.
+Rows journaled `alreadyApplied` record a change the tool never wrote (it may be
+a manual edit), so rollback skips them and lists them as "skipped: already
+applied before this run (not written by the tool)"; `--include-already-applied`
+inverts them too. The
 inverse is built from the plan's `from`, filling any compared field the plan
 omitted (for example a label's old name) from the journaled pre-write read.
 If neither the plan nor the journal recorded a field the inverse needs, rollback

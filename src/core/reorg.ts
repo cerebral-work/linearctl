@@ -1970,6 +1970,9 @@ export interface RollbackOptions {
   apply?: boolean;
   /** Preview plus a live pre-read of every target, reporting drift (no writes). */
   check?: boolean;
+  /** Also invert rows journaled `alreadyApplied` (a change the tool never
+   *  wrote, possibly a manual edit). Default false: they are skipped. */
+  includeAlreadyApplied?: boolean;
   /** Post-write verify re-read backoff in ms (default 500/1000/2000/4000). */
   verifyDelaysMs?: number[];
   /** Injectable sleep (tests). */
@@ -2031,6 +2034,12 @@ export async function rollbackPhase(
   const steps: { rec: JournalRecord; orig: ReorgOp; inv: ReorgOp }[] = [];
   for (const rec of journal) {
     const orig = rec.original;
+    if (rec.alreadyApplied && !opts.includeAlreadyApplied) {
+      skipped.push(
+        `seq ${String(rec.seq)}${orig ? ` [${orig.op}]` : ""}: already applied before this run (not written by the tool); pass --include-already-applied to invert it`,
+      );
+      continue;
+    }
     if (!orig) {
       skipped.push(`seq ${String(rec.seq)}: journal record lacks the original op — cannot invert`);
       continue;

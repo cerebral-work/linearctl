@@ -1889,12 +1889,26 @@ describe("verify retry and already-applied", () => {
     expect(be.mutationCalls).toEqual([]);
   });
 
-  test("(e) rollback inverts an alreadyApplied relabel", async () => {
+  test("(e2) rollback skips alreadyApplied rows by default and lists them", async () => {
+    const be = relabelBackend([LB, LC]);
+    const j = join(dir, "j.jsonl");
+    await run(fakeClient(be), [relabelOp()], j);
+    const dry = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), ...noSleep });
+    expect(dry.planned).toBe(0);
+    expect(dry.skipped).toHaveLength(1);
+    expect(dry.skipped[0]).toContain("already applied before this run (not written by the tool)");
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true, ...noSleep });
+    expect(rb.rolledBack).toBe(0);
+    expect(be.mutationCalls).toEqual([]);
+    expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LB, LC].sort());
+  });
+
+  test("(e) rollback inverts an alreadyApplied relabel with includeAlreadyApplied", async () => {
     const be = relabelBackend([LB, LC]);
     const j = join(dir, "j.jsonl");
     await run(fakeClient(be), [relabelOp()], j);
     expect(be.mutationCalls).toEqual([]);
-    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true, ...noSleep });
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true, includeAlreadyApplied: true, ...noSleep });
     expect(rb.rolledBack).toBe(1);
     expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LA, LB].sort());
   });
@@ -1908,8 +1922,17 @@ describe("verify retry and already-applied", () => {
         from: { labelIds: from }, to: { add: [LC], remove: [LA] }, batchKey: "k",
       });
     const j = join(dir, "j.jsonl");
-    const r = await run(fakeClient(be), [mk(1, "i-1", [LA, LB]), mk(2, "i-2", [LA, LB])], j);
+    const batchIds: string[][] = [];
+    const inner = (fakeClient(be) as unknown as {
+      client: { rawRequest: (q: string, v: Record<string, unknown>) => Promise<unknown> };
+    }).client;
+    const spy = { client: { rawRequest: async (q: string, v: Record<string, unknown>) => {
+      if (q.includes("ReorgBatchUpdate")) batchIds.push([...(v.ids as string[])]);
+      return inner.rawRequest(q, v);
+    } } } as unknown as LinearClient;
+    const r = await run(spy, [mk(1, "i-1", [LA, LB]), mk(2, "i-2", [LA, LB])], j);
     expect(r.applied).toBe(2);
+    expect(batchIds).toEqual([["i-1"]]); // the already-applied member is NOT written
     const rows = journalRead(j);
     expect(rows.map((x) => [x.seq, x.ok, x.alreadyApplied === true])).toEqual([[1, true, false], [2, true, true]]);
     expect([...be.issues.get("i-1")!.labelIds].sort()).toEqual([LB, LC].sort());
