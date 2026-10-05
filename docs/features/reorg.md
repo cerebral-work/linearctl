@@ -117,6 +117,17 @@ The 20 ops: `create-workspace-label`, `relabel`, `rename-label`,
 `delete-team`.
 
 Notes per kind:
+- **`archive-project` archives; it never trashes.** Linear keeps archived
+  projects restorable indefinitely, while trashed ("recently deleted") projects
+  are permanently removed after 30 days (linear.app/docs/projects,
+  linear.app/docs/default-team-pages). The op calls `projectArchive(id,
+  trash: false)` explicitly (deprecated in the schema in favour of
+  `projectDelete`, which trashes, but still the only plain-archive mutation),
+  expects `{ archived: true, trashed: false }` afterwards, and is rolled back
+  with `projectUnarchive`. Plan input is `to: { archived: true }`; a plan or
+  rule whose `to` carries `trashed: true` is refused at parse time, because
+  trashing is a delayed permanent delete and belongs in a gated phase-6 op.
+  If the live project comes back trashed after the call, the apply fails.
 - **`rename-label` exists because Linear enforces label-name uniqueness ACROSS
   workspace and team scope** — a workspace `create-workspace-label` fails
   while any team copy carries the name. The planner therefore orders phase 1
