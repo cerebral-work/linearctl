@@ -1316,6 +1316,34 @@ describe("rename-label + cross-scope uniqueness (planner addition)", () => {
       expect(be.mutationCalls).toEqual([]);
     });
 
+    test("--apply reads every target first: an unreadable second-processed target means zero writes", async () => {
+      const be = freshBackend();
+      be.labels.set("l-a", { id: "l-a", name: "a·old-EX", retiredAt: null, teamId: "t-1", teamKey: "EX" });
+      const j = join(dir, "two.jsonl");
+      // seq 2 is processed first (reverse order); seq 1's label does not exist
+      for (const [seq, id, name] of [[1, "l-gone", "g"], [2, "l-a", "a"]] as const) {
+        journalAppend(j, {
+          seq, phase: 1, op: "rename-label", at: "t", ok: true,
+          original: baseOp({
+            seq, op: "rename-label", target: { type: "label", id, identifier: `EX/${name}` },
+            from: { retired: false }, to: { name: `${name}·old-EX` },
+          }),
+          before: { retired: false, name },
+          after: { retired: false, name: `${name}·old-EX` },
+        });
+      }
+      let err: unknown;
+      try {
+        await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RollbackRefused);
+      expect((err as RollbackRefused).message).toContain("seq 1");
+      expect(be.mutationCalls).toEqual([]);
+      expect(be.labels.get("l-a")!.name).toBe("a·old-EX");
+    });
+
     test("--check on a clean journal reports no drift", async () => {
       const be = freshBackend();
       const j = seedRename(be, "ci·old-EX");

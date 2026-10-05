@@ -1830,6 +1830,55 @@ export async function rollbackPhase(
     steps.push({ rec, orig, inv });
   }
 
+  // Live pre-read: the target must be in the state the journal says the forward
+  // op left it in. Unreadable or changed targets are problems, never a pass.
+  const preRead = async (
+    rec: JournalRecord,
+    orig: ReorgOp,
+    inv: ReorgOp,
+  ): Promise<{ line: string; error: ReorgMismatch } | null> => {
+    const invDef = OP_REGISTRY[inv.op];
+    const target = inv.target.identifier || inv.target.id;
+    const head = `seq ${String(rec.seq)} [${orig.op}] ${target}`;
+    let live: Record<string, unknown>;
+    try {
+      live = await invDef.readState(ctx, inv);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        line: `${head}: unreadable (${msg})`,
+        error: new RollbackRefused(inv.seq, `target ${target} could not be read before the write: ${msg}`, {
+          expected: pick(inv.from, invDef.compareKeys),
+          actual: `unreadable: ${msg}`,
+        }),
+      };
+    }
+    const bad = compareState(inv.from, live, invDef.compareKeys);
+    if (!bad.length) return null;
+    return {
+      line: `${head}: ${bad.join("; ")}`,
+      error: new ReorgMismatch(inv.seq, {
+        expected: pick(inv.from, invDef.compareKeys),
+        actual: pick(live, invDef.compareKeys),
+      }),
+    };
+  };
+
+  // Pass 2 (--apply): read every target and refuse before the FIRST write if any
+  // is unreadable or drifted. A target touched by several ops is read once, for
+  // the op processed first; later ops on it expect the earlier rollback's state
+  // and are re-checked just before their own write below.
+  if (write) {
+    const seen = new Set<string>();
+    for (const { rec, orig, inv } of steps) {
+      const key = `${inv.target.type}:${inv.target.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const problem = await preRead(rec, orig, inv);
+      if (problem) throw problem.error;
+    }
+  }
+
   for (const { rec, orig, inv } of steps) {
     planned++;
     // Dispatch on the INVERSE op's kind — an inverse may be a different op
@@ -1839,32 +1888,10 @@ export async function rollbackPhase(
     const intent = `seq ${String(rec.seq)} [${orig.op}] ${target}: ${JSON.stringify(pick(inv.from, invDef.compareKeys))} -> ${JSON.stringify(pick(inv.to, invDef.compareKeys))}`;
 
     if (write || opts.check) {
-      // Live pre-read: the target must be in the state the journal says the
-      // forward op left it in. A mismatch means something else changed it since.
-      let live: Record<string, unknown> | null = null;
-      let readError: string | null = null;
-      try {
-        live = await invDef.readState(ctx, inv);
-      } catch (e) {
-        readError = e instanceof Error ? e.message : String(e);
-      }
-      if (readError !== null) {
-        if (write)
-          throw new RollbackRefused(inv.seq, `target ${target} could not be read before the write: ${readError}`, {
-            expected: pick(inv.from, invDef.compareKeys),
-            actual: `unreadable: ${readError}`,
-          });
-        drifted.push(`seq ${String(rec.seq)} [${orig.op}] ${target}: unreadable (${readError})`);
-      } else if (live) {
-        const bad = compareState(inv.from, live, invDef.compareKeys);
-        if (bad.length) {
-          if (write)
-            throw new ReorgMismatch(inv.seq, {
-              expected: pick(inv.from, invDef.compareKeys),
-              actual: pick(live, invDef.compareKeys),
-            });
-          drifted.push(`seq ${String(rec.seq)} [${orig.op}] ${target}: ${bad.join("; ")}`);
-        }
+      const problem = await preRead(rec, orig, inv);
+      if (problem) {
+        if (write) throw problem.error;
+        drifted.push(problem.line);
       }
     }
     if (!write) {
