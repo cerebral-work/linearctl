@@ -77,8 +77,9 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   0 issues in the state) — the census is never trusted for irreversible work.
 - **`move-issue-team` preconditions** (enforced by the executor, all LIVE
   reads): phase-1 and phase-2 verify markers green in the journal; every
-  team-scoped label on the issue (read now) already swapped by a journaled
-  relabel whose workspace replacements ride the move input as `addedLabelIds`;
+  team-scoped label on the issue (read now) is either already swapped by a
+  journaled relabel (replacements ride the move input as `addedLabelIds`) or
+  carried over through `to.labelMap` (see "Carrying team labels across a move");
   the destination team in the project's membership **read live**; the issue's
   `cycleId` captured in `from` first; `projectId` unchanged after the move or
   the run stops; a state that didn't land at the mapped destination is
@@ -108,7 +109,7 @@ workspaceId, rulesHash, warnings[]}}`, then one op per line:
 ```
 
 `from` is captured at census time and is the executor's drift anchor.
-The 20 ops: `create-workspace-label`, `relabel`, `rename-label`,
+The 21 ops: `create-workspace-label`, `create-team-label`, `relabel`, `rename-label`,
 `retire-or-delete-label`, `set-state`, `enable-triage`, `archive-state`,
 `set-project-status`, `set-project-lead`, `set-project-target`,
 `add-project-team`, `remove-project-team`, `move-project-initiative`,
@@ -135,6 +136,18 @@ Notes per kind:
   `--check` preflights every create against ALL scopes (accounting for planned
   renames) and reports a conflict as drift, instead of letting Linear reject
   it mid-apply.
+- **`create-team-label`** creates a label owned by the destination team
+  (`target` is the team; `to` is `{name, color?, description?}`; `from` is
+  `{labelId: null}`). Linear label names are unique, case-insensitively,
+  across the workspace and across a parent team and its sub-teams, while
+  unrelated teams may share a name. The executor and `--check` therefore
+  refuse a name already held in the destination team, its parent, any
+  sub-team, or the workspace, unless a **lower-seq** `rename-label` moves the
+  holder off the name (a rename to the same name frees nothing; renaming an
+  owner frees its inherited views). When the source team is a sub-team of the
+  destination, rename its own labels first (e.g. `name·old-<src>`). The
+  created id is journaled so `created:<seq>` refs can resolve to it. Inverse:
+  retire the created label.
 - **Inherited labels** (sub-team copies mirroring an owner team's label) are
   read-only — Linear refuses writes on them. The census captures
   `inheritedFrom` (+ `team.parent`); the planner groups by owner
@@ -154,6 +167,48 @@ Notes per kind:
   the new one between its lifecycle neighbours (backlog, planned, started,
   paused, completed, canceled) at the midpoint of their positions, or last+1
   when none follows, and journals the position used.
+
+## Carrying team labels across a move
+
+A team move drops team-scoped labels, and a label of another team cannot be
+added to an issue before it moves. `move-issue-team` therefore takes
+`to.labelMap`: `{ "<source label id>": "<destination ref>" }`, where a
+destination ref is a label id or `created:<seq>` (resolved at apply time from
+the journal record of that `create-team-label` / `create-workspace-label`).
+
+- Precondition (a): each team-scoped label live on the issue must be swapped
+  by a journaled relabel or be a `labelMap` key (an inherited view on the issue
+  is looked up by its own id, then its owner id) whose destination belongs to
+  the destination team's scope: workspace, owned by that team, or owned by its
+  parent. Anything else refuses, naming the label. Entries for labels the issue
+  does not carry add nothing.
+- The move input sends `labelIds` = the exact final set: live labels still
+  valid in the destination, plus each mapped replacement, plus
+  `to.reapplyLabelIds`. The set is journaled as `to.labelIdsComputed`. The
+  post-move check, `verify`, and rollback all require the issue to carry
+  exactly that set (and the destination team); a mismatch stops the run.
+- Rollback moves the issue back to the source team with the source label set
+  recorded in the journal's `before` read (not the plan's census copy).
+- `--check` also verifies that every `created:<seq>` ref resolves to a
+  journaled or lower-seq planned create, and that plain destination ids are
+  usable in the destination team.
+- Planner rules: a `create-team-label` rule uses `match: {entity: "team",
+  where: {key}}`, `to: {name, ...}` and an optional `ref`. A move rule's
+  `labelMap` may use `created:<ref>`; the planner rewrites it to
+  `created:<seq>`, prunes each issue's map to the labels it carries, and
+  refuses an unknown ref. Within phase 5 the planner orders `rename-label`,
+  `create-team-label`, `add-project-team`, `move-issue-team` (only these kinds
+  are reordered; other ops keep their place).
+
+## Prior journals
+
+`apply`, `--check` and `verify` accept `--prior-journal <file>` (repeatable).
+Only the `verify` markers of those journals are read, and they count for the
+phase gates together with the current journal: the **latest marker per phase,
+by timestamp, across all journals** decides, so a later red marker anywhere
+fails the gate. Prior journals are never written, resumed or rolled back, and
+a missing file is an error. `verify` additionally prints the gate state across
+journals after its own marker is appended.
 
 ## Rules and selectors
 

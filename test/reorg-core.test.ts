@@ -2385,7 +2385,7 @@ describe("team-label carry-over", () => {
       const be = backend();
       const j = join(dir, "j.jsonl");
       green(j);
-      await expect(applyPlan(be, [moveWith(2, { [L_SRC_OTHER]: L_WS })], j)).rejects.toThrow(`"bug" (${L_SRC_BUG})`);
+      await expect(applyPlan(be, [moveWith(2, { [L_SRC_OTHER]: L_WS })], j)).rejects.toThrow(`"bug" (${L_SRC_BUG}) is live on EX-1 with no journaled relabel to a workspace replacement and no to.labelMap entry`);
       expect(be.mutationCalls).toEqual([]);
     });
 
