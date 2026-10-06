@@ -82,6 +82,8 @@ interface FakeBackend {
   /** Mutation names whose variables were validated against the vendored schema. */
   validatedMutations: Set<string>;
   swallowWrites: boolean;
+  /** Test hook: every mutation throws `message`; the write is applied first when `land`. */
+  writeError?: { message: string; land: boolean };
   /** ids the batch mutation deliberately skips (mid-batch mismatch testing). */
   batchSkip: Set<string>;
   /** When set, the projects probe answers in two pages: the blocking project
@@ -338,7 +340,8 @@ function fakeClient(be: FakeBackend): LinearClient {
     // ---- writes ----------------------------------------------------------
     const W = (name: string, fn: () => void) => {
       be.mutationCalls.push(name);
-      if (!be.swallowWrites) fn();
+      if (!be.swallowWrites && (!be.writeError || be.writeError.land)) fn();
+      if (be.writeError) throw new Error(be.writeError.message);
       return ok({ [name]: { success: true } });
     };
     if (query.includes("ReorgBatchUpdate"))
@@ -1199,6 +1202,23 @@ describe("emptiness pre-reads", () => {
     expect(be.teams.get("t-9")!.deleted).toBe(false);
   });
 
+  test("delete-team whose write did not land stops the run (post-check must not be vacuous)", async () => {
+    // The re-read still finds the team: apply must stop, not journal ok.
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.swallowWrites = true;
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    const j = join(dir, "j.jsonl");
+    await expect(
+      applyPlan(be, [del], j, { allowIrreversible: true }),
+    ).rejects.toBeInstanceOf(ReorgMismatch);
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
   test("delete-team probe paginates (blocking project on page two)", async () => {
     // forceProjectPagination withholds member projects to page two; an engine
     // that drops the pagination loop sees page one only and deletes — red.
@@ -1457,6 +1477,65 @@ describe("verifyPhase", () => {
     const red = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(red.ok).toBe(false);
     expect(red.failures[0]).toContain("stateId");
+  });
+});
+
+describe("write error then re-read (CER-2391)", () => {
+  const MSG = "Project already related to a parent or child initiative.";
+  const setStateOp = () => baseOp({ from: { stateId: "s-todo" }, to: { stateId: "s-done" } });
+  const seed = () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds] });
+    return be;
+  };
+
+  test("write throws but the state landed: accepted, journaled with writeErrorButApplied", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: true };
+    const events: string[] = [];
+    const j = join(dir, "j.jsonl");
+    const r = await applyPlan(be, [setStateOp(), baseOp({ seq: 2, from: { stateId: "s-done" }, to: { stateId: "s-todo" } })], j, {
+      onEvent: (e) => events.push(`${e.kind}:${e.detail}`),
+    });
+    expect(r.applied).toBe(2);
+    const rec = journalRead(j)[0];
+    expect(rec).toMatchObject({ ok: true, writeErrorButApplied: true, writeError: MSG });
+    expect(events.some((e) => e.startsWith("write-error-applied:") && e.includes("seq 1") && e.includes(MSG))).toBe(true);
+  });
+
+  test("write throws and the state did NOT land: original error propagates, no ok row", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: false };
+    const j = join(dir, "j.jsonl");
+    await expect(applyPlan(be, [setStateOp()], j)).rejects.toThrow(MSG);
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
+  test("create op whose write lands then throws: the ORIGINAL error propagates, no ok row", async () => {
+    // No same-named label beforehand, so the pre-read passes and the write
+    // runs; a create's end state needs the id the write returns, so the
+    // error is never accepted.
+    const be = seed();
+    be.writeError = { message: MSG, land: true };
+    const op = baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
+      from: { labelId: null }, to: { name: "bug", color: "#e5484d" },
+    });
+    const j = join(dir, "j.jsonl");
+    await expect(applyPlan(be, [op], j)).rejects.toThrow(MSG); // the ORIGINAL error
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
+  test("an accepted row stays rollback-eligible (unlike alreadyApplied)", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: true };
+    const j = join(dir, "j.jsonl");
+    await applyPlan(be, [setStateOp()], j);
+    be.writeError = undefined;
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+    expect(rb.rolledBack).toBe(1);
+    expect(rb.skipped).toEqual([]);
+    expect(be.issues.get("i-1")!.stateId).toBe("s-todo");
   });
 });
 
