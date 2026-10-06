@@ -244,10 +244,21 @@ describe("team-state rules and inherited views (CER-2390)", () => {
   const stateRule = (teamKey: string) =>
     rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", teamKey, where: { name: "Review" } } });
 
-  test("a rule matching an inherited view is refused, naming state, team and owner", () => {
-    expect(() => planFromRules([stateRule("SUB")], stateCensus, META)).toThrow(
+  test("a rule naming an inherited view by id is refused, naming state, team and owner", () => {
+    const byId = rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", where: { id: "s-view" } } });
+    expect(() => planFromRules([byId], stateCensus, META)).toThrow(
       /SUB\/Review.*s-view.*s-owner.*act on the owner state/s,
     );
+  });
+
+  test("a broad rule skips inherited views: only the owner is planned (its views cascade)", () => {
+    const broad = rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", where: { name: "Review" } } });
+    const plan = planFromRules([broad], stateCensus, META);
+    expect(plan.ops.map((o) => o.target.id)).toEqual(["s-owner"]);
+  });
+
+  test("a rule scoped to the sub-team matches nothing: its only match is a view", () => {
+    expect(() => planFromRules([stateRule("SUB")], stateCensus, META)).toThrow(/matched nothing/);
   });
 
   test("control: a rule matching only the owner state plans normally", () => {

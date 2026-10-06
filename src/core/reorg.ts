@@ -3787,6 +3787,9 @@ export function planFromRules(
   const labelById = new Map(
     [...censusData.workspaceLabels, ...censusData.teamLabels].map((l) => [l.id, l] as const),
   );
+  const stateById = new Map(
+    censusData.teams.flatMap((t) => (t.states?.nodes ?? []).map((s) => [s.id, { ...s, teamKey: t.key }] as const)),
+  );
   let seq = 0;
   const refSeq = new Map<string, number>(); // rule ref -> index in `ops`
   for (const rule of rules) {
@@ -3801,6 +3804,14 @@ export function planFromRules(
       if (l?.inheritedFromId)
         throw new Error(
           `rule "${rule.evidence}" targets inherited label ${l.name} (${whereId}), child of ${l.inheritedFromId} — target the owner`,
+        );
+    }
+    // Same for a rule naming an inherited workflow-state view by id.
+    if (typeof whereId === "string" && rule.match.entity === "team-state") {
+      const s = stateById.get(whereId);
+      if (s?.inheritedFrom?.id)
+        throw new Error(
+          `rule "${rule.evidence}" targets inherited state ${s.teamKey}/${s.name} (${whereId}), child of ${s.inheritedFrom.id} — act on the owner state`,
         );
     }
     const targets = selectTargets(rule, censusData);
@@ -4113,12 +4124,9 @@ function selectTargets(
         if (rule.match.teamKey && t.key !== rule.match.teamKey) continue;
         for (const s of t.states?.nodes ?? []) {
           if (!hit({ name: s.name, type: s.type, archived: s.archivedAt != null })) continue;
-          // Inherited views are not writable (Linear mirrors the owner): refuse
-          // at plan time, like an inherited label, instead of at apply.
-          if (s.inheritedFrom?.id)
-            throw new Error(
-              `rule "${rule.evidence}" targets inherited state ${t.key}/${s.name} (${s.id}), child of ${s.inheritedFrom.id} — act on the owner state`,
-            );
+          // Inherited views never match (as inherited labels): Linear mirrors
+          // the owner, and an owner archive takes its views with it.
+          if (s.inheritedFrom?.id) continue;
           out.push({
             target: { type: "state", id: s.id, identifier: `${t.key}/${s.name}` },
             from: { archived: s.archivedAt != null },
