@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.5](https://github.com/cerebral-work/linearctl/compare/v0.10.4...v0.10.5) (2026-10-06)
+
+
+### Bug Fixes
+
+* **io:** read stdin from fd 0 so file redirects are not silently dropped ([fac3589](https://github.com/cerebral-work/linearctl/commit/fac358914eac2075886683d44b92953d76804466))
+* **io:** read stdin from fd 0 so file redirects are not silently dropped ([d7046ac](https://github.com/cerebral-work/linearctl/commit/d7046ac38dca40d53e300d9da0e8922403e1e033))
+* **reorg:** re-read after a write error; stop when a delete did not land ([0c01d5a](https://github.com/cerebral-work/linearctl/commit/0c01d5a6420aa16e9e71d9155d78c62b0afdcd09))
+* **reorg:** stop when a delete's re-read still finds the target ([ba14a00](https://github.com/cerebral-work/linearctl/commit/ba14a00aebc38a8af9fd3aa8c5d8a509f11e2c29))
+
 ## [0.10.4](https://github.com/cerebral-work/linearctl/compare/v0.10.3...v0.10.4) (2026-10-06)
 
 
