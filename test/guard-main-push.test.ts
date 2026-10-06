@@ -135,7 +135,93 @@ describe("guard-main-push hook", () => {
     ).toBe(false);
   });
 
-  // --- Original ticket rows and earlier edge cases ---
+  // --- Round 2: command substitution + refspec forms (probe-178b) ---
+
+  test("denies: echo $(git push origin main)", () => {
+    expect(runHook("echo $(git push origin main)").denied).toBe(true);
+  });
+
+  test("denies: echo `git push origin main` (backticks)", () => {
+    expect(runHook("echo `git push origin main`").denied).toBe(true);
+  });
+
+  test("denies: git push origin main:main (colon refspec)", () => {
+    expect(runHook("git push origin main:main").denied).toBe(true);
+  });
+
+  test("denies: git push origin feat:main (cross-branch refspec)", () => {
+    expect(runHook("git push origin feat:main").denied).toBe(true);
+  });
+
+  test("denies: git push origin refs/heads/main", () => {
+    expect(runHook("git push origin refs/heads/main").denied).toBe(true);
+  });
+
+  test("denies: git push origin :main (delete main)", () => {
+    expect(runHook("git push origin :main").denied).toBe(true);
+  });
+
+  test("denies: git push --force origin main", () => {
+    expect(runHook("git push --force origin main").denied).toBe(true);
+  });
+
+  test("denies: git push -u origin main", () => {
+    expect(runHook("git push -u origin main").denied).toBe(true);
+  });
+
+  test("denies: git push origin master", () => {
+    expect(runHook("git push origin master").denied).toBe(true);
+  });
+
+  test("denies: git -c core.x=y push origin main", () => {
+    expect(runHook("git -c core.x=y push origin main").denied).toBe(true);
+  });
+
+  test("denies: GIT_DIR=/x git push origin main (env prefix)", () => {
+    expect(runHook("GIT_DIR=/x git push origin main").denied).toBe(true);
+  });
+
+  test("denies: git push --mirror origin", () => {
+    expect(runHook("git push --mirror origin").denied).toBe(true);
+  });
+
+  test("allows: git push origin main-feature (main is a prefix, not the ref)", () => {
+    expect(runHook("git push origin main-feature").denied).toBe(false);
+  });
+
+  test("allows: git push origin feat/main (main in path position)", () => {
+    expect(runHook("git push origin feat/main").denied).toBe(false);
+  });
+
+  test("allows: git status && echo done (no push)", () => {
+    expect(runHook("git status && echo done").denied).toBe(false);
+  });
+
+  test("allows: gh pr merge 177 --merge (no git push)", () => {
+    expect(runHook("gh pr merge 177 --merge").denied).toBe(false);
+  });
+
+  // --- Performance: the hook runs on EVERY Bash call ---
+  test("performance: 16 KiB command containing 'git push' finishes under 300ms", () => {
+    // A heredoc body containing the text `git push` — the hook must parse it
+    // fast enough not to stall the harness.
+    const body = "x".repeat(16_000);
+    const cmd = `cat > /tmp/x <<'EOF'\ngit push is mentioned here\n${body}\nEOF\necho ok`;
+    const input = JSON.stringify({ tool_input: { command: cmd } });
+    const t0 = performance.now();
+    const proc = Bun.spawnSync(["bash", HOOK], {
+      stdin: new TextEncoder().encode(input),
+      cwd: tmpdir(),
+      env: { ...process.env },
+    });
+    const ms = performance.now() - t0;
+    const output = new TextDecoder().decode(proc.stdout);
+    // Heredoc body line "git push is mentioned here" is a segment, but
+    // tokenizes to [git, push, is, ...] — first token is git, second is
+    // push → the parser reads it as a bare `git push` with no refspec in a
+    // non-git cwd → no main branch → ALLOW. Either way, speed is the point.
+    expect(ms).toBeLessThan(300);
+  });
 
   test("allows: git -C <dir> push origin feat:refs/heads/feat", () => {
     expect(runHook("git -C /tmp/x push origin feat:refs/heads/feat").denied).toBe(false);

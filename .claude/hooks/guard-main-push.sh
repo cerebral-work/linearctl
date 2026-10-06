@@ -7,10 +7,32 @@
 #
 # Fail-closed: when a segment contains "git" followed by "push" and the parser
 # cannot fully resolve it, DENY.
-set -euo pipefail
+# No set -e: ((i++)) from 0 is a non-zero status, and a killed parser would
+# silently ALLOW. Errors are handled explicitly.
+set -uo pipefail
+# Byte-oriented string ops: in a UTF-8 locale ${s:i:1} rescans from the start
+# each time (O(n²)); LC_ALL=C makes indexing constant-time.
+export LC_ALL=C
 
 input=$(cat); cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 case "$cmd" in *"# allow-direct-push"*) exit 0 ;; esac
+
+# Fast exit: every case this hook can decide contains both "git" and "push".
+case "$cmd" in *git*push*) ;; *) exit 0 ;; esac
+
+# Second-stage filter: only lines containing both substrings can hold a git
+# push.  Keep `cd` lines too so directory context survives.  A 16 KiB heredoc
+# body without them costs one `case` per line, not a tokenize pass.
+cmd_filtered=""
+while IFS= read -r line; do
+  case "$line" in
+    *git*push*|*push*git*|*cd\ *|cd)
+      cmd_filtered+="$line"$'\n'
+      ;;
+  esac
+done <<< "$cmd"
+[[ -z "$cmd_filtered" ]] && exit 0
+cmd="$cmd_filtered"
 
 deny_reason="Direct push to main is blocked — open a PR. Override: # allow-direct-push and surface why."
 
@@ -96,9 +118,30 @@ split_segments() {
           cur+="$ch"; ((i++))
         fi
         ;;
-      $'\n'|';'|'('|')')
+      $'\n'|';'|'('|')'|'`')
         if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
         ((i++))
+        ;;
+      '$')
+        # $( ... ) command substitution — split it out as its own segment
+        if (( i+1 < n )) && [[ "${str:$((i+1)):1}" == '(' ]]; then
+          if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
+          # Find the matching close paren and emit the interior as a segment
+          local j=$((i+2)) depth=1
+          while (( j < n && depth > 0 )); do
+            case "${str:$j:1}" in
+              '(') ((depth++));;
+              ')') ((depth--));;
+            esac
+            ((j++))
+          done
+          # Interior = between $( and the matching )
+          local interior="${str:$((i+2)):$((j-i-3))}"
+          if [[ -n "$interior" ]]; then segments+=("$interior"); fi
+          i=$j
+        else
+          cur+="$ch"; ((i++))
+        fi
         ;;
       '&')
         if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
@@ -288,6 +331,9 @@ eval_segment() {
   while (( ti < ${#toks[@]} )); do
     local t="${toks[$ti]}"
     case "$t" in
+      --mirror|--all)
+        # Pushes every ref, main included — always deny.
+        return 0;;
       -*) ((ti++)); continue;;
     esac
     if [[ -z "$remote_seen" ]]; then
