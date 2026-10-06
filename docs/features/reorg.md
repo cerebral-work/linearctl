@@ -58,6 +58,16 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   reports it as already applied, not drift. Rollback skips these rows unless
   `--include-already-applied` is given. Live state matching neither `from` nor
   the end state is still drift.
+- **Write error, end state landed.** When a sequential write throws, the
+  executor re-reads (with the same read-lag backoff). If the live state equals
+  the expected end state, the op continues through verify and is journaled `ok`
+  with `writeErrorButApplied: true` and `writeError: <message>`, plus a
+  `write-error-applied` event naming the seq. Otherwise the original error is
+  rethrown unchanged. This is never accepted for create ops (the new id comes
+  from the write), for an op whose end state equals its pre-state, or for a
+  delete form unless the re-read fails with not-found. Rollback still inverts
+  these rows, because this tool's write landed them. Batch writes do not do
+  this yet.
 - **Cascaded moves.** Moving a parent issue to another team moves its
   sub-issues (in the same source team) with it, so a later `move-issue-team`
   for such a sub-issue finds it already in the destination. It is journaled

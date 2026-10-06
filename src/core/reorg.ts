@@ -329,6 +329,11 @@ export interface JournalRecord {
   /** With alreadyApplied (move-issue-team): the issue was carried to the
    *  destination team by another move (a parent's cascade). Informational. */
   cascade?: boolean;
+  /** The write call threw but a re-read showed the planned end state had landed.
+   *  The tool's own write did the work, so rollback still inverts the row. */
+  writeErrorButApplied?: boolean;
+  /** With writeErrorButApplied: the message of the error the write threw. */
+  writeError?: string;
 }
 
 function writeFsync(path: string, content: string, mode: "a" | "w"): void {
@@ -2255,6 +2260,41 @@ async function readLabelsUntil(
   return got;
 }
 
+/** Ops whose end state needs an id the write returns: a failed write cannot be
+ *  verified by re-reading, so a write error is never accepted for them. */
+const WRITE_ERROR_UNVERIFIABLE = new Set<string>([...CREATE_LABEL_OPS, "create-project-status"]);
+
+/** After `def.apply` threw: did the planned end state land anyway? Only true
+ *  when the end state is knowable without the write's output and a re-read
+ *  (with the read-lag backoff) shows it. Any re-read failure means false. */
+async function writeErrorLanded(
+  ctx: OpCtx,
+  def: OpDef,
+  op: ReorgOp,
+  liveBefore: Record<string, unknown>,
+): Promise<boolean> {
+  if (WRITE_ERROR_UNVERIFIABLE.has(op.op)) return false;
+  const expected = def.expectedPost(op);
+  try {
+    if (expected === null) {
+      // delete forms: only a not-found on the re-read counts as gone
+      try {
+        await def.readState(ctx, op);
+      } catch (e) {
+        return /not found/i.test(e instanceof Error ? e.message : String(e));
+      }
+      return false;
+    }
+    if (!def.compareKeys.some((k) => k in expected)) return false;
+    // A no-op op (end state == pre-state) cannot show that the write landed.
+    if (compareState(expected, liveBefore, def.compareKeys).length === 0) return false;
+    const r = await readUntilMatches(ctx, def, op, expected);
+    return r.bad.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /** One op end-to-end: drift pre-read → preconditions → write → expected-state
  *  verify (never vacuous) → journal. Shared by runPlan and rollbackPhase. */
 async function executeOne(
@@ -2325,8 +2365,20 @@ async function executeOne(
     });
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op);
 
-  // 3. write
-  await def.apply(ctx, op);
+  // 3. write. A thrown error is not proof the write failed (seen live: an
+  // error reply after the end state had landed): re-read and accept an
+  // applied end state; otherwise rethrow the original error unchanged.
+  let writeError: string | undefined;
+  try {
+    await def.apply(ctx, op);
+  } catch (err) {
+    if (!(await writeErrorLanded(ctx, def, op, liveBefore))) throw err;
+    writeError = err instanceof Error ? err.message : String(err);
+    ctx.onEvent?.({
+      kind: "write-error-applied",
+      detail: `seq ${op.seq} [${op.op}] ${op.target.identifier}: write returned an error (${writeError}) but a re-read shows the expected end state; accepted`,
+    });
+  }
 
   // 4. expected end state vs a fresh re-read
   const expected = def.expectedPost(op);
@@ -2399,6 +2451,7 @@ async function executeOne(
     after: liveAfter ?? { absent: true },
     at: new Date().toISOString(),
     ok: true,
+    ...(writeError !== undefined ? { writeErrorButApplied: true, writeError } : {}),
   };
   journalAppend(journalPath, rec);
   journal.push(rec);

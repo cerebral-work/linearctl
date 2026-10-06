@@ -82,6 +82,8 @@ interface FakeBackend {
   /** Mutation names whose variables were validated against the vendored schema. */
   validatedMutations: Set<string>;
   swallowWrites: boolean;
+  /** Test hook: every mutation throws `message`; the write is applied first when `land`. */
+  writeError?: { message: string; land: boolean };
   /** ids the batch mutation deliberately skips (mid-batch mismatch testing). */
   batchSkip: Set<string>;
   /** When set, the projects probe answers in two pages: the blocking project
@@ -338,7 +340,8 @@ function fakeClient(be: FakeBackend): LinearClient {
     // ---- writes ----------------------------------------------------------
     const W = (name: string, fn: () => void) => {
       be.mutationCalls.push(name);
-      if (!be.swallowWrites) fn();
+      if (!be.swallowWrites && (!be.writeError || be.writeError.land)) fn();
+      if (be.writeError) throw new Error(be.writeError.message);
       return ok({ [name]: { success: true } });
     };
     if (query.includes("ReorgBatchUpdate"))
@@ -1457,6 +1460,63 @@ describe("verifyPhase", () => {
     const red = await verifyPhase(fakeClient(be), planWith([op]), 1, { journalPath: j, pace: fastPace() });
     expect(red.ok).toBe(false);
     expect(red.failures[0]).toContain("stateId");
+  });
+});
+
+describe("write error then re-read (CER-2391)", () => {
+  const MSG = "Project already related to a parent or child initiative.";
+  const setStateOp = () => baseOp({ from: { stateId: "s-todo" }, to: { stateId: "s-done" } });
+  const seed = () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [...ISSUE_1.labelIds] });
+    return be;
+  };
+
+  test("write throws but the state landed: accepted, journaled with writeErrorButApplied", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: true };
+    const events: string[] = [];
+    const j = join(dir, "j.jsonl");
+    const r = await applyPlan(be, [setStateOp(), baseOp({ seq: 2, from: { stateId: "s-done" }, to: { stateId: "s-todo" } })], j, {
+      onEvent: (e) => events.push(`${e.kind}:${e.detail}`),
+    });
+    expect(r.applied).toBe(2);
+    const rec = journalRead(j)[0];
+    expect(rec).toMatchObject({ ok: true, writeErrorButApplied: true, writeError: MSG });
+    expect(events.some((e) => e.startsWith("write-error-applied:") && e.includes("seq 1") && e.includes(MSG))).toBe(true);
+  });
+
+  test("write throws and the state did NOT land: original error propagates, no ok row", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: false };
+    const j = join(dir, "j.jsonl");
+    await expect(applyPlan(be, [setStateOp()], j)).rejects.toThrow(MSG);
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
+  test("create op whose write throws rethrows even when a same-named label exists", async () => {
+    const be = seed();
+    be.labels.set("l-x", { id: "l-x", name: "bug", retiredAt: null, teamId: null, teamKey: null });
+    be.writeError = { message: MSG, land: true };
+    const op = baseOp({
+      op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
+      from: { labelId: null }, to: { name: "bug", color: "#e5484d" },
+    });
+    const j = join(dir, "j.jsonl");
+    await expect(applyPlan(be, [op], j)).rejects.toThrow();
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
+  test("an accepted row stays rollback-eligible (unlike alreadyApplied)", async () => {
+    const be = seed();
+    be.writeError = { message: MSG, land: true };
+    const j = join(dir, "j.jsonl");
+    await applyPlan(be, [setStateOp()], j);
+    be.writeError = undefined;
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+    expect(rb.rolledBack).toBe(1);
+    expect(rb.skipped).toEqual([]);
+    expect(be.issues.get("i-1")!.stateId).toBe("s-todo");
   });
 });
 
