@@ -201,7 +201,67 @@ describe("guard-main-push hook", () => {
     expect(runHook("gh pr merge 177 --merge").denied).toBe(false);
   });
 
-  // --- Performance: the hook runs on EVERY Bash call ---
+  test("denies: backslash-newline continuation: git \\⏎ push origin main", () => {
+    expect(runHook("git \\\npush origin main").denied).toBe(true);
+  });
+
+  test("denies: backslash-newline: git -C /tmp/x \\⏎ push origin main", () => {
+    expect(runHook("git -C /tmp/x \\\npush origin main").denied).toBe(true);
+  });
+
+  test("denies: backslash-newline: git push \\⏎ origin main (feat repo)", () => {
+    const dir = makeRepo("feat");
+    try {
+      expect(runHook(`git -C ${dir} push \\\norigin main`).denied).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("denies: backslash-newline: git push origin \\⏎ main (feat repo)", () => {
+    const dir = makeRepo("feat");
+    try {
+      expect(runHook(`git -C ${dir} push origin \\\nmain`).denied).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("allows: backslash-newline: git push \\⏎ origin feat (feat repo)", () => {
+    const dir = makeRepo("feat");
+    try {
+      expect(runHook(`git -C ${dir} push \\\norigin feat`).denied).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // --- Round 3: narrowed fail-closed ---
+
+  test("allows: heredoc body prose mentioning git push origin feat", () => {
+    // A heredoc body line of prose that names git+push but not main/master
+    // should NOT be denied when the session is on a feature branch.
+    const dir = makeRepo("feat");
+    try {
+      expect(
+        runHook(`cd ${dir} && cat <<'EOF'\nnote: we will git push origin feat later\nEOF`).denied,
+      ).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("denies: heredoc body prose mentioning git push origin main", () => {
+    // Same prose but naming main — fail-closed applies.
+    expect(
+      runHook("cat <<'EOF'\nnote: we will git push origin main later\nEOF").denied,
+    ).toBe(true);
+  });
+
+  test("denies: bash heredoc executing git push origin main", () => {
+    // bash <<EOF executes its body — the body is a real command.
+    expect(runHook("bash <<EOF\ngit push origin main\nEOF").denied).toBe(true);
+  });
   test("performance: 16 KiB command containing 'git push' finishes under 300ms", () => {
     // A heredoc body containing the text `git push` — the hook must parse it
     // fast enough not to stall the harness.

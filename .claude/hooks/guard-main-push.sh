@@ -20,19 +20,25 @@ case "$cmd" in *"# allow-direct-push"*) exit 0 ;; esac
 # Fast exit: every case this hook can decide contains both "git" and "push".
 case "$cmd" in *git*push*) ;; *) exit 0 ;; esac
 
+# Join backslash-newline continuations into spaces BEFORE the line filter —
+# otherwise `git \⏎ push origin main` loses its parts to the filter.
+cmd="${cmd//\\$'\n'/ }"
+
 # Second-stage filter: only lines containing both substrings can hold a git
 # push.  Keep `cd` lines too so directory context survives.  A 16 KiB heredoc
 # body without them costs one `case` per line, not a tokenize pass.
-cmd_filtered=""
+cmd_filtered=()
 while IFS= read -r line; do
   case "$line" in
     *git*push*|*push*git*|*cd\ *|cd)
-      cmd_filtered+="$line"$'\n'
+      cmd_filtered+=("$line")
       ;;
   esac
 done <<< "$cmd"
-[[ -z "$cmd_filtered" ]] && exit 0
-cmd="$cmd_filtered"
+(( ${#cmd_filtered[@]} == 0 )) && exit 0
+# Join filtered lines for a single check_command call — the segment splitter
+# handles the newlines.
+cmd=$(printf '%s\n' "${cmd_filtered[@]}")
 
 deny_reason="Direct push to main is blocked — open a PR. Override: # allow-direct-push and surface why."
 
@@ -75,11 +81,11 @@ tokenize() {
         fi
         ;;
       *)
-        local j=$i
-        while (( j < n )) && [[ "${str:$j:1}" != ' ' && "${str:$j:1}" != $'\t' ]]; do
-          ((j++))
-        done
-        tokens+=("${str:$i:$((j-i))}"); i=$j
+        # Unquoted word: use pattern removal to find the end (C-speed).
+        local rest="${str:$i}"
+        local word="${rest%%[[:space:]]*}"
+        tokens+=("$word")
+        i=$((i + ${#word}))
         ;;
     esac
   done
@@ -89,6 +95,13 @@ tokenize() {
 split_segments() {
   local str="$1"
   segments=()
+
+  # Fast path: no special characters → the whole string is one segment.
+  case "$str" in
+    *"'"*|*'"'*|*'`'*|*'$('*|*';'*|*'&'*|*'|'*|*$'\n'*|*'('*|*')'*|*'\\'*) ;;
+    *) segments+=("$str"); return;;
+  esac
+
   local i=0 n=${#str} cur=""
   while (( i < n )); do
     local ch="${str:$i:1}"
@@ -123,10 +136,8 @@ split_segments() {
         ((i++))
         ;;
       '$')
-        # $( ... ) command substitution — split it out as its own segment
         if (( i+1 < n )) && [[ "${str:$((i+1)):1}" == '(' ]]; then
           if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
-          # Find the matching close paren and emit the interior as a segment
           local j=$((i+2)) depth=1
           while (( j < n && depth > 0 )); do
             case "${str:$j:1}" in
@@ -135,7 +146,6 @@ split_segments() {
             esac
             ((j++))
           done
-          # Interior = between $( and the matching )
           local interior="${str:$((i+2)):$((j-i-3))}"
           if [[ -n "$interior" ]]; then segments+=("$interior"); fi
           i=$j
@@ -143,24 +153,27 @@ split_segments() {
           cur+="$ch"; ((i++))
         fi
         ;;
-      '&')
+      '&'|'|')
         if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
-        if (( i+1 < n )) && [[ "${str:$((i+1)):1}" == '&' ]]; then
-          i=$((i+2))
-        else
-          ((i++))
-        fi
-        ;;
-      '|')
-        if [[ -n "$cur" ]]; then segments+=("$cur"); cur=""; fi
-        if (( i+1 < n )) && [[ "${str:$((i+1)):1}" == '|' ]]; then
+        if (( i+1 < n )) && [[ "${str:$((i+1)):1}" == "$ch" ]]; then
           i=$((i+2))
         else
           ((i++))
         fi
         ;;
       *)
-        cur+="$ch"; ((i++))
+        # Fast-forward through plain text: grab everything up to the next
+        # special character in one shot (C-speed pattern removal).
+        # Special = quote backtick dollar paren semicolon amp pipe backslash
+        # newline tab — everything that triggers a case branch above.
+        local rest="${str:$i}"
+        local plain="${rest%%[!a-zA-Z0-9 _.:,/+~=_@#%-]*}"
+        if [[ -n "$plain" ]]; then
+          cur+="$plain"
+          i=$((i + ${#plain}))
+        else
+          cur+="$ch"; ((i++))
+        fi
         ;;
     esac
   done
@@ -175,13 +188,24 @@ is_main_ref() {
   [[ "$bare" == main || "$bare" == master ]]
 }
 
+# Cache: the session branch doesn't change during hook execution.
+_session_branch=""
+_session_branch_done=0
+session_branch() {
+  (( _session_branch_done )) || {
+    _session_branch=$(git branch --show-current 2>/dev/null || true)
+    _session_branch_done=1
+  }
+  printf '%s' "$_session_branch"
+}
+
 repo_branch() {
   git -C "$1" branch --show-current 2>/dev/null || true
 }
 
 # --- Segment evaluation -------------------------------------------------------
 # Returns 0 = deny, 1 = allow, 2 = unresolved (contains git+push but can't
-# classify — fail closed by denying).
+# classify — the caller decides whether to fail closed).
 eval_segment() {
   local segment="$1"
   local eff_dir="$2"
@@ -191,52 +215,64 @@ eval_segment() {
   (( ${#toks[@]} == 0 )) && return 1
 
   # Quick check: does this segment contain both "git" and "push" as tokens?
+  # Use substring match on the segment text first (C-speed), then confirm
+  # with the token array only if both substrings are present.
   local has_git=0 has_push=0
-  for t in ${toks[@]+"${toks[@]}"}; do
-    [[ "$t" == git ]] && has_git=1
-    [[ "$t" == push ]] && has_push=1
-  done
+  case "$segment" in
+    *git*push*|*push*git*)
+      for t in ${toks[@]+"${toks[@]}"}; do
+        [[ "$t" == git ]] && has_git=1
+        [[ "$t" == push ]] && has_push=1
+        (( has_git && has_push )) && break
+      done
+      ;;
+  esac
 
   # --- Strip wrappers with their arguments ---
   local ti=0
-  while (( ti < ${#toks[@]} )); do
-    local t="${toks[$ti]}"
-    if [[ "$t" =~ ^[A-Za-z_][A-Za-z_0-9]*= ]]; then ((ti++)); continue; fi
-    case "$t" in
-      timeout)
-        ((ti++))
-        if (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" =~ ^[0-9] ]]; then ((ti++)); fi
-        continue;;
-      nice)
-        ((ti++))
-        if (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" == "-n" ]]; then ((ti+=2)); fi
-        continue;;
-      env)
-        ((ti++))
-        while (( ti < ${#toks[@]} )); do
-          case "${toks[$ti]}" in
-            -u) ((ti+=2));;
-            -*) ((ti++));;
-            *=*) ((ti++));;
-            *) break;;
-          esac
-        done
-        continue;;
-      sudo)
-        ((ti++))
-        while (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" == -* ]]; do
-          case "${toks[$ti]}" in
-            -u|-g|-h|-p) ((ti+=2));;
-            *) ((ti++));;
-          esac
-        done
-        continue;;
-      rtk|ionice|nohup|command|builtin)
-        ((ti++)); continue;;
-      *)
-        break;;
-    esac
-  done
+  # Fast path: first token is not a wrapper/env-var → skip the loop entirely.
+  case "${toks[0]}" in
+    timeout|nice|env|sudo|rtk|ionice|nohup|command|builtin|*=*)
+      while (( ti < ${#toks[@]} )); do
+        local t="${toks[$ti]}"
+        if [[ "$t" =~ ^[A-Za-z_][A-Za-z_0-9]*= ]]; then ((ti++)); continue; fi
+        case "$t" in
+          timeout)
+            ((ti++))
+            if (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" =~ ^[0-9] ]]; then ((ti++)); fi
+            continue;;
+          nice)
+            ((ti++))
+            if (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" == "-n" ]]; then ((ti+=2)); fi
+            continue;;
+          env)
+            ((ti++))
+            while (( ti < ${#toks[@]} )); do
+              case "${toks[$ti]}" in
+                -u) ((ti+=2));;
+                -*) ((ti++));;
+                *=*) ((ti++));;
+                *) break;;
+              esac
+            done
+            continue;;
+          sudo)
+            ((ti++))
+            while (( ti < ${#toks[@]} )) && [[ "${toks[$ti]}" == -* ]]; do
+              case "${toks[$ti]}" in
+                -u|-g|-h|-p) ((ti+=2));;
+                *) ((ti++));;
+              esac
+            done
+            continue;;
+          rtk|ionice|nohup|command|builtin)
+            ((ti++)); continue;;
+          *)
+            break;;
+        esac
+      done
+      ;;
+  esac
 
   (( ti >= ${#toks[@]} )) && {
     # Wrappers consumed everything — if git+push were among them, fail closed
@@ -353,7 +389,7 @@ eval_segment() {
       if [[ -n "$resolved_dir" ]]; then
         branch=$(repo_branch "$resolved_dir")
       else
-        branch=$(git branch --show-current 2>/dev/null || true)
+        branch=$(session_branch)
       fi
       if [[ "$branch" == main || "$branch" == master ]]; then
         return 0
@@ -371,7 +407,7 @@ eval_segment() {
     if [[ -n "$resolved_dir" ]]; then
       branch=$(repo_branch "$resolved_dir")
     else
-      branch=$(git branch --show-current 2>/dev/null || true)
+      branch=$(session_branch)
     fi
     if [[ "$branch" == main || "$branch" == master ]]; then
       return 0
@@ -385,6 +421,7 @@ eval_segment() {
 check_command() {
   local cmd_str="$1"
   local eff_dir="$2"
+  local -a unresolved=()
 
   split_segments "$cmd_str"
 
@@ -407,9 +444,32 @@ check_command() {
     if (( rc == 0 )); then
       return 0  # deny
     elif (( rc == 2 )); then
-      return 0  # fail closed: deny
+      # Collect unresolved segments; check them all at once after the loop.
+      unresolved+=("$seg")
     fi
   done
+
+  # Fail closed on unresolved git+push segments, but only when they plausibly
+  # target main/master: the segment names main, master, HEAD, or @, or the
+  # resolved branch is main/master.  This matches what the old regex enforced —
+  # a heredoc body line of prose like "note: we will git push origin feat later"
+  # is not a risk.
+  if (( ${#unresolved[@]} > 0 )); then
+    local seg
+    for seg in "${unresolved[@]}"; do
+      case "$seg" in
+        *main*|*master*|*HEAD*|*@*) return 0;;
+      esac
+    done
+    # None named main/master/HEAD/@ — check the resolved branch once.
+    local branch
+    if [[ -n "$eff_dir" ]]; then
+      branch=$(repo_branch "$eff_dir")
+    else
+      branch=$(session_branch)
+    fi
+    [[ "$branch" == main || "$branch" == master ]] && return 0
+  fi
 
   return 1
 }
