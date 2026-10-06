@@ -89,13 +89,22 @@ function opName(text: string): string {
 
 /** Independent of the extractor: scan raw source (comment lines dropped) for
  *  `query|mutation <Name>` followed by `(`, `{` or `$` (interpolation). */
+/** `query ${name} {` / `mutation ${name}(`: a fully interpolated operation
+ *  name has no static stem, so the stem scan below cannot see it. Prose such as
+ *  `mutation ${count} rows` has no following `(`/`{` and stays unmatched. */
+const INTERPOLATED_NAME_RE = /\b(?:query|mutation|subscription)\s+\$\{[^}]*\}\s*[({]/g;
+
+function sourceWithoutComments(file: string): string {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+    .join("\n");
+}
+
 function scannedOperationStems(): string[] {
   const stems: string[] = [];
   for (const file of walk(SRC)) {
-    const text = readFileSync(file, "utf8")
-      .split("\n")
-      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
-      .join("\n");
+    const text = sourceWithoutComments(file);
     for (const m of text.matchAll(/\b(?:query|mutation|subscription)\s*([A-Za-z_][\w]*)?\s*(?:[({]|(?<=\w)\$\{)/g)) {
       // `query {` inside prose or code such as "mutation ${count}" has no name token
       stems.push(m[1] ?? "");
@@ -133,5 +142,21 @@ describe("embedded GraphQL documents validate against the Linear schema", () => 
       (s) => !validated.some((v) => v === s || (s.endsWith("_") && v.startsWith(s))),
     );
     expect([...new Set(uncovered)]).toEqual([]);
+  });
+});
+
+describe("fully interpolated operation names", () => {
+  test("the pattern matches an interpolated name and not prose (control)", () => {
+    expect("const q = `query ${name} { viewer { id } }`".match(INTERPOLATED_NAME_RE)).not.toBeNull();
+    expect("`mutation ${op}($id: ID!) { x }`".match(INTERPOLATED_NAME_RE)).not.toBeNull();
+    expect("`${count} rows: mutation ${count} applied`".match(INTERPOLATED_NAME_RE)).toBeNull();
+  });
+
+  test("no source document interpolates its whole operation name", () => {
+    const hits: string[] = [];
+    for (const file of walk(SRC))
+      for (const m of sourceWithoutComments(file).matchAll(INTERPOLATED_NAME_RE)) hits.push(`${file}: ${m[0]}`);
+    // Name the operation statically so the schema validation above covers it.
+    expect(hits).toEqual([]);
   });
 });

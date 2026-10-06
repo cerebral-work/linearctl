@@ -120,7 +120,10 @@ counts and the `--team` project filter are computed over the CAPPED
 issue/project sets (counts are lower bounds) — fine for smoke, never for a
 plan's census. A capped census sets `partial: true` and says so on stderr,
 and `reorg plan` preserves that flag; a `0`, negative or non-numeric
-`--limit` exits 2.
+`--limit` exits 2. A scan whose cursor stops advancing ends early and also
+sets `partial: true`. `partialReasons` lists each cause (the `--limit` cap,
+and one entry per stalled connection). `reorg plan` over a partial census
+adds a warning to `_meta.warnings` and prints it; it does not refuse.
 
 ## Plan file
 

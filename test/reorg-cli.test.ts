@@ -106,6 +106,30 @@ describe("reorg plan (command)", () => {
     expect(plan.ops.map((o) => o.seq)).toEqual([1, 2, 3]);
   });
 
+  test("a partial census yields a plan warning naming the reasons (CER-2389)", async () => {
+    const censusPath = join(dir, "census.json");
+    writeFileSync(
+      censusPath,
+      JSON.stringify({ ...TOY_CENSUS, partial: true, partialReasons: ["issues: cursor did not advance (stuck at cur-1)"] }),
+    );
+    const rulesPath = join(dir, "rules.json");
+    writeFileSync(
+      rulesPath,
+      JSON.stringify([
+        { phase: 2, op: "enable-triage", match: { entity: "team", where: { key: "EX" } }, to: { triageEnabled: true }, evidence: "e" },
+      ]),
+    );
+    const out = join(dir, "plan.jsonl");
+    await reorgPlan({ rules: rulesPath, census: censusPath, out });
+    const meta = JSON.parse(readFileSync(out, "utf8").split("\n")[0])._meta;
+    expect(meta.warnings.some((w: string) => w.includes("partial") && w.includes("cursor did not advance"))).toBe(true);
+    // control: a complete census adds no such warning
+    writeFileSync(censusPath, JSON.stringify(TOY_CENSUS));
+    await reorgPlan({ rules: rulesPath, census: censusPath, out });
+    const meta2 = JSON.parse(readFileSync(out, "utf8").split("\n")[0])._meta;
+    expect(meta2.warnings.some((w: string) => w.includes("partial"))).toBe(false);
+  });
+
   test("a rule matching nothing is an error, not a silent no-op", async () => {
     const censusPath = join(dir, "census.json");
     writeFileSync(censusPath, JSON.stringify(TOY_CENSUS));
