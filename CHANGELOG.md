@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.4](https://github.com/cerebral-work/linearctl/compare/v0.10.3...v0.10.4) (2026-10-06)
+
+
+### Bug Fixes
+
+* **ci:** evaluate all command segments in guard-main-push ([bbd41a1](https://github.com/cerebral-work/linearctl/commit/bbd41a16bdb238ba1c6b8fdbbea42357885299d7))
+* **ci:** guard-main-push joins backslash-newline continuations, narrows fail-closed ([bf04409](https://github.com/cerebral-work/linearctl/commit/bf0440994f4dcd9f0898503e8dddb0eaff307dc2))
+* **ci:** guard-main-push parses git -C push and stops worktree false-positive ([c326124](https://github.com/cerebral-work/linearctl/commit/c3261247721f505946993e040c242dbf2e2bc473))
+* **ci:** guard-main-push parses git -C push and stops worktree false-positive ([fc1a61d](https://github.com/cerebral-work/linearctl/commit/fc1a61deeee53c4b0ffcacf027fbda848518103d))
+* **ci:** guard-main-push performance and command-substitution gaps ([25dcfaf](https://github.com/cerebral-work/linearctl/commit/25dcfaf2d01bd4a3c4ddd583d43fd7e65a82ab2e))
+* **reorg:** mark a census partial when a scan stalls on a stuck cursor ([ccca6e1](https://github.com/cerebral-work/linearctl/commit/ccca6e1e24070501a1fe4d5c83fc4cdc45f2dd03))
+* **reorg:** mark a census partial when a scan stalls on a stuck cursor ([5644982](https://github.com/cerebral-work/linearctl/commit/5644982590d3ef4cd478973997ef28a5da806f7c))
+
+
+### Documentation
+
+* **reorg:** document the stalled-scan partial census and plan warning ([975da04](https://github.com/cerebral-work/linearctl/commit/975da04d2886c36b18570f423d33b7ab868d4aa7))
+
 ## [0.10.3](https://github.com/cerebral-work/linearctl/compare/v0.10.2...v0.10.3) (2026-10-06)
 
 
