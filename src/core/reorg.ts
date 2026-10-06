@@ -2558,11 +2558,24 @@ export async function runPlan(
         }
       } catch (err) {
         drifted.push(op.seq);
+        const msg = err instanceof Error ? err.message : String(err);
+        // a name: ref that resolves to nothing because its create is planned
+        // earlier in this plan and has not run: say so (still drift)
+        let why = "";
+        const unresolved = /labelRef "name:(.*)" resolves to nothing/.exec(msg);
+        if (unresolved) {
+          const pending = plan.ops.find(
+            (o) =>
+              o.op === "create-workspace-label" && o.seq < op.seq &&
+              String(o.to.name) === unresolved[1] &&
+              !journal.some((r) => r.ok && r.seq === o.seq),
+          );
+          if (pending)
+            why = ` — ref "name:${unresolved[1]}" is unresolved because the planned create-workspace-label at seq ${pending.seq} has not run yet`;
+        }
         opts.onEvent?.({
           kind: "drift",
-          detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: read failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: read failed: ${msg}${why}`,
         });
       }
     }

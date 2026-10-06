@@ -2357,6 +2357,41 @@ describe("written-label guard + team-aware child mapping (round 1)", () => {
   });
 });
 
+describe("--check and name: label refs (CER-2387)", () => {
+  const LA = "11111111-1111-4111-8111-11111111110a";
+  const LX = "11111111-1111-4111-8111-1111111110c5";
+  const checkOpts = (onEvent: (e: { kind: string; detail: string }) => void) => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(), onEvent,
+  });
+  const relabel = () => baseOp({
+    seq: 2, op: "relabel", from: { labelIds: [LA] }, to: { add: ["name:fresh"], remove: [LA] },
+  });
+
+  test("target already in the end state via a name: add is 'already applied', not drift", async () => {
+    const be = freshBackend();
+    be.labels.set(LX, { id: LX, name: "fresh", retiredAt: null, teamId: null, teamKey: null });
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [LX] });
+    const lines: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([relabel()]), checkOpts((e) => lines.push(e.detail)));
+    expect(r.drifted).toEqual([]);
+    expect(lines.some((l) => l.includes("already applied seq 2"))).toBe(true);
+  });
+
+  test("name: ref whose create is planned at a lower seq and has not run is drift, with that stated", async () => {
+    const be = freshBackend();
+    be.issues.set("i-1", { ...ISSUE_1, labelIds: [LX] }); // differs from `from`, so the ref is resolved
+    const create = baseOp({
+      seq: 1, op: "create-workspace-label", target: { type: "label", id: "new:fresh", identifier: "fresh" },
+      from: { labelId: null }, to: { name: "fresh", color: "#e5484d" },
+    });
+    const lines: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([create, relabel()]), checkOpts((e) => lines.push(e.detail)));
+    expect(r.drifted).toContain(2);
+    expect(lines.some((l) => l.includes("DRIFT seq 2") && l.includes("planned create-workspace-label at seq 1 has not run yet"))).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Pacing
 // ---------------------------------------------------------------------------
