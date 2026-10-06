@@ -180,3 +180,53 @@ describe("reorg census pagination", () => {
     expect(data.issues.length).toBeGreaterThan(0);
   });
 });
+
+describe("census partial marker (CER-2389)", () => {
+  /** issues connection whose second page repeats the cursor it was sent. */
+  function stuckIssuesClient() {
+    const rawRequest = async (query: string, vars: Record<string, unknown>) => {
+      if (/\borganization\s*\{/.test(query))
+        return { data: { organization: { id: "org-1", urlKey: "example" } } };
+      const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+      if (/\bissues\s*\(/.test(query)) {
+        const after = vars.after as string | null;
+        return {
+          data: {
+            issues: {
+              nodes: [issue(after ? "b" : "a")],
+              pageInfo: { hasNextPage: true, endCursor: "cur-1" },
+            },
+          },
+        };
+      }
+      const name = ["teams", "issueLabels", "projects", "initiatives"].find((k) =>
+        new RegExp(`\\b${k}\\s*\\(`).test(query),
+      );
+      if (!name) throw new Error(`unexpected query: ${query.slice(0, 80)}`);
+      return { data: { [name]: name === "teams" ? { ...empty, nodes: [team("EX")] } : empty } };
+    };
+    return { client: { client: { rawRequest } } as unknown as LinearClient };
+  }
+
+  test("a stalled cursor marks the census partial and names the connection", async () => {
+    const data = await census(stuckIssuesClient().client, {}, fastPace());
+    expect(data.partial).toBe(true);
+    expect(data.partialReasons?.some((r) => r.includes("issues") && r.includes("did not advance"))).toBe(true);
+  });
+
+  test("control: a normal multi-page scan is not partial", async () => {
+    const { client } = stubClient(censusPages({ issues: [[issue("a")], [issue("b")]] }));
+    const data = await census(client, {}, fastPace());
+    expect(data.partial).toBe(false);
+    expect(data.partialReasons ?? []).toEqual([]);
+  });
+
+  test("--limit is partial with a limit reason, distinct from a stall", async () => {
+    const { client } = stubClient(censusPages({ issues: [[issue("a"), issue("b")], [issue("c")]] }));
+    const data = await census(client, { limit: 1 }, fastPace());
+    expect(data.partial).toBe(true);
+    expect(data.partialReasons).toHaveLength(1);
+    expect(data.partialReasons![0]).toContain("--limit");
+    expect(data.partialReasons![0]).not.toContain("did not advance");
+  });
+});

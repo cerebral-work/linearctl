@@ -56,9 +56,8 @@ export async function reorgCensus(opts: ReorgCensusOptions): Promise<void> {
   // A capped census is a smoke probe, not a workspace total. Say so on stderr
   // so stdout stays pipe-clean; the JSON carries `partial` for machines.
   if (data.partial) {
-    process.stderr.write(
-      `partial: --limit capped what was fetched; all counts are lower bounds.\n`,
-    );
+    for (const r of data.partialReasons ?? ["--limit capped what was fetched; counts are lower bounds"])
+      process.stderr.write(`partial: ${r}\n`);
   }
   if (opts.json || !opts.out) {
     printJson(data);
@@ -98,6 +97,7 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
     // Preserve the marker: planning against a capped census must not silently
     // present lower-bound counts as totals.
     partial: cand.partial === true,
+    ...(Array.isArray(cand.partialReasons) ? { partialReasons: cand.partialReasons.map(String) } : {}),
     rateBudget: cand.rateBudget ?? { limit: 0, remaining: 0 },
   };
   if (opts.sinceCensus !== undefined) {
@@ -120,6 +120,11 @@ export async function reorgPlan(opts: ReorgPlanOptions): Promise<void> {
     rulesHash: sha256File(opts.rules),
   };
   const plan = planFromRules(rules, censusData, meta);
+  // Warning, not refusal: counts from a partial census are lower bounds.
+  if (censusData.partial)
+    plan.warnings.push(
+      `census is partial (${(censusData.partialReasons ?? ["reason not recorded"]).join("; ")}); the plan was built from lower-bound counts`,
+    );
 
   const lines = [
     JSON.stringify({ _meta: { ...plan.meta, warnings: plan.warnings } }),

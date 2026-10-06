@@ -3324,11 +3324,15 @@ export interface CensusData {
   rateBudget: { limit: number; remaining: number };
   /**
    * True when `--limit` capped what was fetched, so every count here is a
-   * lower bound rather than a total. The cap is applied while paging (a
-   * deliberate smoke-path cheapness), so a consumer cannot tell a capped
-   * census from a small workspace without this flag.
+   * lower bound rather than a total, OR when a non-strict scan stopped on a
+   * cursor that did not advance (a stalled scan would otherwise pass for a
+   * complete one). The cap is applied while paging (a deliberate smoke-path
+   * cheapness), so a consumer cannot tell a partial census from a small
+   * workspace without this flag. `partialReasons` says which cause(s) applied.
    */
   partial: boolean;
+  /** Why `partial` is true: the `--limit` cap and/or one entry per stalled connection. */
+  partialReasons?: string[];
 }
 
 interface Page<T> {
@@ -3347,6 +3351,8 @@ async function paged<T>(
   /** Emptiness/lookup probes: a stuck cursor throws instead of ending the scan
    *  (a partial read must not pass for a complete one). */
   strict = false,
+  /** Non-strict only: called when the cursor stalls and the scan is cut short. */
+  onStall?: (connection: string, cursor: string) => void,
 ): Promise<T[]> {
   // A bad cap is a usage error, not a silently unbounded scan. The previous
   // `limit &&` guard treated 0 as "no limit" and NaN as falsy, so both fetched
@@ -3370,6 +3376,7 @@ async function paged<T>(
     // A cursor that does not advance would loop forever.
     if (strict && next !== null && next === after)
       throw new Error(`graphql: ${connection} cursor did not advance (stuck at ${next}) — refusing to treat a partial read as complete`);
+    if (!strict && next !== null && next === after) onStall?.(connection, next);
     after = next !== null && next === after ? null : next;
     // Stop fetching as soon as the cap is met. Unlike a user-facing listing,
     // census `--limit` is a smoke-test cap on what is FETCHED: it exists to
@@ -3458,10 +3465,13 @@ export async function census(
   opts: CensusOptions,
   pace: ApplyOptions["pace"],
 ): Promise<CensusData> {
+  const partialReasons: string[] = [];
+  const onStall = (connection: string, cursor: string) =>
+    partialReasons.push(`${connection}: cursor did not advance (stuck at ${cursor}); scan ended early, counts are lower bounds`);
   const teams = await paged<CensusTeamNode>(
     client, pace, CENSUS_TEAMS_Q, "teams",
     opts.teamKeys?.length ? { filter: { key: { in: opts.teamKeys } } } : {},
-    opts.limit,
+    opts.limit, false, onStall,
   );
   for (const t of teams) {
     if (typeof t.private !== "boolean")
@@ -3484,7 +3494,7 @@ export async function census(
     cycle?: { id: string } | null;
     team?: { id: string; key: string } | null;
     archivedAt?: string | null;
-  }>(client, pace, CENSUS_ISSUES_Q, "issues", issueFilter, opts.limit);
+  }>(client, pace, CENSUS_ISSUES_Q, "issues", issueFilter, opts.limit, false, onStall);
 
   const issues: CensusIssue[] = rawIssues.map((i) => ({
     id: i.id,
@@ -3503,7 +3513,7 @@ export async function census(
   for (const i of issues)
     for (const l of i.labelIds) countByLabel.set(l, (countByLabel.get(l) ?? 0) + 1);
 
-  const rawLabels = await paged<ReorgLabelNode>(client, pace, CENSUS_LABELS_Q, "issueLabels", {});
+  const rawLabels = await paged<ReorgLabelNode>(client, pace, CENSUS_LABELS_Q, "issueLabels", {}, undefined, false, onStall);
   const withCounts: CensusLabel[] = rawLabels.map((l) => ({
     ...l,
     teamKey: l.team?.key ?? null,
@@ -3531,7 +3541,7 @@ export async function census(
   const teamLabels = scoped;
 
   const projectsAll = await paged<ReorgProjectNode>(
-    client, pace, CENSUS_PROJECTS_Q, "projects", {}, opts.limit,
+    client, pace, CENSUS_PROJECTS_Q, "projects", {}, opts.limit, false, onStall,
   );
   const projects = opts.teamKeys?.length
     ? projectsAll.filter((p) =>
@@ -3540,7 +3550,7 @@ export async function census(
     : projectsAll;
 
   const initiatives = await paged<ReorgInitiativeNode>(
-    client, pace, CENSUS_INITIATIVES_Q, "initiatives", {},
+    client, pace, CENSUS_INITIATIVES_Q, "initiatives", {}, undefined, false, onStall,
   );
 
   const org = await reorgRaw<{ organization: { id: string; urlKey: string } }>(
@@ -3560,7 +3570,15 @@ export async function census(
     initiatives,
     generatedAt: new Date().toISOString(),
     rateBudget: pace.tracker.snapshot,
-    partial: opts.limit !== undefined,
+    partial: opts.limit !== undefined || partialReasons.length > 0,
+    ...(opts.limit !== undefined || partialReasons.length > 0
+      ? {
+          partialReasons: [
+            ...(opts.limit !== undefined ? ["--limit capped what was fetched; counts are lower bounds"] : []),
+            ...partialReasons,
+          ],
+        }
+      : {}),
   };
 }
 
