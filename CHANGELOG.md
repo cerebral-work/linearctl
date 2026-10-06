@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.6](https://github.com/cerebral-work/linearctl/compare/v0.10.5...v0.10.6) (2026-10-06)
+
+
+### Bug Fixes
+
+* **reorg:** record state inheritance in the census and plan around inherited views ([39bf4b2](https://github.com/cerebral-work/linearctl/commit/39bf4b226fe91e7cc4d83f422fbea16abb0dabf9))
+
 ## [0.10.5](https://github.com/cerebral-work/linearctl/compare/v0.10.4...v0.10.5) (2026-10-06)
 
 
