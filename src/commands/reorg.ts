@@ -174,10 +174,13 @@ export async function reorgApply(planPath: string, opts: ReorgApplyOptions): Pro
         if (result.drifted.length > 0)
           process.stdout.write(`check: ${result.drifted.length} op(s) drifted — plan is stale, regenerate or review\n`);
         if (result.refused.length > 0)
-          process.stdout.write(`check: ${result.refused.length} op(s) would be refused at apply (precondition reads)\n`);
+          process.stdout.write(`check: ${result.refused.length} op(s) would be refused at apply (precondition reads or plan shape)\n`);
         process.exit(1);
       }
       process.stdout.write(`check: no drift, no precondition refusals across the plan\n`);
+    } else if (result.dryRun && result.refused.length > 0) {
+      process.stdout.write(`dry-run: ${result.refused.length} op(s) would be refused at apply (plan shape) — fix the plan before --apply\n`);
+      process.exit(1);
     } else if (result.dryRun) {
       process.stdout.write(`dry-run — re-run with --apply to write (journal: ${journalPath})\n`);
     } else {

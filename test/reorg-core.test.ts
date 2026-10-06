@@ -13,6 +13,8 @@ import {
   assertFreshBackup,
   assertFromAnchors,
   assertMovePreconditions,
+  batchGroups,
+  mixedBatchGroups,
   moveAccessLost,
   moveVisibilityChange,
   projectTeamAddVisibilityChange,
@@ -1000,6 +1002,83 @@ describe("batching", () => {
     const resumed = await applyPlan(be, ops, j, { resume: true });
     expect(resumed.applied).toBe(1);
     expect(resumed.skipped).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CER-2385: --check / dry run / apply all see mixed batch groups
+// ---------------------------------------------------------------------------
+
+describe("mixed batch groups (CER-2385)", () => {
+  const LA = "11111111-1111-4111-8111-11111111110a";
+  const LB = "11111111-1111-4111-8111-11111111110b";
+  const LC = "11111111-1111-4111-8111-1111111110c5";
+  const mk = (n: number, add: string[], batchKey = "k", op: ReorgOp["op"] = "relabel") =>
+    baseOp({
+      seq: n, op, target: { type: "issue", id: `i-${n}`, identifier: `EX-${n}` },
+      from: { labelIds: [LA] }, to: { add, remove: [] }, batchKey,
+    });
+  const seed = (be: FakeBackend, n: number) => {
+    for (let k = 1; k <= n; k++)
+      be.issues.set(`i-${k}`, { ...ISSUE_1, id: `i-${k}`, identifier: `EX-${k}`, labelIds: [LA] });
+  };
+  const checkOpts = (extra: Record<string, unknown> = {}) => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(), ...extra,
+  });
+
+  test("batchGroups mirrors apply: consecutive, same key+kind, batchable only, cap 50, singletons kept", () => {
+    const ops = [mk(1, [LB]), mk(2, [LB]), mk(3, [LB], "k", "set-state"), mk(4, [LB], "other"), baseOp({ seq: 5, op: "rename-label", batchKey: "k" })];
+    expect(batchGroups(ops).map((g) => g.map((o) => o.seq))).toEqual([[1, 2], [3], [4], [5]]);
+    const many = Array.from({ length: 51 }, (_, i) => mk(i + 1, [LB]));
+    expect(batchGroups(many).map((g) => g.length)).toEqual([50, 1]);
+  });
+
+  test("mixed pair: --check refuses both seqs, apply throws before any write, dry run refuses", async () => {
+    const be = freshBackend();
+    seed(be, 2);
+    const ops = [mk(1, [LB]), mk(2, [LC])];
+    const lines: string[] = [];
+    const chk = await runPlan(fakeClient(be), planWith(ops), checkOpts({ onEvent: (e: { detail: string }) => lines.push(e.detail) }));
+    expect(chk.refused).toEqual([1, 2]);
+    expect(lines.some((l) => l.includes("REFUSE seq 1..2 batchKey k: non-identical input at seq(s) 2"))).toBe(true);
+    await expect(applyPlan(be, ops, join(dir, "ja.jsonl"))).rejects.toThrow(/refused before any write: seq 1\.\.2 batchKey k.*seq\(s\) 2/);
+    expect(be.mutationCalls).toEqual([]);
+    const dry = await runPlan(fakeClient(be), planWith(ops), checkOpts({ check: false }));
+    expect(dry.refused).toEqual([1, 2]);
+    expect(dry.dryRun).toBe(true);
+  });
+
+  test("uniform group is not refused (control)", async () => {
+    const be = freshBackend();
+    seed(be, 2);
+    const chk = await runPlan(fakeClient(be), planWith([mk(1, [LB]), mk(2, [LB])]), checkOpts());
+    expect(chk.refused).toEqual([]);
+    expect(mixedBatchGroups([mk(1, [LB]), mk(2, [LB])])).toEqual([]);
+  });
+
+  test("parity: 51-run where only member 51 differs is NOT refused (51st is a singleton group)", async () => {
+    const be = freshBackend();
+    seed(be, 51);
+    const ops = Array.from({ length: 51 }, (_, i) => mk(i + 1, [i === 50 ? LC : LB]));
+    const chk = await runPlan(fakeClient(be), planWith(ops), checkOpts());
+    expect(chk.refused).toEqual([]);
+    const r = await applyPlan(be, ops, join(dir, "j2.jsonl"));
+    expect(r.applied).toBe(51);
+    expect(be.mutationCalls.filter((c) => c === "issueBatchUpdate")).toHaveLength(1);
+  });
+
+  test("resume slicing: a journaled separator makes the pair consecutive; without resume it is not", async () => {
+    const be = freshBackend();
+    seed(be, 3);
+    // seq 2 shares the key but is a different kind, so it separates the pair
+    const ops = [mk(1, [LB]), mk(2, [LB], "k", "set-state"), mk(3, [LC])];
+    const none = await runPlan(fakeClient(be), planWith(ops), checkOpts());
+    expect(none.refused).toEqual([]);
+    const j = join(dir, "jr.jsonl");
+    journalAppend(j, { seq: 2, phase: 1, op: "set-state", at: "a", ok: true });
+    const resumed = await runPlan(fakeClient(be), planWith(ops), checkOpts({ resume: true, journalPath: j }));
+    expect(resumed.refused).toEqual([1, 3]);
   });
 });
 
