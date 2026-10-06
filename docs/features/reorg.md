@@ -74,11 +74,21 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   state is counted as reverted without a write.
 - **`--check`** is the dry-run with teeth: a live drift pre-read of every
   target, reporting each op OK/DRIFT without writing (exit 1 on any drift).
+  It also reports plan-shape refusals apply would raise (a mixed batch group,
+  see Batching) as `REFUSE`. A `name:` ref whose planned create has not run yet
+  is reported as drift and says so. The plain dry run reports the same
+  plan-shape refusals and exits 1 instead of suggesting `--apply`.
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
   capped resume keeps advancing).
 - **Batching** is opt-in per op via `batchKey`: identical-input `relabel` /
   `set-state` ops group into `issueBatchUpdate` calls of ≤ 50, drift-checked
-  per member, verified by one filtered read.
+  per member, verified by one filtered read. Grouping rule: CONSECUTIVE ops
+  (after `--resume` and `--max-ops` slicing) with the same `batchKey` and the
+  same op kind, `relabel` / `set-state` only, at most 50 per group; a lone op
+  is not batched. Members must carry identical `to` (compared raw, before
+  `name:` resolution). A group that does not is refused: `--check` and the dry
+  run mark every member `REFUSE`, and `--apply` refuses before any write. Give
+  each distinct input its own `batchKey`.
 - **Pacing**: token bucket at 2000 req/h (Linear's key budget is 2500/h) plus
   `X-RateLimit-*-Remaining` header reads; under 10 % remaining the run sleeps
   to the window reset.
@@ -338,6 +348,9 @@ journals after its own marker is appended.
 - **issues**: `identifier`, `teamKey`, `stateId`, `projectId`, `archived`,
   plus `label` (name — any census label sharing it counts) or `labelId`, in
   combination. A rule's `batchKey` propagates to every op it expands into.
+  The planner rejects two `relabel` / `set-state` ops that share a `batchKey`
+  but have different `to` (the key means identical input). Other op kinds are
+  not checked: `add-project-team` computes a per-target `to`.
 - **projects / initiatives**: select by `id` preferred; a `name` match hitting
   more than one entity is REFUSED (duplicate names exist), never fanned out.
 - **label refs across ops**: `"name:<label-name>"` inside `to.add`,

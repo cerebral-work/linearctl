@@ -2138,7 +2138,7 @@ export interface RunResult {
   dryRun: boolean;
   /** --check only: seqs whose live state drifted from `from`. */
   drifted: number[];
-  /** --check only: seqs whose apply-time precondition reads would refuse. */
+  /** --check / dry run: seqs apply would refuse (precondition reads or plan shape). */
   refused: number[];
 }
 
@@ -2405,6 +2405,65 @@ async function executeOne(
   return "applied";
 }
 
+const BATCHABLE_OPS = new Set<string>(["relabel", "set-state"]);
+const BATCH_MAX = 50;
+
+/** The apply-time grouping, exactly: CONSECUTIVE ops with the same batchKey
+ *  and op kind (relabel / set-state only), at most 50 per group. Every other
+ *  op, and a lone batchable op, is a group of one (sequential path). Pure. */
+export function batchGroups(ops: ReorgOp[]): ReorgOp[][] {
+  const groups: ReorgOp[][] = [];
+  let i = 0;
+  while (i < ops.length) {
+    const op = ops[i];
+    const group: ReorgOp[] = [op];
+    i++;
+    if (op.batchKey && BATCHABLE_OPS.has(op.op)) {
+      while (
+        i < ops.length &&
+        ops[i].batchKey === op.batchKey &&
+        ops[i].op === op.op &&
+        group.length < BATCH_MAX
+      ) {
+        group.push(ops[i]);
+        i++;
+      }
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
+export interface MixedBatchGroup {
+  key: string;
+  seqs: number[];
+  /** members whose raw `to` differs from the first member's */
+  differing: number[];
+}
+
+/** Multi-member groups whose members' raw `to` are not all identical: the
+ *  groups runBatch would throw on. Raw JSON, before any `name:` resolution,
+ *  the same comparison runBatch makes. Pure. */
+export function mixedBatchGroups(ops: ReorgOp[]): MixedBatchGroup[] {
+  const out: MixedBatchGroup[] = [];
+  for (const g of batchGroups(ops)) {
+    if (g.length < 2) continue;
+    const shape = JSON.stringify(g[0].to);
+    const differing = g.filter((o) => JSON.stringify(o.to) !== shape).map((o) => o.seq);
+    if (differing.length > 0)
+      out.push({ key: String(g[0].batchKey), seqs: g.map((o) => o.seq), differing });
+  }
+  return out;
+}
+
+function mixedGroupRange(m: MixedBatchGroup): string {
+  return `seq ${Math.min(...m.seqs)}..${Math.max(...m.seqs)}`;
+}
+
+function mixedGroupFinding(m: MixedBatchGroup): string {
+  return `${mixedGroupRange(m)} batchKey ${m.key}: non-identical input at seq(s) ${m.differing.join(", ")}`;
+}
+
 export async function runPlan(
   client: LinearClient,
   plan: ReorgPlan,
@@ -2499,13 +2558,35 @@ export async function runPlan(
         }
       } catch (err) {
         drifted.push(op.seq);
+        const msg = err instanceof Error ? err.message : String(err);
+        // a name: ref that resolves to nothing because its create is planned
+        // earlier in this plan and has not run: say so (still drift)
+        let why = "";
+        const unresolved = /labelRef "name:(.*)" resolves to nothing/.exec(msg);
+        if (unresolved) {
+          const pending = plan.ops.find(
+            (o) =>
+              o.op === "create-workspace-label" && o.seq < op.seq &&
+              String(o.to.name) === unresolved[1] &&
+              !journal.some((r) => r.ok && r.seq === o.seq),
+          );
+          if (pending)
+            why = ` — ref "name:${unresolved[1]}" is unresolved because the planned create-workspace-label at seq ${pending.seq} has not run yet`;
+        }
         opts.onEvent?.({
           kind: "drift",
-          detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: read failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: read failed: ${msg}${why}`,
         });
       }
+    }
+    // plan shape: apply refuses a mixed batch group, so check must too
+    const mixed = mixedBatchGroups(ops);
+    for (const m of mixed) {
+      for (const q of m.seqs) if (!refused.includes(q)) refused.push(q);
+      opts.onEvent?.({
+        kind: "refuse",
+        detail: `REFUSE ${mixedGroupFinding(m)} — apply refuses this group; give each distinct input its own batchKey`,
+      });
     }
     // create-conflict preflight: a create-workspace-label fails at Linear if
     // ANY label (any scope) still carries the name. Planned rename-label ops
@@ -2539,6 +2620,14 @@ export async function runPlan(
   }
 
   if (!opts.apply) {
+    const dryRefused: number[] = [];
+    for (const m of mixedBatchGroups(ops)) {
+      for (const q of m.seqs) if (!dryRefused.includes(q)) dryRefused.push(q);
+      opts.onEvent?.({
+        kind: "refuse",
+        detail: `REFUSE ${mixedGroupFinding(m)} — apply refuses this group; give each distinct input its own batchKey`,
+      });
+    }
     for (const op of ops) {
       const irreversibleNote = op.reversible
         ? ""
@@ -2567,7 +2656,7 @@ export async function runPlan(
       kind: "budget",
       detail: `${ops.length} op(s), ≈${estimateRequests(ops)} request(s) at ${REORG_RATE_PER_HOUR}/h pace (add --check for a live drift pre-read)`,
     });
-    return { applied: 0, skipped, dryRun: true, drifted: [], refused: [] };
+    return { applied: 0, skipped, dryRun: true, drifted: [], refused: dryRefused };
   }
 
   if (!opts.backupRecordPath)
@@ -2586,41 +2675,29 @@ export async function runPlan(
   // Before ANY write: a labelMap that points at a create in the wrong team is a
   // plan defect, and the create (an earlier op) must not land for it.
   for (const m of plan.ops) await assertLabelMapTeams(ctx, m, plan.ops);
+  // Same gate for plan shape: a mixed batch group would throw mid-run in
+  // runBatch, after earlier groups already wrote. Group on the SLICED ops.
+  const mixedGroups = mixedBatchGroups(ops);
+  if (mixedGroups.length > 0)
+    throw new Error(
+      `refused before any write: ${mixedGroups.map(mixedGroupFinding).join("; ")}; give each distinct input its own batchKey`,
+    );
 
   let applied = 0;
-  let i = 0;
-  while (i < ops.length) {
-    const op = ops[i];
-
-    // Batch run: same batchKey, batchable kind, ≤ 50, identical input.
-    if (op.batchKey && (op.op === "relabel" || op.op === "set-state")) {
-      const group: ReorgOp[] = [];
-      let j = i;
-      while (
-        j < ops.length &&
-        ops[j].batchKey === op.batchKey &&
-        ops[j].op === op.op &&
-        group.length < 50
-      ) {
-        group.push(ops[j]);
-        j++;
-      }
-      if (group.length > 1) {
-        await runBatch(ctx, group, opts, journal);
-        applied += group.length;
-        i = j;
-        continue;
-      }
-      // single member — falls through to the sequential path
+  for (const group of batchGroups(ops)) {
+    if (group.length > 1) {
+      await runBatch(ctx, group, opts, journal);
+      applied += group.length;
+      continue;
     }
-
+    // single member — sequential path
+    const op = group[0];
     const outcome = await executeOne(ctx, op, journal, opts.journalPath);
     applied++;
     opts.onEvent?.({
       kind: "applied",
       detail: `seq ${op.seq} [${op.op}] ${op.target.identifier} ${outcome === "already-applied" ? "ok (already applied)" : "ok"}`,
     });
-    i++;
   }
   return { applied, skipped, dryRun: false, drifted: [], refused: [] };
 }
@@ -3698,6 +3775,22 @@ export function planFromRules(
         ...(rule.batchKey ? { batchKey: rule.batchKey } : {}),
         ...(rule.allowVisibilityChange === true ? { allowVisibilityChange: true } : {}),
       });
+    }
+  }
+  // batchKey contract is "identical input": two batchable ops under one key
+  // with different `to` can never run as one batch (apply refuses it).
+  {
+    const firstByKey = new Map<string, ReorgOp>();
+    for (const o of ops) {
+      if (!o.batchKey || !BATCHABLE_OPS.has(o.op)) continue;
+      const id = `${o.op}\u0000${o.batchKey}`;
+      const first = firstByKey.get(id);
+      if (!first) firstByKey.set(id, o);
+      else if (JSON.stringify(first.to) !== JSON.stringify(o.to))
+        throw new Error(
+          `batchKey "${o.batchKey}" [${o.op}] is shared by ops with different input: seq ${first.seq} ("${first.evidence}") vs seq ${o.seq} ("${o.evidence}"); ` +
+            `a batchKey means identical input — give each distinct input its own batchKey`,
+        );
     }
   }
   const { rows: visibility, notes } = planVisibility(ops, censusData);

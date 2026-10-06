@@ -729,3 +729,30 @@ describe("team visibility planning", () => {
     expect(() => planFromRules([move()], c, META)).toThrow("re-run reorg census");
   });
 });
+
+describe("planner batchKey rule (CER-2385)", () => {
+  const two = { ...TOY_CENSUS, issues: [
+    TOY_CENSUS.issues[0],
+    { ...TOY_CENSUS.issues[0], id: "i-2", identifier: "EX-2" },
+  ] };
+  const rel = (add: string, extra: Partial<ReorgRule> = {}) =>
+    rule({ match: { entity: "issue", where: { label: "bug" } }, to: { add: [add], remove: [] }, batchKey: "k", evidence: `ev-${add}`, ...extra });
+
+  test("two relabel rules sharing a batchKey with different `to` throw at plan time", () => {
+    expect(() => planFromRules([rel("l-a"), rel("l-b")], two, META)).toThrow(/batchKey "k".*ev-l-a.*ev-l-b/s);
+  });
+
+  test("same `to` under one batchKey is fine (control)", () => {
+    expect(planFromRules([rel("l-a"), rel("l-a")], two, META).ops).toHaveLength(4);
+  });
+
+  test("add-project-team with a batchKey and per-target teamIds is fine", () => {
+    const c = { ...TOY_CENSUS, teams: [...TOY_CENSUS.teams, { ...TOY_CENSUS.teams[0], id: "t-2", key: "TWO" }],
+      projects: [TOY_CENSUS.projects[0], { ...TOY_CENSUS.projects[0], id: "p-2", name: "P2", teams: { nodes: [{ id: "t-2", key: "TWO" }] } }] };
+    const plan = planFromRules([rule({
+      op: "add-project-team", match: { entity: "project", where: {} }, to: { teamId: "t-ex" }, batchKey: "k", allowVisibilityChange: true,
+    })], c, META);
+    expect(plan.ops).toHaveLength(2);
+    expect(plan.ops[0].to.teamIds).not.toEqual(plan.ops[1].to.teamIds);
+  });
+});
