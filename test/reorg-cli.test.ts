@@ -231,6 +231,42 @@ describe("issue selectors", () => {
   });
 });
 
+describe("team-state rules and inherited views (CER-2390)", () => {
+  const stateCensus = {
+    ...TOY_CENSUS,
+    teams: [
+      { id: "t-par", key: "PAR", name: "Parent", triageEnabled: false, private: false, archivedAt: null, issueCount: 0,
+        states: { nodes: [{ id: "s-owner", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: null }] } },
+      { id: "t-sub", key: "SUB", name: "Sub", triageEnabled: false, private: false, archivedAt: null, issueCount: 0,
+        states: { nodes: [{ id: "s-view", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: { id: "s-owner" } }] } },
+    ],
+  } as unknown as CensusData;
+  const stateRule = (teamKey: string) =>
+    rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", teamKey, where: { name: "Review" } } });
+
+  test("a rule naming an inherited view by id is refused, naming state, team and owner", () => {
+    const byId = rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", where: { id: "s-view" } } });
+    expect(() => planFromRules([byId], stateCensus, META)).toThrow(
+      /SUB\/Review.*s-view.*s-owner.*act on the owner state/s,
+    );
+  });
+
+  test("a broad rule skips inherited views: only the owner is planned (its views cascade)", () => {
+    const broad = rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", where: { name: "Review" } } });
+    const plan = planFromRules([broad], stateCensus, META);
+    expect(plan.ops.map((o) => o.target.id)).toEqual(["s-owner"]);
+  });
+
+  test("a rule scoped to the sub-team matches nothing: its only match is a view", () => {
+    expect(() => planFromRules([stateRule("SUB")], stateCensus, META)).toThrow(/matched nothing/);
+  });
+
+  test("control: a rule matching only the owner state plans normally", () => {
+    const plan = planFromRules([stateRule("PAR")], stateCensus, META);
+    expect(plan.ops.map((o) => o.target.id)).toEqual(["s-owner"]);
+  });
+});
+
 describe("by-id selection + duplicate refusal", () => {
   const dupCensus = {
     ...TOY_CENSUS,
