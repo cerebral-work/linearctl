@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.3](https://github.com/cerebral-work/linearctl/compare/v0.10.2...v0.10.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **reorg:** check and dry run refuse mixed batch groups before apply writes ([58c8d6d](https://github.com/cerebral-work/linearctl/commit/58c8d6d123a9ab71cded5fefb9ed785bdced26c3))
+* **reorg:** check explains unresolved name: refs whose create has not run ([15f93b7](https://github.com/cerebral-work/linearctl/commit/15f93b71f2435edd7fa87fbcceaee3f7c195a083))
+* **reorg:** refuse mixed batch groups in check, dry run and apply before any write ([3e72eaf](https://github.com/cerebral-work/linearctl/commit/3e72eaf2e8522c31e3ae0d858e69d959055a9922))
+
+
+### Documentation
+
+* **reorg:** document batch grouping and mixed-group refusal ([881d557](https://github.com/cerebral-work/linearctl/commit/881d5576af81b6c8d709b9a1038e01d868283d26))
+
 ## [0.10.2](https://github.com/cerebral-work/linearctl/compare/v0.10.1...v0.10.2) (2026-10-05)
 
 
