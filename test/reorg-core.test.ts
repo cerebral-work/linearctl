@@ -1202,6 +1202,23 @@ describe("emptiness pre-reads", () => {
     expect(be.teams.get("t-9")!.deleted).toBe(false);
   });
 
+  test("delete-team whose write did not land stops the run (post-check must not be vacuous)", async () => {
+    // The re-read still finds the team: apply must stop, not journal ok.
+    const be = freshBackend();
+    be.teams.set("t-9", { id: "t-9", key: "OLD", triageEnabled: false, deleted: false });
+    be.swallowWrites = true;
+    const del = baseOp({
+      seq: 9, phase: 6, op: "delete-team", reversible: false, approval: "deck-1",
+      target: { type: "team", id: "t-9", identifier: "OLD" }, from: {}, to: {},
+    });
+    const j = join(dir, "j.jsonl");
+    await expect(
+      applyPlan(be, [del], j, { allowIrreversible: true }),
+    ).rejects.toBeInstanceOf(ReorgMismatch);
+    expect(be.teams.get("t-9")!.deleted).toBe(false);
+    expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
+  });
+
   test("delete-team probe paginates (blocking project on page two)", async () => {
     // forceProjectPagination withholds member projects to page two; an engine
     // that drops the pagination loop sees page one only and deletes — red.
@@ -1494,16 +1511,18 @@ describe("write error then re-read (CER-2391)", () => {
     expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
   });
 
-  test("create op whose write throws rethrows even when a same-named label exists", async () => {
+  test("create op whose write lands then throws: the ORIGINAL error propagates, no ok row", async () => {
+    // No same-named label beforehand, so the pre-read passes and the write
+    // runs; a create's end state needs the id the write returns, so the
+    // error is never accepted.
     const be = seed();
-    be.labels.set("l-x", { id: "l-x", name: "bug", retiredAt: null, teamId: null, teamKey: null });
     be.writeError = { message: MSG, land: true };
     const op = baseOp({
       op: "create-workspace-label", target: { type: "label", id: "new:bug", identifier: "bug" },
       from: { labelId: null }, to: { name: "bug", color: "#e5484d" },
     });
     const j = join(dir, "j.jsonl");
-    await expect(applyPlan(be, [op], j)).rejects.toThrow();
+    await expect(applyPlan(be, [op], j)).rejects.toThrow(MSG); // the ORIGINAL error
     expect(journalRead(j).filter((r) => r.ok)).toHaveLength(0);
   });
 

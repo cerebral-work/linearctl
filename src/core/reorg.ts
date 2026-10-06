@@ -2385,12 +2385,14 @@ async function executeOne(
   let liveAfter: Record<string, unknown> | null = null;
   if (expected === null) {
     // delete forms: the re-read must FAIL
+    let present = false;
     try {
       await def.readState(ctx, op);
+      present = true;
     } catch {
-      liveAfter = null; // gone, as required
+      // gone, as required
     }
-    if (liveAfter !== null)
+    if (present)
       throw new ReorgMismatch(op.seq, { expected: "absent", actual: "still present" });
   } else {
     const r = await readUntilMatches(ctx, def, op, expected);
