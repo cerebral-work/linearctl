@@ -3501,7 +3501,7 @@ const CENSUS_TEAMS_Q = /* GraphQL */ `
       nodes {
         id key name triageEnabled archivedAt issueCount private
         parent { id key }
-        states { nodes { id name type position archivedAt } }
+        states { nodes { id name type position archivedAt inheritedFrom { id } } }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -4113,6 +4113,12 @@ function selectTargets(
         if (rule.match.teamKey && t.key !== rule.match.teamKey) continue;
         for (const s of t.states?.nodes ?? []) {
           if (!hit({ name: s.name, type: s.type, archived: s.archivedAt != null })) continue;
+          // Inherited views are not writable (Linear mirrors the owner): refuse
+          // at plan time, like an inherited label, instead of at apply.
+          if (s.inheritedFrom?.id)
+            throw new Error(
+              `rule "${rule.evidence}" targets inherited state ${t.key}/${s.name} (${s.id}), child of ${s.inheritedFrom.id} — act on the owner state`,
+            );
           out.push({
             target: { type: "state", id: s.id, identifier: `${t.key}/${s.name}` },
             from: { archived: s.archivedAt != null },

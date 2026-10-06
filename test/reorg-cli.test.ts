@@ -231,6 +231,31 @@ describe("issue selectors", () => {
   });
 });
 
+describe("team-state rules and inherited views (CER-2390)", () => {
+  const stateCensus = {
+    ...TOY_CENSUS,
+    teams: [
+      { id: "t-par", key: "PAR", name: "Parent", triageEnabled: false, private: false, archivedAt: null, issueCount: 0,
+        states: { nodes: [{ id: "s-owner", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: null }] } },
+      { id: "t-sub", key: "SUB", name: "Sub", triageEnabled: false, private: false, archivedAt: null, issueCount: 0,
+        states: { nodes: [{ id: "s-view", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: { id: "s-owner" } }] } },
+    ],
+  } as unknown as CensusData;
+  const stateRule = (teamKey: string) =>
+    rule({ op: "archive-state", approval: "ap-1", to: {}, match: { entity: "team-state", teamKey, where: { name: "Review" } } });
+
+  test("a rule matching an inherited view is refused, naming state, team and owner", () => {
+    expect(() => planFromRules([stateRule("SUB")], stateCensus, META)).toThrow(
+      /SUB\/Review.*s-view.*s-owner.*act on the owner state/s,
+    );
+  });
+
+  test("control: a rule matching only the owner state plans normally", () => {
+    const plan = planFromRules([stateRule("PAR")], stateCensus, META);
+    expect(plan.ops.map((o) => o.target.id)).toEqual(["s-owner"]);
+  });
+});
+
 describe("by-id selection + duplicate refusal", () => {
   const dupCensus = {
     ...TOY_CENSUS,

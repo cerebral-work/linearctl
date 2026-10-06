@@ -2152,7 +2152,10 @@ describe("census capture (CER-2353 round 1)", () => {
       seen.push(query);
       const page = (nodes: unknown[]) => ({ nodes, pageInfo: { hasNextPage: false, endCursor: null } });
       if (query.includes("ReorgCensusTeams"))
-        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, private: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([]) }]) } };
+        return { data: { teams: page([{ id: "t-ex", key: "EX", name: "Example", triageEnabled: false, private: false, archivedAt: null, issueCount: 2, parent: { id: "t-parent", key: "PAR" }, states: page([
+          { id: "s-owner", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: null },
+          { id: "s-view", name: "Review", type: "started", position: 1, archivedAt: null, inheritedFrom: { id: "s-owner" } },
+        ]) }]) } };
       if (query.includes("ReorgCensusLabels"))
         return { data: { issueLabels: page([
           { id: "11111111-1111-4111-8111-111111111001", name: "security", retiredAt: null, team: { id: "t-par", key: "PAR" }, inheritedFrom: null },
@@ -2227,6 +2230,16 @@ describe("census capture (CER-2353 round 1)", () => {
     // the QUERY TEXT asks for the fields (a dropped selection would pass silently)
     expect(seen.find((q) => q.includes("ReorgCensusTeams"))).toContain("parent { id key }");
     expect(seen.find((q) => q.includes("ReorgCensusLabels"))).toContain("inheritedFrom { id }");
+  });
+
+  test("captures inheritedFrom on workflow states (CER-2390)", async () => {
+    const seen: string[] = [];
+    const d = await census(censusStub(seen), {}, fastPace());
+    const states = d.teams[0].states?.nodes ?? [];
+    expect(states.find((s) => s.id === "s-view")?.inheritedFrom?.id).toBe("s-owner");
+    expect(states.find((s) => s.id === "s-owner")?.inheritedFrom ?? null).toBeNull();
+    const q = seen.find((x) => x.includes("ReorgCensusTeams")) ?? "";
+    expect(q).toContain("position archivedAt inheritedFrom { id }");
   });
 
   test("--team scope still includes the owners of in-scope inherited labels", async () => {

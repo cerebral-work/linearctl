@@ -310,7 +310,9 @@ pointing at the parent's state, and archiving the parent's state archives every
 inherited view at once. `archive-state` on an inherited view refuses ("act on
 the owner state"; `REFUSE` under `--check`). For an owner state, the dry run
 and `--check` list the inherited views that will archive with it, and the
-executor refuses while any of those views still holds issues.
+executor refuses while any of those views still holds issues. The census records
+`inheritedFrom` per state, and `plan` refuses a `team-state` rule that matches an
+inherited view (naming its owner) instead of leaving the refusal to apply.
 
 ## Superseded ops in verify
 
