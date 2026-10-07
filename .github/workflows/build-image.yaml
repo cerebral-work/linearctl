@@ -101,6 +101,12 @@ jobs:
           exit-code: "1"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # cosign v2.4.1, the version the estate signs with today: classic
+          # `.sig` tag signatures, and `--tlog-upload=false` is accepted.
+          # The installer default (v3) rejects that flag without a custom
+          # signing config.
+          cosign-release: v2.4.1
 
       - name: Sign and verify by digest
         env:
