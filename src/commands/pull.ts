@@ -18,6 +18,8 @@ export interface PullOptions {
   json?: boolean;
   /** Cap results for safe soma dev/testing. */
   limit?: number;
+  /** Read from local SQLite cache instead of live Linear API. */
+  cache?: boolean;
 }
 
 /**
@@ -31,11 +33,40 @@ export interface PullOptions {
  * lifts it. Ordered by `updatedAt` desc.
  */
 export async function pull(opts: PullOptions): Promise<void> {
+  const useCache = opts.cache ?? (process.env.LINEARCTL_CACHE === "true");
+
+  if (useCache) {
+    const { openCacheDb } = await import("../core/cache/db.js");
+    const { pullCachedIssues } = await import("../core/cache/query.js");
+    const cache = openCacheDb();
+    try {
+      const items = pullCachedIssues(cache, {
+        teamKeys: opts.team,
+        state: opts.state,
+        stateSet: opts.stateSet,
+        labels: opts.label,
+        assignee: opts.assignee,
+        project: opts.project,
+        milestone: opts.milestone,
+        priority: opts.priority,
+        text: opts.text,
+        updatedSince: opts.updatedSince,
+        createdSince: opts.createdSince,
+        limit: opts.limit,
+      });
+      printJson(items);
+      return;
+    } finally {
+      cache.close();
+    }
+  }
+
   const client = makeClient();
   const items = await pullIssues(client, {
     teamKeys: opts.team,
     state: opts.state,
     stateSet: opts.stateSet,
+    labels: opts.label,
     assignee: opts.assignee,
     project: opts.project,
     milestone: opts.milestone,
@@ -45,7 +76,6 @@ export async function pull(opts: PullOptions): Promise<void> {
     createdSince: opts.createdSince,
     limit: opts.limit,
   });
-
 
   // JSON is the only output path — `pull` exists for machine consumption.
   // `--json` is accepted for consistency with every other command, but the

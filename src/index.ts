@@ -39,6 +39,7 @@ import { handoffCreate, handoffList, handoffShow, handoffResolve } from "./comma
 import { roadmap } from "./commands/roadmap.js";
 import { loopsLint } from "./commands/loops.js";
 import { reorgApply, reorgCensus, reorgPlan, reorgRollback, reorgVerify } from "./commands/reorg.js";
+import { cacheSyncCmd, cacheStatusCmd, cacheClearCmd, cacheQueryCmd } from "./commands/cache.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -343,6 +344,7 @@ program
   .option("--text <query>", "full-text match over title + description")
   .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
   .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
+  .option("--cache", "read from local SQLite cache instead of live Linear API")
   .option("--json", "emit JSON")
   .action((opts) => searchCmd(opts));
 
@@ -368,9 +370,52 @@ program
   .option("--text <query>", "full-text match over title + description")
   .option("--updated-since <window>", "updated within window (e.g. 7d, 24h)")
   .option("--created-since <window>", "created within window (e.g. 7d, 24h)")
+  .option("--cache", "read from local SQLite cache instead of live Linear API")
   .option("--json", "emit JSON (always JSON; flag accepted for consistency)")
   .option("--limit <n>", "cap results (soma dev/testing safety)", parseInt)
   .action((opts) => pull(opts));
+
+const cacheCmd = program
+  .command("cache")
+  .description("Manage and query the local SQLite cache for fast offline access.");
+
+cacheCmd
+  .command("sync")
+  .description("Synchronize Linear workspace entities into local SQLite cache.")
+  .option("--team <key...>", "restrict sync to specific team key(s)")
+  .option("--since <window>", "incremental sync cutoff (e.g. 7d, 24h, or ISO timestamp)")
+  .option("--full", "perform full sync ignoring last sync cursor")
+  .option("--db <path>", "custom SQLite database path")
+  .option("--json", "emit JSON summary")
+  .action((opts) => cacheSyncCmd(opts));
+
+cacheCmd
+  .command("status")
+  .description("Show local cache metadata, entity counts, and database size.")
+  .option("--db <path>", "custom SQLite database path")
+  .option("--json", "emit JSON")
+  .action((opts) => cacheStatusCmd(opts));
+
+cacheCmd
+  .command("clear")
+  .description("Delete the local SQLite cache database.")
+  .option("--force", "clear without confirmation")
+  .option("--db <path>", "custom SQLite database path")
+  .option("--json", "emit JSON")
+  .action((opts) => cacheClearCmd(opts));
+
+cacheCmd
+  .command("query")
+  .description("Ad-hoc query directly against the local cache.")
+  .option("--team <key...>", "restrict to team key(s)")
+  .option("--state <name|type>", "state name or type filter")
+  .option("--label <name...>", "label name(s)")
+  .option("--priority <0-4|none>", "priority filter")
+  .option("--text <query>", "FTS5 full-text search match")
+  .option("--limit <n>", "maximum results to return", parseInt)
+  .option("--db <path>", "custom SQLite database path")
+  .option("--json", "emit JSON")
+  .action((opts) => cacheQueryCmd(opts));
 
 program
   .command("backup")
@@ -395,6 +440,7 @@ program
   .description("Show one issue in full: metadata + description.")
   .argument("[id]", "issue id or identifier (e.g. CER-123); fuzzy picker at a TTY when omitted")
   .option("--team <key...>", "scope the interactive picker to team key(s)")
+  .option("--cache", "read from local SQLite cache instead of live Linear API")
   .option("--json", "emit JSON")
   .action((id, opts) => show(id, opts));
 

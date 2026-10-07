@@ -15,6 +15,8 @@ export interface SearchCmdOptions {
   updatedSince?: string;
   createdSince?: string;
   json?: boolean;
+  /** Read from local SQLite cache instead of live Linear API. */
+  cache?: boolean;
 }
 
 const PRIORITY_NAMES = ["—", "urgent", "high", "medium", "low"];
@@ -26,19 +28,58 @@ const PRIORITY_NAMES = ["—", "urgent", "high", "medium", "low"];
  * See docs/features/search.md (CER-1560).
  */
 export async function searchCmd(opts: SearchCmdOptions): Promise<void> {
-  const client = makeClient();
-  const items = await searchCore(client, {
-    teamKeys: opts.team,
-    state: opts.state,
-    labels: opts.label,
-    assignee: opts.assignee,
-    project: opts.project,
-    milestone: opts.milestone,
-    priority: opts.priority,
-    text: opts.text,
-    updatedSince: opts.updatedSince,
-    createdSince: opts.createdSince,
-  });
+  const useCache = opts.cache ?? (process.env.LINEARCTL_CACHE === "true");
+
+  let items: Array<{
+    identifier: string;
+    state: string;
+    priority: number;
+    assignee: string | null;
+    title: string;
+  }>;
+
+  if (useCache) {
+    const { openCacheDb } = await import("../core/cache/db.js");
+    const { searchCachedIssues } = await import("../core/cache/query.js");
+    const cache = openCacheDb();
+    try {
+      const cached = searchCachedIssues(cache, {
+        teamKeys: opts.team,
+        state: opts.state,
+        labels: opts.label,
+        assignee: opts.assignee,
+        project: opts.project,
+        milestone: opts.milestone,
+        priority: opts.priority,
+        text: opts.text,
+        updatedSince: opts.updatedSince,
+        createdSince: opts.createdSince,
+      });
+      items = cached.map((c) => ({
+        identifier: c.identifier,
+        state: c.state,
+        priority: c.priority,
+        assignee: c.assignee ?? null,
+        title: c.title,
+      }));
+    } finally {
+      cache.close();
+    }
+  } else {
+    const client = makeClient();
+    items = await searchCore(client, {
+      teamKeys: opts.team,
+      state: opts.state,
+      labels: opts.label,
+      assignee: opts.assignee,
+      project: opts.project,
+      milestone: opts.milestone,
+      priority: opts.priority,
+      text: opts.text,
+      updatedSince: opts.updatedSince,
+      createdSince: opts.createdSince,
+    });
+  }
 
   if (opts.json) {
     printJson(items);

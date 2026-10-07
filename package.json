@@ -34,16 +34,17 @@
   "author": "Christian M. Todie <chris@todie.io>",
   "license": "MIT",
   "dependencies": {
-    "zod": "^4.4.3",
     "@inquirer/prompts": "^8.5.2",
     "@linear/sdk": "^86.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cli-table3": "^0.6.5",
     "commander": "^15.0.0",
+    "drizzle-orm": "^0.45.3",
     "ink": "^7.1.1",
     "picocolors": "^1.1.1",
     "react": "^19.2.8",
-    "react-devtools-core": "^7.0.1"
+    "react-devtools-core": "^7.0.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
