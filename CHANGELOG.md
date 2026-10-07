@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.1](https://github.com/cerebral-work/linearctl/compare/v0.11.0...v0.11.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **docker:** copy examples/ into the image build context ([84e6db1](https://github.com/cerebral-work/linearctl/commit/84e6db18f2c86f4484667c952febbf48904119a6))
+* **docker:** copy examples/ into the image build context ([a3a6b60](https://github.com/cerebral-work/linearctl/commit/a3a6b6018c09357cc937ad8181b1005df801439d))
+* **docker:** run on distroless base-nossl, drop the unused libssl3 ([ef90d18](https://github.com/cerebral-work/linearctl/commit/ef90d18009707d9e3ec6d76f2a3e077e0a766c16))
+* **docker:** run on distroless base-nossl, drop the unused libssl3 ([c3ce2bd](https://github.com/cerebral-work/linearctl/commit/c3ce2bd34a51bfa690f30553745c96b79279b5eb))
+
 ## [0.11.0](https://github.com/cerebral-work/linearctl/compare/v0.10.6...v0.11.0) (2026-10-07)
 
 
