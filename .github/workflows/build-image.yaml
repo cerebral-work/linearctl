@@ -20,10 +20,9 @@ name: Build and publish image
 # on that commit — this builds whatever main currently is.
 #
 # WHY workflow_dispatch AND NOT repository_dispatch: mirrors the blackwall
-# sender (OPS-1019). `POST /repos/{o}/{r}/dispatches` requires Contents:write,
-# which the unsigned-reverie-arc App does not hold and should not be granted.
+# sender (OPS-1019). `POST /repos/{o}/{r}/dispatches` requires Contents:write.
 # `POST .../actions/workflows/{file}/dispatches` requires only Actions:write,
-# which it already has. The receiver declares workflow_dispatch with the
+# which is the one permission the dispatch App holds. The receiver declares workflow_dispatch with the
 # sha/short_sha/chart_version inputs and resolves either shape via
 # `${DISPATCH_*:-${INPUT_*}}`, so no receiver change is needed.
 #
@@ -35,9 +34,12 @@ name: Build and publish image
 # 0.3.0. This sender reads the version from Chart.yaml so the two can only
 # disagree in the receiver.
 #
-# Prerequisite: repo secrets ARC_APP_ID + ARC_APP_PRIVATE_KEY — the
-# unsigned-reverie-arc GitHub App, used to mint an installation token scoped to
-# unsigned-gg/unsigned-paas so this repo can trigger the receiver there.
+# Prerequisite: repo variable BUILD_DISPATCH_APP_ID + repo secret
+# BUILD_DISPATCH_APP_KEY — a dedicated unsigned-gg GitHub App whose only
+# permission is Actions:write and which is installed only on unsigned-paas. It
+# mints a token scoped to unsigned-gg/unsigned-paas so this repo can trigger the
+# receiver there. A dedicated App, not the org-wide unsigned-reverie-arc App or
+# cerebral-release-please: a leak of this key reaches one repo's workflow runs.
 # NOTE: cerebral-work/linearctl is a PUBLIC repo. These secrets are not exposed
 # to fork PRs by GitHub, and this workflow does not run on pull_request at all
 # (push-to-main + manual only) — deliberately, so the token is never minted in
@@ -93,10 +95,11 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ secrets.ARC_APP_ID }}
-          private-key: ${{ secrets.ARC_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.BUILD_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.BUILD_DISPATCH_APP_KEY }}
           owner: unsigned-gg
           repositories: unsigned-paas
+          permission-actions: write
 
       - name: Trigger in-cluster build (workflow_dispatch)
         env:
