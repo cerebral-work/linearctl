@@ -11,6 +11,9 @@ import { parsePriority } from "../lib/priority.js";
 import { dupcheck } from "../core/dupcheck.js";
 import { parseFileBatchSpec, batchFileIssues } from "../core/file-batch.js";
 import { fetchRateLimit, isExhausted } from "../core/ratelimit.js";
+import { existsSync } from "node:fs";
+import { openCacheDb, getCacheDbPath } from "../core/cache/db.js";
+import { patchIssueInCache } from "../core/cache/sync.js";
 
 export interface FileOptions {
   team?: string;
@@ -85,6 +88,40 @@ async function fileBatch(client: ReturnType<typeof makeClient>, opts: FileOption
 
   const ok = outcomes.filter((o) => o.created);
   const failed = outcomes.filter((o) => o.error);
+
+  try {
+    const dbPath = getCacheDbPath();
+    if (existsSync(dbPath) && ok.length > 0) {
+      const cache = openCacheDb({ dbPath });
+      try {
+        for (let i = 0; i < outcomes.length; i++) {
+          const o = outcomes[i];
+          const item = items[i];
+          if (o.created && item) {
+            patchIssueInCache(cache, {
+              id: o.created.id,
+              identifier: o.created.identifier,
+              title: o.created.title,
+              url: o.created.url,
+              teamKey: o.team ?? item.team ?? opts.team,
+              description: item.desc ?? "",
+              labels: item.labels,
+              priority: item.priority ?? 0,
+              projectId: item.project,
+              assigneeName: item.assignee,
+              projectMilestoneId: item.milestone,
+              parentId: item.parent,
+            });
+          }
+        }
+      } finally {
+        cache.close();
+      }
+    }
+  } catch {
+    // Non-blocking write-through
+  }
+
   if (opts.json) {
     printJson({ apply: true, created: ok.length, failed: failed.length, outcomes });
     assertBatchSucceeded(failed);
@@ -165,6 +202,34 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
         relatedTo: opts.relatedTo,
       }),
     );
+  }
+
+  try {
+    const dbPath = getCacheDbPath();
+    if (existsSync(dbPath)) {
+      const cache = openCacheDb({ dbPath });
+      try {
+        patchIssueInCache(cache, {
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          url: issue.url,
+          teamKey,
+          description: description ?? "",
+          labels: opts.label,
+          priority: opts.priority !== undefined ? parsePriority(opts.priority) : 0,
+          projectId: opts.project,
+          assigneeName: opts.assignee,
+          projectMilestoneId: opts.milestone,
+          cycleId: opts.cycle,
+          parentId: opts.parent,
+        });
+      } finally {
+        cache.close();
+      }
+    }
+  } catch {
+    // Non-blocking write-through
   }
 
   if (opts.json) {

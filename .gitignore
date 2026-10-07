@@ -16,3 +16,4 @@ secrets.env
 *.log
 .DS_Store
 .blackwall/
+.dagr/

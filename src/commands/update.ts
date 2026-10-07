@@ -9,6 +9,9 @@ import { isInteractive } from "../lib/interactive.js";
 import { promptText, promptSelect, promptConfirm, promptIssuePick } from "../lib/prompts.js";
 import { withSpinner } from "../lib/spinner.js";
 import type { UpdatedIssue } from "../core/issues.js";
+import { existsSync } from "node:fs";
+import { openCacheDb, getCacheDbPath } from "../core/cache/db.js";
+import { patchIssueInCache } from "../core/cache/sync.js";
 
 function renderIssue(issue: UpdatedIssue): void {
   process.stdout.write(
@@ -124,6 +127,36 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     );
   }
 
+  if (issue) {
+    try {
+      const dbPath = getCacheDbPath();
+      if (existsSync(dbPath)) {
+        const cache = openCacheDb({ dbPath });
+        try {
+          patchIssueInCache(cache, {
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url,
+            stateName: issue.state,
+            assigneeName: issue.assignee,
+            labels: opts.label,
+            priority: opts.priority !== undefined ? Number(opts.priority) : undefined,
+            projectId: opts.project,
+            projectMilestoneId: opts.milestone,
+            cycleId: opts.cycle,
+            description,
+            parentId: opts.parent,
+          });
+        } finally {
+          cache.close();
+        }
+      }
+    } catch {
+      // Non-blocking write-through
+    }
+  }
+
   if (opts.json) {
     printJson({ ...(issue ?? { identifier: id }), ...(relations ? { relations } : {}), ...(duplicate ? { duplicateOf: duplicate.duplicateOf } : {}) });
     return;
@@ -201,6 +234,31 @@ async function bulk(client: ReturnType<typeof makeClient>, opts: UpdateOptions):
   if (items.length === 0) throw usageError("--stdin: no issues in the plan.");
   const plan = await bulkUpdate(client, items, opts.apply === true);
 
+  if (plan.apply && (plan.result?.succeeded ?? 0) > 0) {
+    try {
+      const dbPath = getCacheDbPath();
+      if (existsSync(dbPath)) {
+        const cache = openCacheDb({ dbPath });
+        try {
+          const failedRefs = new Set((plan.result?.failed ?? []).map((f) => f.ref));
+          for (const row of plan.rows) {
+            if (row.uuid && !row.skipped && !failedRefs.has(row.ref)) {
+              patchIssueInCache(cache, {
+                id: row.uuid,
+                identifier: row.ref,
+                ...row.input,
+              });
+            }
+          }
+        } finally {
+          cache.close();
+        }
+      }
+    } catch {
+      // Non-blocking write-through
+    }
+  }
+
   if (opts.json) {
     printJson(plan);
     assertBatchSucceeded(plan.result?.failed ?? [], plan.unresolved);
@@ -255,6 +313,29 @@ export async function close(id: string | undefined, opts: CloseOptions): Promise
   }
   if (!id) throw usageError("close needs an <id> (e.g. CER-123).");
   const issue = await withSpinner(`Closing ${id}…`, () => opts.duplicateOf !== undefined ? markDuplicate(client, id, opts.duplicateOf, true) : closeIssue(client, id));
+
+  try {
+    const dbPath = getCacheDbPath();
+    if (existsSync(dbPath)) {
+      const cache = openCacheDb({ dbPath });
+      try {
+        patchIssueInCache(cache, {
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          url: issue.url,
+          stateName: issue.state,
+          stateType: "completed",
+          assigneeName: issue.assignee,
+          completedAt: new Date().toISOString(),
+        });
+      } finally {
+        cache.close();
+      }
+    }
+  } catch {
+    // Non-blocking write-through
+  }
 
   if (opts.json) {
     printJson(issue);
