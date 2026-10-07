@@ -11,6 +11,8 @@ RUN bun install --frozen-lockfile --production
 COPY src/ src/
 COPY docs/ docs/
 COPY .linearctl/ .linearctl/
+# src/lib/examples.ts imports examples/*.sh as text; the compile fails without them.
+COPY examples/ examples/
 # `bun run build` uses the chart-pinned --define (single source of truth in
 # package.json); the compiled binary is fully standalone (no Node runtime).
 RUN bun run build
