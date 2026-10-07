@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/cerebral-work/linearctl/compare/v0.10.6...v0.11.0) (2026-10-07)
+
+
+### Features
+
+* **cache:** implement local ticket copy ORM cache with SQLite and Drizzle ([8738de2](https://github.com/cerebral-work/linearctl/commit/8738de2b2cb0a622de8fb3cd53e055df5fd11737))
+* **cache:** implement local ticket copy ORM cache with SQLite and Drizzle ([e6840cb](https://github.com/cerebral-work/linearctl/commit/e6840cb0a73c1a396e6de73d0c41bc8b21cba0f8))
+
 ## [0.10.6](https://github.com/cerebral-work/linearctl/compare/v0.10.5...v0.10.6) (2026-10-06)
 
 
