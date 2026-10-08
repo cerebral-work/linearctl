@@ -21,6 +21,7 @@
     "test:fast": "bun test --filter",
     "lint": "bun run typecheck",
     "ci": "bun run typecheck && bun test",
+    "bench:cache": "bun run scripts/benchmark-cache.ts",
     "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/linearctl",
     "quick": "bun run src/index.ts"
   },

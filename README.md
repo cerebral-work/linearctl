@@ -26,8 +26,8 @@
 `linearctl` is a **Linear API orchestrator** — a single-binary TypeScript
 service that runs three ways:
 
-1. **CLI** — 26 headless commands for the Linear workflows you keep
-   re-improvising by hand: `pull`, `digest`, `triage`, `stale`, `file`,
+1. **CLI** — 27 headless commands for the Linear workflows you keep
+   re-improvising by hand: `pull`, `cache`, `digest`, `triage`, `stale`, `file`,
    `update`, `comment`, `milestone`, `cycle`, `roadmap`, `release-notes`,
    `standup`, `xref`, `search`, `show`, `history`, `loops lint`, and more.
 2. **MCP server** — `linearctl mcp serve` exposes 12 tools to Claude Desktop /
@@ -92,10 +92,33 @@ bun install                 # bun ≥ 1.3 (see .prototools)
 bun run dev -- whoami       # run from source
 bun run typecheck           # tsc --noEmit
 bun test                    # 100+ unit tests
+bun run bench:cache         # latency benchmark (10k issues, <1ms p99 guardrail)
 bun run build               # bun build --compile → dist/linearctl
 helm template ./deploy/chart # render the chart locally
 ```
 </details>
+
+## Local SQLite ORM Cache (`linearctl cache` / `--cache`)
+
+Embedded in-process cache powered by `bun:sqlite` and Drizzle ORM. Eliminates remote GraphQL latency (300–800ms) down to **<0.5ms p99**, preventing rate-limit exhaustion during high-frequency agent reconciliation loops (`soma-operator`, `godseat`).
+
+```bash
+# Delta sync from Linear GraphQL (fetches only updatedAt >= last_sync_at)
+linearctl cache sync
+
+# Inspect local database path, size, and entity counts
+linearctl cache status
+
+# Fast-path pull (<0.5ms p99, zero network calls, exact funnel contract parity)
+linearctl pull --cache --team EST --state-set Todo --state-set Backlog --label soma-ingest
+
+# Sub-millisecond FTS5 full-text search
+linearctl search --cache "reconcile loop" --team CER --json
+```
+
+- **Write-Through Mutation:** `file`, `update`, and `close` automatically update local SQLite rows upon successful API response for instant read-after-write consistency.
+- **Single-Binary:** Fully self-contained in `dist/linearctl` with zero external database processes or runtime C dependencies.
+- **Full Architecture & Reference:** See [`docs/features/local-cache.md`](./docs/features/local-cache.md).
 
 ## The funnel contract — machine-to-machine Linear control
 
@@ -107,6 +130,9 @@ issues without a human at a terminal.
 ```bash
 # The soma-operator's exact funnel query (deployed on Cygnus, proven with EST-83):
 linearctl pull --team EST --state-set Todo --state-set Backlog --label soma-ingest --json
+
+# Fast-path cached read:
+linearctl pull --cache --team EST --state-set Todo --state-set Backlog --label soma-ingest --json
 
 # Transition (sends ONLY { stateId } — description-clobber invariant, tested):
 linearctl update EST-83 --state "In Progress" --json

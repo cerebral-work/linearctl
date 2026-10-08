@@ -8,7 +8,8 @@ Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
 
 `whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
 `triage`, `stale`, `xref`, `milestone`, `show`, `ratelimit`, `doc`
-(get-overview / set-overview), and `mcp serve` (stdio MCP server — 12 tools:
+(get-overview / set-overview), `cache` (sync / status / clear / query),
+`pull --cache` / `search --cache`, and `mcp serve` (stdio MCP server — 12 tools:
 reads `whoami`/`project_list`/`digest`/`triage`/`milestone`/`stale`/`project_overview_get`,
 writes `file_issue`/`project_create`/`issue_update`/`issue_close`/`project_overview_set`)
 are implemented and
@@ -22,6 +23,7 @@ linearctl Project + backlog are dogfood-filed in Linear (team CER). If you add a
 - `bun run dev -- <args>` — run from source (e.g. `bun run dev -- whoami`)
 - `bun run typecheck` — `tsc --noEmit` (bun strips types; tsc is the only checker)
 - `bun test` — unit tests (`test/**`)
+- `bun run bench:cache` — latency benchmark (10k issues, sub-millisecond p99 guardrails)
 - `bun run build` — `bun build --compile` → `dist/linearctl` single binary
 - **Distribution:** SLSA-attested single binaries via
   `mise use -g "github:cerebral-work/linearctl"`. bun, not Node, at runtime.
@@ -48,5 +50,5 @@ commit a key; `*.env` is git-ignored.
 ## Layout
 
 `src/index.ts` (commander dispatch) · `src/client.ts` (LinearClient factory) ·
-`src/commands/*` (one file per subcommand) · `src/lib/*` (pure helpers) ·
+`src/commands/*` (one file per subcommand) · `src/core/cache/*` (local SQLite ORM, delta sync, query engine) · `src/lib/*` (pure helpers) ·
 `test/*` · `docs/` · `.github/workflows/` (`ci`, `release`, `linear-release[-dev]`).
