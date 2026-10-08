@@ -47,6 +47,7 @@ export function initTables(sqlite: Database): void {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_teams_key ON teams(key);
+    CREATE INDEX IF NOT EXISTS idx_teams_key_nocase ON teams(key COLLATE NOCASE);
 
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -163,6 +164,7 @@ export function initTables(sqlite: Database): void {
       canceled_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_issues_identifier ON issues(identifier);
+    CREATE INDEX IF NOT EXISTS idx_issues_identifier_nocase ON issues(identifier COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_issues_team_key ON issues(team_key);
     CREATE INDEX IF NOT EXISTS idx_issues_state_name ON issues(state_name);
     CREATE INDEX IF NOT EXISTS idx_issues_state_type ON issues(state_type);

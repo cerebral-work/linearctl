@@ -9,6 +9,7 @@ import type {
   CachedProject,
 } from "./schema.js";
 import type { PullIssue } from "../pull.js";
+export type { PullIssue } from "../pull.js";
 import type { SearchOptions } from "../search.js";
 
 /**
@@ -36,6 +37,7 @@ export interface CacheSearchOptions extends Omit<SearchOptions, "priority"> {
   team?: string;
   teamKey?: string;
   teams?: string[];
+  label?: string[] | string;
   includeTrashed?: boolean;
 }
 
@@ -210,8 +212,13 @@ export function buildQueryConditions(
   }
 
   // 3. Label filter (AND logic: all specified labels must match)
-  if (opts.labels && opts.labels.length > 0) {
-    for (const label of opts.labels) {
+  const rawLabels = [
+    ...(opts.labels ?? []),
+    ...(Array.isArray(opts.label) ? opts.label : opts.label ? [opts.label] : []),
+  ];
+  const targetLabels = Array.from(new Set(rawLabels)).filter(Boolean);
+  if (targetLabels.length > 0) {
+    for (const label of targetLabels) {
       conditions.push(
         `EXISTS (SELECT 1 FROM json_each(COALESCE(issues.labels_json, '[]')) WHERE LOWER(value) = LOWER(?))`,
       );
@@ -382,6 +389,8 @@ export function pullCachedIssues(
   return rows.map(toPullIssue);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Retrieve a single cached issue by UUID or human identifier (e.g. EST-83).
  */
@@ -393,19 +402,41 @@ export function getCachedIssue(
     return null;
   }
   const ref = idOrIdentifier.trim();
-  const row = cache.db
+
+  // If input matches UUID format, probe primary key directly
+  if (UUID_RE.test(ref)) {
+    const row = cache.db
+      .select()
+      .from(schema.issues)
+      .where(eq(schema.issues.id, ref))
+      .get();
+    if (row) return row;
+  }
+
+  // Exact match on unique index (e.g. CER-123)
+  const exact = cache.db
     .select()
     .from(schema.issues)
-    .where(
-      or(
-        eq(schema.issues.id, ref),
-        eq(schema.issues.identifier, ref),
-        eq(sql`UPPER(${schema.issues.identifier})`, ref.toUpperCase()),
-      ),
-    )
+    .where(eq(schema.issues.identifier, ref))
     .get();
+  if (exact) return exact;
 
-  return row ?? null;
+  // Case-insensitive match using NOCASE index (e.g. cer-123)
+  const nocase = cache.db
+    .select()
+    .from(schema.issues)
+    .where(sql`${schema.issues.identifier} = ${ref} COLLATE NOCASE`)
+    .get();
+  if (nocase) return nocase;
+
+  // Fallback for non-standard UUID or ID match
+  return (
+    cache.db
+      .select()
+      .from(schema.issues)
+      .where(eq(schema.issues.id, ref))
+      .get() ?? null
+  );
 }
 
 /**
@@ -419,19 +450,37 @@ export function getCachedTeam(
     return null;
   }
   const ref = idOrKey.trim();
-  const row = cache.db
+
+  if (UUID_RE.test(ref)) {
+    const row = cache.db
+      .select()
+      .from(schema.teams)
+      .where(eq(schema.teams.id, ref))
+      .get();
+    if (row) return row;
+  }
+
+  const exact = cache.db
     .select()
     .from(schema.teams)
-    .where(
-      or(
-        eq(schema.teams.id, ref),
-        eq(schema.teams.key, ref),
-        eq(sql`UPPER(${schema.teams.key})`, ref.toUpperCase()),
-      ),
-    )
+    .where(eq(schema.teams.key, ref))
     .get();
+  if (exact) return exact;
 
-  return row ?? null;
+  const nocase = cache.db
+    .select()
+    .from(schema.teams)
+    .where(sql`${schema.teams.key} = ${ref} COLLATE NOCASE`)
+    .get();
+  if (nocase) return nocase;
+
+  return (
+    cache.db
+      .select()
+      .from(schema.teams)
+      .where(eq(schema.teams.id, ref))
+      .get() ?? null
+  );
 }
 
 /**
