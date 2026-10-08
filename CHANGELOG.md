@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/cerebral-work/linearctl/compare/v0.11.1...v0.12.0) (2026-10-08)
+
+
+### Features
+
+* **cache:** add verification suite, latency benchmarks, and documentation (CER-2662, CER-2663, CER-2664) ([4d3c35d](https://github.com/cerebral-work/linearctl/commit/4d3c35d7625282fba7919255116c9e45ea3c2595))
+* **cache:** add verification suite, latency benchmarks, and documentation (Phase 5) ([a536478](https://github.com/cerebral-work/linearctl/commit/a5364781eebe83f658650846745145518ca4a120))
+
 ## [0.11.1](https://github.com/cerebral-work/linearctl/compare/v0.11.0...v0.11.1) (2026-10-07)
 
 
