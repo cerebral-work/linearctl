@@ -442,6 +442,16 @@ export function getCachedIssue(
 /**
  * Retrieve a cached team by UUID or key.
  */
+/**
+ * Retrieve all cached teams, sorted by key ascending.
+ */
+export function getCachedTeams(cache: CacheDbInstance): CachedTeam[] {
+  return cache.db.select().from(schema.teams).orderBy(schema.teams.key).all();
+}
+
+/**
+ * Retrieve a cached team by UUID, key, or name.
+ */
 export function getCachedTeam(
   cache: CacheDbInstance,
   idOrKey: string,
@@ -451,36 +461,63 @@ export function getCachedTeam(
   }
   const ref = idOrKey.trim();
 
-  if (UUID_RE.test(ref)) {
-    const row = cache.db
-      .select()
-      .from(schema.teams)
-      .where(eq(schema.teams.id, ref))
-      .get();
-    if (row) return row;
-  }
+  const exactId = cache.db
+    .select()
+    .from(schema.teams)
+    .where(eq(schema.teams.id, ref))
+    .get();
+  if (exactId) return exactId;
 
-  const exact = cache.db
+  const exactKey = cache.db
     .select()
     .from(schema.teams)
     .where(eq(schema.teams.key, ref))
     .get();
-  if (exact) return exact;
+  if (exactKey) return exactKey;
 
-  const nocase = cache.db
+  const nocaseKey = cache.db
     .select()
     .from(schema.teams)
     .where(sql`${schema.teams.key} = ${ref} COLLATE NOCASE`)
     .get();
-  if (nocase) return nocase;
+  if (nocaseKey) return nocaseKey;
 
-  return (
-    cache.db
-      .select()
-      .from(schema.teams)
-      .where(eq(schema.teams.id, ref))
-      .get() ?? null
-  );
+  const exactName = cache.db
+    .select()
+    .from(schema.teams)
+    .where(eq(schema.teams.name, ref))
+    .get();
+  if (exactName) return exactName;
+
+  const nocaseName = cache.db
+    .select()
+    .from(schema.teams)
+    .where(sql`${schema.teams.name} = ${ref} COLLATE NOCASE`)
+    .get();
+  const exactDisplayName = cache.db
+    .select()
+    .from(schema.teams)
+    .where(eq(schema.teams.displayName, ref))
+    .get();
+  if (exactDisplayName) return exactDisplayName;
+
+  const nocaseDisplayName = cache.db
+    .select()
+    .from(schema.teams)
+    .where(sql`${schema.teams.displayName} = ${ref} COLLATE NOCASE`)
+    .get();
+  if (nocaseDisplayName) return nocaseDisplayName;
+
+  const prefixMatch = cache.db
+    .select()
+    .from(schema.teams)
+    .where(
+      sql`${schema.teams.key} LIKE ${ref + "%"} OR ${schema.teams.name} LIKE ${ref + "%"}`,
+    )
+    .get();
+  if (prefixMatch) return prefixMatch;
+
+  return null;
 }
 
 /**

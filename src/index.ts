@@ -19,6 +19,7 @@ import { searchCmd } from "./commands/search.js";
 import { dupcheckCmd } from "./commands/dupcheck.js";
 import { park } from "./commands/park.js";
 import { labelList, labelCreate, labelRename } from "./commands/label.js";
+import { teamList, teamResolve } from "./commands/team.js";
 import { historyCmd } from "./commands/history.js";
 import { templateList, templateValidate, templateFile } from "./commands/template.js";
 import { cycleCmd } from "./commands/cycle.js";
@@ -271,6 +272,25 @@ program
   .option("--apply", "with --fix: execute the plan (default is a dry-run preview)")
   .option("--json", "emit JSON")
   .action((opts) => xref(opts));
+
+const teamCmd = program
+  .command("team")
+  .description("Team lookup: list accessible teams or resolve team keys/names.");
+
+teamCmd
+  .command("list")
+  .description("List all accessible Linear teams.")
+  .option("--cache", "read from local SQLite cache instead of live Linear API")
+  .option("--json", "emit JSON")
+  .action((opts) => teamList(opts));
+
+teamCmd
+  .command("resolve")
+  .description("Resolve a team by key, name, or UUID.")
+  .argument("<ref>", "team key (e.g. CER), name, or UUID")
+  .option("--cache", "read from local SQLite cache instead of live Linear API")
+  .option("--json", "emit JSON")
+  .action((ref, opts) => teamResolve(ref, opts));
 
 const labelCmd = program
   .command("label")
