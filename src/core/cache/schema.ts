@@ -186,6 +186,7 @@ export const issues = sqliteTable(
     index("idx_issues_updated_at").on(table.updatedAt),
     index("idx_issues_created_at").on(table.createdAt),
     index("idx_issues_priority").on(table.priority),
+    index("idx_issues_team_state_updated").on(table.teamKey, table.stateType, table.updatedAt),
   ]
 );
 

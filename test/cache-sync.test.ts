@@ -9,6 +9,7 @@ import {
   issues,
   issueRelations,
   cacheMeta,
+  users,
   type InsertIssue,
   type CachedTeam,
   type CachedWorkflowState,
@@ -18,6 +19,7 @@ import {
   patchIssueInCache,
   deleteIssueFromCache,
   getCacheStatus,
+  syncCache,
 } from "../src/core/cache/sync.js";
 
 /**
@@ -561,6 +563,54 @@ describe("Cache Synchronization Operations", () => {
       expect(status.dbPath).toBe(":memory:");
       expect(typeof status.counts.issues).toBe("number");
       expect(typeof status.counts.teams).toBe("number");
+    });
+
+    test("syncCache resolves viewer identity and stores viewer attributes in cache_meta and users", async () => {
+      const mockClient = {
+        viewer: Promise.resolve({
+          id: "usr-viewer-999",
+          name: "Chris Todie",
+          displayName: "ctodie",
+          email: "chris@todie.io",
+        }),
+        client: {
+          rawRequest: async () => ({
+            data: {
+              teams: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              workflowStates: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              issueLabels: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              projects: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              cycles: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              projectMilestones: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              users: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              issueRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          }),
+        },
+      } as unknown as any;
+
+      const result = await syncCache(mockClient, {
+        dbInstance: cache,
+        full: true,
+      });
+
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+
+      // Verify cache_meta records
+      const metaRows = cache.db.select().from(cacheMeta).all();
+      const metaMap = Object.fromEntries(metaRows.map((r) => [r.key, r.value]));
+
+      expect(metaMap.viewer_id).toBe("usr-viewer-999");
+      expect(metaMap.viewer_name).toBe("Chris Todie");
+      expect(metaMap.viewer_display_name).toBe("ctodie");
+      expect(metaMap.viewer_email).toBe("chris@todie.io");
+
+      // Verify user inserted into users table
+      const viewerUser = cache.db.select().from(users).where(eq(users.id, "usr-viewer-999")).get();
+      expect(viewerUser).toBeDefined();
+      expect(viewerUser?.name).toBe("Chris Todie");
+      expect(viewerUser?.email).toBe("chris@todie.io");
     });
   });
 });

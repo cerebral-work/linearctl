@@ -69,6 +69,7 @@ describe("Cache Schema & DB Initialization", () => {
     expect(indexNames).toContain("idx_issues_team_key");
     expect(indexNames).toContain("idx_issues_state_type");
     expect(indexNames).toContain("idx_issues_updated_at");
+    expect(indexNames).toContain("idx_issues_team_state_updated");
 
     const triggers = cache.sqlite
       .query("SELECT name FROM sqlite_master WHERE type='trigger'")
@@ -538,5 +539,15 @@ describe("FTS5 Full-Text Search Trigger Synchronization", () => {
       .query("SELECT identifier FROM issues_fts WHERE issues_fts MATCH ?")
       .all("SOC2") as Array<{ identifier: string }>;
     expect(secResults.map((r) => r.identifier)).toEqual(["SEC-10"]);
+  });
+
+  test("compound index idx_issues_team_state_updated accelerates funnel queries", () => {
+    const plan = cache.sqlite
+      .query(
+        "EXPLAIN QUERY PLAN SELECT * FROM issues WHERE team_key = 'EST' AND state_type = 'unstarted' ORDER BY updated_at DESC"
+      )
+      .all() as Array<{ detail: string }>;
+    const planDetails = plan.map((p) => p.detail).join(" ");
+    expect(planDetails).toContain("idx_issues_team_state_updated");
   });
 });
