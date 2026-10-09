@@ -39,6 +39,7 @@ import example37 from "../../examples/backup.sh" with { type: "text" };
 import example38 from "../../examples/reorg.sh" with { type: "text" };
 import example39 from "../../examples/cache.sh" with { type: "text" };
 import example40 from "../../examples/team.sh" with { type: "text" };
+import example41 from "../../examples/relate.sh" with { type: "text" };
 
 /** Text imports are embedded by bun build --compile; no runtime filesystem dependency. */
 export const EXAMPLES: Record<string, string> = {
@@ -83,6 +84,7 @@ export const EXAMPLES: Record<string, string> = {
   "reorg": example38,
   "cache": example39,
   "team": example40,
+  "relate": example41,
 };
 
 export function exampleHint(command: string): string {

@@ -275,6 +275,12 @@ The OAuth path is **additive** — existing commands keep the env-only
 responsibility to capture via `--json`); they are never written to disk or
 logs. See `src/lib/oauth.ts` (transport), `src/lib/secrets.ts` (1Password),
 `src/core/auth.ts` (orchestration), `src/commands/auth.ts` (CLI). CER-1148.
+
+### 6.19 `linearctl relate` — *implemented + verified*
+`linearctl relate <id> [--blocked-by <id...>] [--blocking <id...>] [--related-to <id...>] [--duplicate-of <canonical>] [--json]`.
+Wire issue relations across Linear issues with non-blocking write-through to the local SQLite cache (`issue_relations` table).
+Supports forward blocking, reverse blocked-by, bidirectional related-to, and duplicate-of canonical tracking.
+
 ## 7. Proposed additional workflows (backlog)
 
 Surfaced from patterns this codebase already exercises:

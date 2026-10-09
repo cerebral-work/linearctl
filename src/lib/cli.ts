@@ -35,7 +35,7 @@ export function configureCli(program: Command) {
       const opts = actionCommand.optsWithGlobals();
       const name = actionCommand.name();
       if (!isInteractive(opts.json)) {
-        if (["show", "close", "update", "file"].includes(name) && !actionCommand.args[0] && !opts.stdin)
+        if (["show", "close", "update", "file", "relate"].includes(name) && !actionCommand.args[0] && !opts.stdin)
           throw usageError(`${name} needs ${name === "file" ? "a <title>" : "an <id>"}${["file", "update"].includes(name) ? " or --stdin" : ""}.`);
         if (name === "file" && !opts.stdin && !opts.team) throw usageError("file needs --team <key>.");
       }

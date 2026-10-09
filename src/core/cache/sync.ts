@@ -1,5 +1,5 @@
 import type { LinearClient } from "@linear/sdk";
-import { sql, eq, or } from "drizzle-orm";
+import { sql, eq, or, and } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { SQLiteTableWithColumns } from "drizzle-orm/sqlite-core";
 import { existsSync, statSync } from "node:fs";
@@ -1024,3 +1024,72 @@ export async function getCacheStatus(
     sizeBytes,
   };
 }
+
+export function insertRelationInCache(
+  dbInstance: CacheDbInstance,
+  rel: {
+    id?: string;
+    type: string;
+    issueId: string;
+    relatedIssueId: string;
+    createdAt?: string;
+    updatedAt?: string;
+  },
+): void {
+  const resolveId = (ref: string): string => {
+    const row = dbInstance.db
+      .select({ id: schema.issues.id })
+      .from(schema.issues)
+      .where(
+        or(
+          eq(schema.issues.id, ref),
+          eq(schema.issues.identifier, ref),
+          eq(sql`UPPER(${schema.issues.identifier})`, ref.toUpperCase()),
+        ),
+      )
+      .get();
+    return row?.id ?? ref;
+  };
+
+  const issueId = resolveId(rel.issueId);
+  const relatedIssueId = resolveId(rel.relatedIssueId);
+  const nowIso = new Date().toISOString();
+
+  let id = rel.id;
+  if (!id) {
+    const existing = dbInstance.db
+      .select({ id: schema.issueRelations.id })
+      .from(schema.issueRelations)
+      .where(
+        and(
+          eq(schema.issueRelations.type, rel.type),
+          eq(schema.issueRelations.issueId, issueId),
+          eq(schema.issueRelations.relatedIssueId, relatedIssueId),
+        ),
+      )
+      .get();
+    id = existing?.id || crypto.randomUUID();
+  }
+
+  dbInstance.db
+    .insert(schema.issueRelations)
+    .values({
+      id,
+      type: rel.type,
+      issueId,
+      relatedIssueId,
+      createdAt: rel.createdAt || nowIso,
+      updatedAt: rel.updatedAt || nowIso,
+    })
+    .onConflictDoUpdate({
+      target: schema.issueRelations.id,
+      set: {
+        type: rel.type,
+        issueId,
+        relatedIssueId,
+        updatedAt: rel.updatedAt || nowIso,
+      },
+    })
+    .run();
+}
+
