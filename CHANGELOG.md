@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/cerebral-work/linearctl/compare/v0.14.0...v0.15.0) (2026-10-09)
+
+
+### Features
+
+* **operator:** add configurable probe connect timeout for readiness and liveness ([833901f](https://github.com/cerebral-work/linearctl/commit/833901f8aa78f9d4bf9b6de2f6301c677b2d9b4c))
+* **operator:** add configurable probe connect timeout for readiness and liveness ([4baf1fd](https://github.com/cerebral-work/linearctl/commit/4baf1fdacef2ab27d92de3c1fe54258a44c42267))
+
 ## [0.14.0](https://github.com/cerebral-work/linearctl/compare/v0.13.1...v0.14.0) (2026-10-09)
 
 
