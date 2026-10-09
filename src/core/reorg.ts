@@ -2803,13 +2803,22 @@ async function runBatch(
       ? { stateId: resolvedFirst.to.stateId }
       : { addedLabelIds: resolvedFirst.to.add ?? [], removedLabelIds: resolvedFirst.to.remove ?? [] };
 
-  if (toWrite.length > 0)
-    await reorgRaw(
-      ctx.client,
-      M.batchUpdate,
-      { ids: toWrite.map((o) => o.target.id), input },
-      ctx.pace,
-    );
+  // A thrown write error is not proof the write failed (CER-2612, same as the
+  // sequential path in CER-2391): keep the error, run the verify read below,
+  // and accept every member whose end state landed.
+  let writeError: Error | undefined;
+  if (toWrite.length > 0) {
+    try {
+      await reorgRaw(
+        ctx.client,
+        M.batchUpdate,
+        { ids: toWrite.map((o) => o.target.id), input },
+        ctx.pace,
+      );
+    } catch (err) {
+      writeError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
 
   // one filtered verify read for the whole batch (re-read with backoff while
   // any written member still differs: the read API can lag the write)
@@ -2872,6 +2881,15 @@ async function runBatch(
     }
   }
 
+  // The write errored and no member's end state landed: nothing was applied,
+  // so rethrow the original error unchanged and journal nothing.
+  if (writeError && toWrite.every((o) => results.get(o.seq)!.bad.length > 0)) throw writeError;
+  if (writeError)
+    ctx.onEvent?.({
+      kind: "write-error-applied",
+      detail: `batch ${String(first.batchKey)}: write returned an error (${writeError.message}) but a re-read shows ${toWrite.filter((o) => results.get(o.seq)!.bad.length === 0).length}/${toWrite.length} member(s) at the expected end state; accepted those`,
+    });
+
   // Journal EVERY member from the verify read — ok members with their actual
   // after state, the mismatching one marked ok:false — THEN stop. A mid-batch
   // mismatch never leaves writes unjournaled (resume/rollback depend on it).
@@ -2905,6 +2923,9 @@ async function runBatch(
       at: new Date().toISOString(),
       ok: bad.length === 0,
       ...(bad.length ? { error: bad.join("; ") } : {}),
+      ...(writeError && bad.length === 0
+        ? { writeErrorButApplied: true, writeError: writeError.message }
+        : {}),
     };
     journalAppend(opts.journalPath, rec);
     journal.push(rec);
