@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { openCacheDb, type CacheDbInstance } from "../src/core/cache/db.js";
-import { issues, type InsertIssue } from "../src/core/cache/schema.js";
+import { issues, users, cacheMeta, type InsertIssue } from "../src/core/cache/schema.js";
 import type { PullIssue } from "../src/core/pull.js";
 import type { CacheSearchOptions } from "../src/core/cache/query.js";
 import {
@@ -325,4 +325,107 @@ describe("Cached Issue Queries & Funnel Contract Conformance", () => {
       expect(results[0].identifier).toBe("EST-83");
     });
   });
+
+  describe("Assignee filtering and offline viewer resolution", () => {
+    beforeEach(() => {
+      const now = new Date().toISOString();
+      cache.db
+        .insert(cacheMeta)
+        .values([
+          { key: "viewer_id", value: "usr-viewer-123", updatedAt: now },
+          { key: "viewer_name", value: "Chris Todie", updatedAt: now },
+          { key: "viewer_display_name", value: "ctodie", updatedAt: now },
+          { key: "viewer_email", value: "chris@todie.io", updatedAt: now },
+        ])
+        .run();
+
+      cache.db
+        .insert(users)
+        .values([
+          {
+            id: "usr-viewer-123",
+            name: "Chris Todie",
+            displayName: "ctodie",
+            email: "chris@todie.io",
+            active: true,
+          },
+          {
+            id: "usr-alice-456",
+            name: "Alice Engineer",
+            displayName: "alice",
+            email: "alice@example.com",
+            active: true,
+          },
+        ])
+        .run();
+
+      // Update sample issues with assignees
+      cache.sqlite
+        .query(
+          "UPDATE issues SET assignee_id = 'usr-viewer-123', assignee_name = 'Chris Todie' WHERE identifier = 'EST-83'"
+        )
+        .run();
+      cache.sqlite
+        .query(
+          "UPDATE issues SET assignee_id = 'usr-alice-456', assignee_name = 'Alice Engineer' WHERE identifier = 'EST-84'"
+        )
+        .run();
+      cache.sqlite
+        .query(
+          "UPDATE issues SET assignee_id = NULL, assignee_name = NULL WHERE identifier IN ('EST-85', 'EST-86', 'CORE-12')"
+        )
+        .run();
+    });
+
+    test("--assignee me resolves offline via cache_meta viewer attributes", () => {
+      const results = pullCachedIssues(cache, { assignee: "me" });
+      expect(results).toHaveLength(1);
+      expect(results[0].identifier).toBe("EST-83");
+    });
+
+    test("--assignee me matches via user email link when assignee_id differs but email matches", () => {
+      cache.db
+        .insert(users)
+        .values({
+          id: "usr-alt-789",
+          name: "Alternate Account",
+          displayName: "alt",
+          email: "chris@todie.io",
+          active: true,
+        })
+        .run();
+      cache.sqlite
+        .query(
+          "UPDATE issues SET assignee_id = 'usr-alt-789', assignee_name = 'Alternate Account' WHERE identifier = 'CORE-12'"
+        )
+        .run();
+
+      const results = pullCachedIssues(cache, { assignee: "me" });
+      const ids = results.map((r) => r.identifier).sort();
+      expect(ids).toEqual(["CORE-12", "EST-83"]);
+    });
+
+    test("--assignee none / unassigned filters for unassigned issues", () => {
+      const noneResults = pullCachedIssues(cache, { assignee: "none" });
+      expect(noneResults.map((r) => r.identifier)).toContain("CORE-12");
+      expect(noneResults.map((r) => r.identifier)).not.toContain("EST-83");
+      expect(noneResults.map((r) => r.identifier)).not.toContain("EST-84");
+
+      const unassignedResults = pullCachedIssues(cache, { assignee: "unassigned" });
+      expect(unassignedResults.map((r) => r.identifier)).toEqual(noneResults.map((r) => r.identifier));
+    });
+
+    test("filter by specific assignee username or display name", () => {
+      const results = pullCachedIssues(cache, { assignee: "alice" });
+      expect(results).toHaveLength(1);
+      expect(results[0].identifier).toBe("EST-84");
+    });
+
+    test("searchCachedIssues also respects --assignee me", () => {
+      const results = searchCachedIssues(cache, { assignee: "me" });
+      expect(results).toHaveLength(1);
+      expect(results[0].identifier).toBe("EST-83");
+    });
+  });
 });
+

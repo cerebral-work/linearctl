@@ -477,6 +477,23 @@ export async function syncCache(
 
     log(`sync: starting ${isFullSync ? "full" : "delta"} sync (cutoff: ${sinceCutoff ?? "none"})...`);
 
+    // 0. Viewer identity
+    log("sync: fetching viewer identity...");
+    let viewerData: { id: string; name?: string; displayName?: string; email?: string } | null = null;
+    try {
+      const viewer = await client.viewer;
+      if (viewer?.id) {
+        viewerData = {
+          id: viewer.id,
+          name: viewer.name,
+          displayName: viewer.displayName,
+          email: viewer.email,
+        };
+      }
+    } catch {
+      // Non-fatal if viewer cannot be fetched
+    }
+
     // 1. Teams
     log("sync: fetching teams...");
     const teamFilter = teamKeys ? { key: { in: teamKeys } } : undefined;
@@ -597,6 +614,17 @@ export async function syncCache(
       createdAt: u.createdAt ?? null,
       updatedAt: u.updatedAt ?? null,
     }));
+    if (viewerData && !userRows.some((u) => u.id === viewerData!.id)) {
+      userRows.push({
+        id: viewerData.id,
+        name: viewerData.name ?? "Viewer",
+        displayName: viewerData.displayName ?? null,
+        email: viewerData.email ?? null,
+        active: true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
 
     // 8. Issues
     log("sync: fetching issues...");
@@ -698,6 +726,13 @@ export async function syncCache(
 
       setCacheMeta(tx, "last_sync_at", nowIso, nowIso);
       setCacheMeta(tx, "last_sync_entity_counts", JSON.stringify(counts), nowIso);
+
+      if (viewerData) {
+        setCacheMeta(tx, "viewer_id", viewerData.id, nowIso);
+        if (viewerData.name) setCacheMeta(tx, "viewer_name", viewerData.name, nowIso);
+        if (viewerData.displayName) setCacheMeta(tx, "viewer_display_name", viewerData.displayName, nowIso);
+        if (viewerData.email) setCacheMeta(tx, "viewer_email", viewerData.email, nowIso);
+      }
     });
 
     const durationMs = Date.now() - startTime;

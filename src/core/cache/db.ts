@@ -173,6 +173,7 @@ export function initTables(sqlite: Database): void {
     CREATE INDEX IF NOT EXISTS idx_issues_updated_at ON issues(updated_at);
     CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
     CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
+    CREATE INDEX IF NOT EXISTS idx_issues_team_state_updated ON issues(team_key, state_type, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS issue_relations (
       id TEXT PRIMARY KEY,

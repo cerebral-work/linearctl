@@ -240,6 +240,12 @@ export function buildQueryConditions(
     const a = opts.assignee.trim();
     if (a.toLowerCase() === "none" || a.toLowerCase() === "unassigned") {
       conditions.push(`assignee_id IS NULL`);
+    } else if (a.toLowerCase() === "me") {
+      conditions.push(
+        `(assignee_id = (SELECT value FROM cache_meta WHERE key = 'viewer_id') OR ` +
+          `(assignee_name IS NOT NULL AND (LOWER(assignee_name) = LOWER((SELECT value FROM cache_meta WHERE key = 'viewer_name')) OR LOWER(assignee_name) = LOWER((SELECT value FROM cache_meta WHERE key = 'viewer_display_name')))) OR ` +
+          `assignee_id IN (SELECT id FROM users WHERE LOWER(email) = LOWER((SELECT value FROM cache_meta WHERE key = 'viewer_email'))))`,
+      );
     } else {
       conditions.push(
         `(assignee_id = ? OR LOWER(assignee_name) = LOWER(?) OR assignee_id IN (SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(name) = LOWER(?) OR LOWER(display_name) = LOWER(?)))`,
