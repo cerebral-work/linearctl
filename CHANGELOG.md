@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/cerebral-work/linearctl/compare/v0.15.0...v0.16.0) (2026-10-09)
+
+
+### Features
+
+* **cli:** add dedicated linearctl relate command and blocking relations ([3a91c55](https://github.com/cerebral-work/linearctl/commit/3a91c552e4a895c886a5ee1bf190d1b5e206b242))
+* **cli:** add dedicated linearctl relate command and blocking relations ([d482fbb](https://github.com/cerebral-work/linearctl/commit/d482fbb69dfe33dcb15cc23c60f2c370e6b0718e))
+
 ## [0.15.0](https://github.com/cerebral-work/linearctl/compare/v0.14.0...v0.15.0) (2026-10-09)
 
 
