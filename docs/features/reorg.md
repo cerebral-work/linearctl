@@ -66,8 +66,12 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   rethrown unchanged. This is never accepted for create ops (the new id comes
   from the write), for an op whose end state equals its pre-state, or for a
   delete form unless the re-read fails with not-found. Rollback still inverts
-  these rows, because this tool's write landed them. Batch writes do not do
-  this yet.
+  these rows, because this tool's write landed them. Batch writes do the same:
+  when the `issueBatchUpdate` call errors, the verify read still runs for every
+  member. Members at the expected end state are journaled `ok` with
+  `writeErrorButApplied` and `writeError`; the others are journaled `ok: false`
+  and the run stops with the usual mismatch. If no member landed, the original
+  error is rethrown and nothing is journaled.
 - **Cascaded moves.** Moving a parent issue to another team moves its
   sub-issues (in the same source team) with it, so a later `move-issue-team`
   for such a sub-issue finds it already in the destination. It is journaled

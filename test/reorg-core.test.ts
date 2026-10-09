@@ -1006,6 +1006,61 @@ describe("batching", () => {
     expect(resumed.applied).toBe(1);
     expect(resumed.skipped).toBe(2);
   });
+
+  describe("batch write error then re-read (CER-2612)", () => {
+    const MSG = "Linear returned an error after the batch landed.";
+    const LA = "11111111-1111-4111-8111-11111111110a";
+    const LB = "11111111-1111-4111-8111-11111111110b";
+    const seedBatch = (ns: number[]) => {
+      const be = freshBackend();
+      const ops: ReorgOp[] = [];
+      for (const n of ns) {
+        const id = `i-${n}`;
+        be.issues.set(id, { ...ISSUE_1, id, identifier: `EX-${n}`, labelIds: [LA] });
+        ops.push(baseOp({
+          seq: n, op: "relabel", target: { type: "issue", id, identifier: `EX-${n}` },
+          from: { labelIds: [LA] }, to: { add: [LB], remove: [] }, batchKey: "k",
+        }));
+      }
+      return { be, ops };
+    };
+
+    test("write throws after ALL members landed: all journaled ok/writeErrorButApplied, run continues", async () => {
+      const { be, ops } = seedBatch([1, 2, 3]);
+      be.writeError = { message: MSG, land: true };
+      const events: string[] = [];
+      const j = join(dir, "j.jsonl");
+      const r = await applyPlan(be, ops, j, { onEvent: (e) => events.push(e.kind) });
+      expect(r.applied).toBe(3);
+      const recs = journalRead(j);
+      expect(recs).toHaveLength(3);
+      for (const rec of recs) expect(rec).toMatchObject({ ok: true, writeErrorButApplied: true, writeError: MSG });
+      expect(events).toContain("write-error-applied");
+    });
+
+    test("write throws after only SOME members landed: landed ok/writeErrorButApplied, rest ok:false, then stop", async () => {
+      const { be, ops } = seedBatch([1, 2, 3]);
+      be.writeError = { message: MSG, land: true };
+      be.batchSkip.add("i-2");
+      const j = join(dir, "j.jsonl");
+      await expect(applyPlan(be, ops, j)).rejects.toBeInstanceOf(ReorgMismatch);
+      const recs = journalRead(j);
+      expect(recs).toHaveLength(3);
+      expect(recs.filter((r) => r.ok).map((r) => r.seq).sort()).toEqual([1, 3]);
+      for (const rec of recs.filter((r) => r.ok)) expect(rec).toMatchObject({ writeErrorButApplied: true, writeError: MSG });
+      const bad = recs.find((r) => !r.ok);
+      expect(bad?.seq).toBe(2);
+      expect(bad?.error).toContain("labelIds");
+    });
+
+    test("write throws and NOTHING landed: the original error propagates, nothing journaled", async () => {
+      const { be, ops } = seedBatch([1, 2]);
+      be.writeError = { message: MSG, land: false };
+      const j = join(dir, "j.jsonl");
+      await expect(applyPlan(be, ops, j)).rejects.toThrow(MSG);
+      expect(journalRead(j)).toHaveLength(0);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
