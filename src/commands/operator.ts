@@ -53,6 +53,8 @@ export interface OperatorCommandOptions {
   check?: boolean;
   /** Don't start the daemon — probe a running operator's /healthz and exit 0/1 (PR #120 liveness). */
   health?: boolean;
+  /** Probe connect timeout in ms (default: 1000, env: LINEARCTL_OPERATOR_TIMEOUT). */
+  timeout?: number | string;
 }
 
 /** The parsed /readyz report body (presence-only — no secret values). */
@@ -69,6 +71,17 @@ interface HealthReport {
   ok: boolean;
   uptime: number;
   queueDepth: number;
+}
+
+export function parseTimeout(raw: string | number | undefined): number {
+  const envVal = process.env.LINEARCTL_OPERATOR_TIMEOUT;
+  const target = raw !== undefined ? raw : envVal;
+  if (target === undefined || target === "") return 1000;
+  const n = Number(target);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw usageError(`--timeout must be a positive number of milliseconds, got "${target}"`);
+  }
+  return Math.floor(n);
 }
 
 function parsePollInterval(raw: string | undefined): number | undefined {
@@ -130,15 +143,17 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
     );
   }
 
+  const timeoutMs = parseTimeout(opts.timeout);
+
   // --health: probe liveness (/healthz), don't start the daemon.
   if (opts.health) {
-    await healthOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json);
+    await healthOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json, timeoutMs);
     return;
   }
 
   // --check: probe readiness (/readyz), don't start the daemon.
   if (opts.check) {
-    await checkOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json);
+    await checkOperator(opts.socket ?? DEFAULT_OPERATOR_SOCKET, opts.json, timeoutMs);
     return;
   }
 
@@ -179,10 +194,14 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
  *
  * `--json` prints the raw /readyz body as JSON; the default prints a human report.
  */
-export async function checkOperator(socketPath: string, json?: boolean): Promise<void> {
+export async function checkOperator(
+  socketPath: string,
+  json?: boolean,
+  timeoutMs: number = 1000,
+): Promise<void> {
   let report: ReadyzReport;
   try {
-    const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
+    const client = makeControlClient(socketPath, { connectTimeoutMs: timeoutMs });
     const res = await client.request("GET", "/readyz");
     if (res.status !== 200) {
       throw new Error(`operator --check: /readyz returned HTTP ${res.status}`);
@@ -220,10 +239,14 @@ export async function checkOperator(socketPath: string, json?: boolean): Promise
  *
  * `--json` prints the raw /healthz body as JSON; the default prints a human report.
  */
-export async function healthOperator(socketPath: string, json?: boolean): Promise<void> {
+export async function healthOperator(
+  socketPath: string,
+  json?: boolean,
+  timeoutMs: number = 1000,
+): Promise<void> {
   let report: HealthReport;
   try {
-    const client = makeControlClient(socketPath, { connectTimeoutMs: 1000 });
+    const client = makeControlClient(socketPath, { connectTimeoutMs: timeoutMs });
     const res = await client.request("GET", "/healthz");
     if (res.status !== 200) {
       throw new Error(`operator --health: /healthz returned HTTP ${res.status}`);

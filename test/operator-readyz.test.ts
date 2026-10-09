@@ -3,10 +3,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import {
   startOperator,
   type OperatorOptions,
 } from "../src/core/operator.js";
+import {
+  parseTimeout,
+  checkOperator,
+  healthOperator,
+} from "../src/commands/operator.js";
 import { type AgentSessionEvent } from "../src/core/watch.js";
 import { makeControlClient } from "../src/lib/control-socket.js";
 
@@ -335,6 +341,150 @@ describe("linearctl operator --health", () => {
   }, 15_000);
 });
 
+describe("operator probe timeout ergonomics (REC-05 / Issue #129)", () => {
+  describe("parseTimeout unit tests", () => {
+    test("returns 1000 default when undefined or empty string without env", () => {
+      const origEnv = process.env.LINEARCTL_OPERATOR_TIMEOUT;
+      try {
+        delete process.env.LINEARCTL_OPERATOR_TIMEOUT;
+        expect(parseTimeout(undefined)).toBe(1000);
+        expect(parseTimeout("")).toBe(1000);
+      } finally {
+        if (origEnv !== undefined) process.env.LINEARCTL_OPERATOR_TIMEOUT = origEnv;
+      }
+    });
+
+    test("parses numeric values and strings", () => {
+      expect(parseTimeout(2500)).toBe(2500);
+      expect(parseTimeout("5000")).toBe(5000);
+      expect(parseTimeout("1234.56")).toBe(1234);
+    });
+
+    test("reads LINEARCTL_OPERATOR_TIMEOUT when raw is undefined", () => {
+      const origEnv = process.env.LINEARCTL_OPERATOR_TIMEOUT;
+      try {
+        process.env.LINEARCTL_OPERATOR_TIMEOUT = "3500";
+        expect(parseTimeout(undefined)).toBe(3500);
+      } finally {
+        if (origEnv !== undefined) process.env.LINEARCTL_OPERATOR_TIMEOUT = origEnv;
+        else delete process.env.LINEARCTL_OPERATOR_TIMEOUT;
+      }
+    });
+
+    test("raw argument takes precedence over LINEARCTL_OPERATOR_TIMEOUT", () => {
+      const origEnv = process.env.LINEARCTL_OPERATOR_TIMEOUT;
+      try {
+        process.env.LINEARCTL_OPERATOR_TIMEOUT = "3500";
+        expect(parseTimeout("7000")).toBe(7000);
+        expect(parseTimeout(2000)).toBe(2000);
+      } finally {
+        if (origEnv !== undefined) process.env.LINEARCTL_OPERATOR_TIMEOUT = origEnv;
+        else delete process.env.LINEARCTL_OPERATOR_TIMEOUT;
+      }
+    });
+
+    test("rejects invalid, negative, or zero values with usage error", () => {
+      expect(() => parseTimeout(0)).toThrow(/positive number of milliseconds/);
+      expect(() => parseTimeout(-100)).toThrow(/positive number of milliseconds/);
+      expect(() => parseTimeout("foo")).toThrow(/positive number of milliseconds/);
+      expect(() => parseTimeout("NaN")).toThrow(/positive number of milliseconds/);
+    });
+  });
+
+  describe("direct checkOperator / healthOperator timeout", () => {
+    test("checkOperator times out when server hangs", async () => {
+      const socketPath = tempSocketPath();
+      const server = createServer((_socket) => {
+        // do not reply
+      });
+      await new Promise<void>((r) => server.listen(socketPath, () => r()));
+      try {
+        await expect(checkOperator(socketPath, false, 50)).rejects.toThrow(
+          /operator --check: not ready — control socket GET \/readyz timed out after 50ms/,
+        );
+      } finally {
+        server.close();
+      }
+    });
+
+    test("healthOperator times out when server hangs", async () => {
+      const socketPath = tempSocketPath();
+      const server = createServer((_socket) => {
+        // do not reply
+      });
+      await new Promise<void>((r) => server.listen(socketPath, () => r()));
+      try {
+        await expect(healthOperator(socketPath, false, 50)).rejects.toThrow(
+          /operator --health: not alive — control socket GET \/healthz timed out after 50ms/,
+        );
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  describe("CLI --timeout integration", () => {
+    test("exits 0 from --help and advertises --timeout", async () => {
+      const { code, stdout } = await runHelp();
+      expect(code).toBe(0);
+      expect(stdout).toContain("--timeout <ms>");
+      expect(stdout).toContain("LINEARCTL_OPERATOR_TIMEOUT");
+    });
+
+    test("invalid --timeout values exit 2 with usage error", async () => {
+      const res1 = await runChild(["run", "src/index.ts", "operator", "--check", "--timeout", "invalid"]);
+      expect(res1.code).toBe(2);
+      expect(res1.stderr).toContain("--timeout must be a positive number of milliseconds");
+
+      const res2 = await runChild(["run", "src/index.ts", "operator", "--health", "--timeout", "-500"]);
+      expect(res2.code).toBe(2);
+      expect(res2.stderr).toContain("--timeout must be a positive number of milliseconds");
+    });
+
+    test("CLI reports timeout when socket hangs under custom --timeout", async () => {
+      const socketPath = tempSocketPath();
+      const server = createServer((_socket) => {
+        // do not reply
+      });
+      await new Promise<void>((r) => server.listen(socketPath, () => r()));
+      try {
+        const res = await runChild([
+          "run",
+          "src/index.ts",
+          "operator",
+          "--check",
+          "--socket",
+          socketPath,
+          "--timeout",
+          "100",
+        ]);
+        expect(res.code).toBe(1);
+        expect(res.stderr).toContain("timed out after 100ms");
+      } finally {
+        server.close();
+      }
+    }, 15_000);
+
+    test("CLI reports timeout from LINEARCTL_OPERATOR_TIMEOUT environment variable", async () => {
+      const socketPath = tempSocketPath();
+      const server = createServer((_socket) => {
+        // do not reply
+      });
+      await new Promise<void>((r) => server.listen(socketPath, () => r()));
+      try {
+        const res = await runChild(
+          ["run", "src/index.ts", "operator", "--health", "--socket", socketPath],
+          { LINEARCTL_OPERATOR_TIMEOUT: "125" },
+        );
+        expect(res.code).toBe(1);
+        expect(res.stderr).toContain("timed out after 125ms");
+      } finally {
+        server.close();
+      }
+    }, 15_000);
+  });
+});
+
 /**
  * Spawn `linearctl operator --check` (and `--help`) against the CLI entrypoint.
  * Uses `process.execPath` (the live bun binary) rather than the bare `"bun"`
@@ -374,11 +524,14 @@ function runHealthHelp(): Promise<{ code: number | null; stdout: string; stderr:
   return runChild(["run", "src/index.ts", "operator", "--health", "--help"]);
 }
 
-async function runChild(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runChild(
+  args: string[],
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, args, {
     cwd: import.meta.dir.replace("/test", ""),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
+    env: { ...process.env, ...extraEnv },
   });
   const stdout: string[] = [];
   const stderr: string[] = [];

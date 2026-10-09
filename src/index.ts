@@ -687,6 +687,7 @@ program
   .description("Long-running daemon: polls the CF Queue + serves watch delegation over a Unix socket. --check probes /readyz, --health probes /healthz (CER-1149).")
   .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--queue-poll-interval <ms>", "queue poll interval in ms")
+  .option("--timeout <ms>", "probe connect timeout in ms (default: 1000, env: LINEARCTL_OPERATOR_TIMEOUT)")
   .option("--json", "emit the listening address as JSON")
   .option("--role <name...>", "boot a maintainer-agent role on cadence (repeatable: intake-triage, grooming)")
   .option("--check", "connect to a running operator, GET /readyz, exit 0/1 (does NOT start the daemon)")
