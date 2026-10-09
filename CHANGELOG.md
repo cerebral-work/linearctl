@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/cerebral-work/linearctl/compare/v0.12.0...v0.13.0) (2026-10-09)
+
+
+### Features
+
+* **team:** add team list and resolve commands with cache support ([#28](https://github.com/cerebral-work/linearctl/issues/28)) ([b70a7f9](https://github.com/cerebral-work/linearctl/commit/b70a7f98bdb048b128d2b27c1a6ea74517af87b9))
+* **team:** add team list and resolve commands with cache support ([#28](https://github.com/cerebral-work/linearctl/issues/28)) ([249dea7](https://github.com/cerebral-work/linearctl/commit/249dea720a85342d44d166bb33b88df6682c0e4e))
+
+
+### Bug Fixes
+
+* **reorg:** re-read after a batch write error and accept landed members ([00cd4ed](https://github.com/cerebral-work/linearctl/commit/00cd4edc7301cee163528b43308f3a130dd896c0))
+* **reorg:** re-read after a batch write error and accept landed members ([3382035](https://github.com/cerebral-work/linearctl/commit/33820354f2bc0769bfc3534ce122eb26000c4226))
+
 ## [0.12.0](https://github.com/cerebral-work/linearctl/compare/v0.11.1...v0.12.0) (2026-10-08)
 
 
