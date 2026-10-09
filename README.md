@@ -230,7 +230,8 @@ for embedded shell examples.
 — plan-file-driven workspace reorganization, dry-run by default with a
 journaled, per-write-verified executor. See [`docs/features/reorg.md`](./docs/features/reorg.md).
 
-Full reference: [`docs/spec.md` §6](./docs/spec.md). Tooling rationale:
+Full reference: [`docs/spec.md` §6](./docs/spec.md). Product and architecture roadmap:
+[`docs/roadmap.md`](./docs/roadmap.md). Tooling rationale:
 [`docs/decisions.md`](./docs/decisions.md).
 
 ## Authentication

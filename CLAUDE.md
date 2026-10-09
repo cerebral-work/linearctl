@@ -2,7 +2,7 @@
 
 `linearctl` — a headless TypeScript CLI on **`@linear/sdk`** for recurring
 Linear workflows (digest, file, triage, milestone). Built + shipped with **bun**.
-Full design: `docs/spec.md`. Tooling rationale: `docs/decisions.md`.
+Full design: `docs/spec.md`. Roadmap: `docs/roadmap.md`. Tooling rationale: `docs/decisions.md`.
 
 ## Status: command surface complete + plugin/MCP shipped
 
