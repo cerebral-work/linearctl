@@ -199,12 +199,28 @@ export async function resolveIssueId(client: LinearClient, ref: string): Promise
 
 export interface RelationSpec {
   blockedBy?: string[];
+  blocking?: string[];
   relatedTo?: string[];
+}
+
+export interface AddedRelationItem {
+  id?: string;
+  type: string;
+  issueId: string;
+  relatedIssueId: string;
+}
+
+export interface AddedRelationsResult {
+  blockedBy: string[];
+  blocking: string[];
+  relatedTo: string[];
+  relations: AddedRelationItem[];
 }
 
 /**
  * Wire issue relations: `blockedBy` creates blocks-relations FROM each blocker
- * TO the target (Linear semantics: issueId blocks relatedIssueId); `relatedTo`
+ * TO the target (Linear semantics: issueId blocks relatedIssueId); `blocking`
+ * creates blocks-relations FROM the target TO the blocked issue; `relatedTo`
  * creates related-links. Idempotent server-side (duplicate relations error —
  * surfaced, not swallowed). Fills CER-1192 item 2 / CER-1342.
  */
@@ -212,9 +228,14 @@ export async function addRelations(
   client: LinearClient,
   targetRef: string,
   spec: RelationSpec,
-): Promise<{ blockedBy: string[]; relatedTo: string[] }> {
+): Promise<AddedRelationsResult> {
   const targetId = await resolveIssueId(client, targetRef);
-  const done = { blockedBy: [] as string[], relatedTo: [] as string[] };
+  const done: AddedRelationsResult = {
+    blockedBy: [],
+    blocking: [],
+    relatedTo: [],
+    relations: [],
+  };
   for (const ref of spec.blockedBy ?? []) {
     const blockerId = await resolveIssueId(client, ref);
     const res = await withRetry(() =>
@@ -225,7 +246,33 @@ export async function addRelations(
       }),
     );
     if (!res.success) throw new Error(`could not create blocked-by relation from ${ref}.`);
+    const rel = await Promise.resolve(res.issueRelation).catch(() => undefined);
     done.blockedBy.push(ref);
+    done.relations.push({
+      id: rel?.id,
+      type: "blocks",
+      issueId: blockerId,
+      relatedIssueId: targetId,
+    });
+  }
+  for (const ref of spec.blocking ?? []) {
+    const blockedId = await resolveIssueId(client, ref);
+    const res = await withRetry(() =>
+      client.createIssueRelation({
+        issueId: targetId,
+        relatedIssueId: blockedId,
+        type: "blocks" as Parameters<LinearClient["createIssueRelation"]>[0]["type"],
+      }),
+    );
+    if (!res.success) throw new Error(`could not create blocking relation to ${ref}.`);
+    const rel = await Promise.resolve(res.issueRelation).catch(() => undefined);
+    done.blocking.push(ref);
+    done.relations.push({
+      id: rel?.id,
+      type: "blocks",
+      issueId: targetId,
+      relatedIssueId: blockedId,
+    });
   }
   for (const ref of spec.relatedTo ?? []) {
     const otherId = await resolveIssueId(client, ref);
@@ -237,7 +284,14 @@ export async function addRelations(
       }),
     );
     if (!res.success) throw new Error(`could not create related-to relation to ${ref}.`);
+    const rel = await Promise.resolve(res.issueRelation).catch(() => undefined);
     done.relatedTo.push(ref);
+    done.relations.push({
+      id: rel?.id,
+      type: "related",
+      issueId: targetId,
+      relatedIssueId: otherId,
+    });
   }
   return done;
 }

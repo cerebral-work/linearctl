@@ -213,9 +213,9 @@ for embedded shell examples.
 `cycle` · `xref` · `search` · `show` · `history` · `comments` ·
 `release-notes` · `standup` · `ratelimit`
 
-### Write (11 commands)
+### Write (12 commands)
 
-`file` · `update` · `close` · `comment` · `project` · `milestone create` ·
+`file` · `update` · `close` · `comment` · `relate` · `project` · `milestone create` ·
 `doc` · `link` · `label` · `park` · `template`
 
 `backup` writes a verifiable read-only dump of the workspace to a local directory; `backup --verify <dir>` checks one (see [`docs/features/backup.md`](./docs/features/backup.md)).

@@ -13,7 +13,7 @@ import { parseFileBatchSpec, batchFileIssues } from "../core/file-batch.js";
 import { fetchRateLimit, isExhausted } from "../core/ratelimit.js";
 import { existsSync } from "node:fs";
 import { openCacheDb, getCacheDbPath } from "../core/cache/db.js";
-import { patchIssueInCache } from "../core/cache/sync.js";
+import { patchIssueInCache, insertRelationInCache } from "../core/cache/sync.js";
 
 export interface FileOptions {
   team?: string;
@@ -26,6 +26,7 @@ export interface FileOptions {
   cycle?: string;
   parent?: string;
   blockedBy?: string[];
+  blocking?: string[];
   relatedTo?: string[];
   checkDups?: boolean;
   force?: boolean;
@@ -195,10 +196,12 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
       parent: opts.parent,
     }),
   );
-  if (opts.blockedBy?.length || opts.relatedTo?.length) {
-    await withSpinner("Wiring relations…", () =>
+  let relations: { relations?: Array<{ id?: string; type: string; issueId: string; relatedIssueId: string }> } | undefined;
+  if (opts.blockedBy?.length || opts.blocking?.length || opts.relatedTo?.length) {
+    relations = await withSpinner("Wiring relations…", () =>
       addRelations(client, issue.identifier, {
         blockedBy: opts.blockedBy,
+        blocking: opts.blocking,
         relatedTo: opts.relatedTo,
       }),
     );
@@ -224,6 +227,11 @@ export async function file(title: string | undefined, opts: FileOptions): Promis
           cycleId: opts.cycle,
           parentId: opts.parent,
         });
+        if (relations?.relations) {
+          for (const rel of relations.relations) {
+            insertRelationInCache(cache, rel);
+          }
+        }
       } finally {
         cache.close();
       }

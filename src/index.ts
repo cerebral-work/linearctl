@@ -11,6 +11,7 @@ import { triage } from "./commands/triage.js";
 import { milestone, milestoneDelete, milestoneCreate, milestoneUpdate, milestoneGap } from "./commands/milestone.js";
 import { projectCreate, projectList, projectUpdate } from "./commands/project.js";
 import { update, close } from "./commands/update.js";
+import { relate } from "./commands/relate.js";
 import { comment } from "./commands/comment.js";
 import { stale } from "./commands/stale.js";
 import { xref } from "./commands/xref.js";
@@ -97,6 +98,7 @@ program
   .option("--cycle <ref>", "cycle: a number, 'current'/'next', a cycle id, or 'none'")
   .option("--parent <id>", "create as a sub-issue of this issue (id or identifier)")
   .option("--blocked-by <id...>", "issue(s) that block this one")
+  .option("--blocking <id...>", "issue(s) that this issue blocks")
   .option("--related-to <id...>", "issue(s) to link as related")
   .option("--check-dups", "refuse to create when a likely duplicate exists (see dupcheck)")
   .option("--force", "with --check-dups: file anyway")
@@ -212,6 +214,7 @@ program
   .option("--cycle <ref>", "cycle: a number, 'current'/'next', a cycle id, or 'none' to remove")
   .option("--parent <id>", "re-parent under this issue (id or identifier)")
   .option("--blocked-by <id...>", "add issue(s) that block this one")
+  .option("--blocking <id...>", "add issue(s) that this issue blocks")
   .option("--related-to <id...>", "add issue(s) as related")
   .option("--duplicate-of <canonical>", "create and verify a duplicate relation to the canonical issue")
   .option("--title <text>", "replace the issue title")
@@ -232,6 +235,17 @@ program
   .option("--duplicate-of <canonical>", "create the duplicate relation, then close in the team's duplicate-type state")
   .option("--json", "emit JSON")
   .action((id, opts) => close(id, opts));
+
+program
+  .command("relate")
+  .description("Wire issue relations: blockedBy, blocking, relatedTo, duplicateOf.")
+  .argument("[id]", "issue id or identifier (e.g. CER-123)")
+  .option("--blocked-by <id...>", "issue(s) that block this one")
+  .option("--blocking <id...>", "issue(s) that this issue blocks")
+  .option("--related-to <id...>", "issue(s) to link as related")
+  .option("--duplicate-of <canonical>", "create and verify a duplicate relation to the canonical issue")
+  .option("--json", "emit JSON")
+  .action((id, opts) => relate(id, opts));
 
 program
   .command("comment")

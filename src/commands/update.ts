@@ -1,7 +1,7 @@
 import { assertBatchSucceeded, notFoundError, usageError } from "../lib/errors.js";
 import { markDuplicate } from "../core/duplicate.js";
 import { makeClient } from "../client.js";
-import { updateIssue, closeIssue, addRelations } from "../core/issues.js";
+import { updateIssue, closeIssue, addRelations, type AddedRelationsResult } from "../core/issues.js";
 import { parseBulkSpec, bulkUpdate } from "../core/bulk.js";
 import { readStdin, readStdinFor } from "../lib/io.js";
 import { printJson } from "../lib/output.js";
@@ -11,7 +11,7 @@ import { withSpinner } from "../lib/spinner.js";
 import type { UpdatedIssue } from "../core/issues.js";
 import { existsSync } from "node:fs";
 import { openCacheDb, getCacheDbPath } from "../core/cache/db.js";
-import { patchIssueInCache } from "../core/cache/sync.js";
+import { patchIssueInCache, insertRelationInCache } from "../core/cache/sync.js";
 
 function renderIssue(issue: UpdatedIssue): void {
   process.stdout.write(
@@ -32,6 +32,7 @@ export interface UpdateOptions {
   desc?: string;
   parent?: string;
   blockedBy?: string[];
+  blocking?: string[];
   relatedTo?: string[];
   duplicateOf?: string;
   stdin?: boolean;
@@ -73,6 +74,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
     description !== undefined ||
     opts.parent !== undefined ||
     opts.blockedBy !== undefined ||
+    opts.blocking !== undefined ||
     opts.relatedTo !== undefined ||
     opts.duplicateOf !== undefined;
 
@@ -86,8 +88,8 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
   }
 
   // Relations are separate mutations, not issueUpdate fields — an invocation
-  // carrying ONLY --blocked-by/--related-to must skip the field update (which
-  // would throw "nothing to update").
+  // carrying ONLY --blocked-by/--blocking/--related-to must skip the field update
+  // (which would throw "nothing to update").
   const hasFieldMutation =
     opts.state !== undefined ||
     opts.assignee !== undefined ||
@@ -120,19 +122,23 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
       }),
     );
   }
-  let relations: { blockedBy: string[]; relatedTo: string[] } | undefined;
-  if (opts.blockedBy?.length || opts.relatedTo?.length) {
+  let relations: AddedRelationsResult | undefined;
+  if (opts.blockedBy?.length || opts.blocking?.length || opts.relatedTo?.length) {
     relations = await withSpinner("Wiring relations…", () =>
-      addRelations(client, id, { blockedBy: opts.blockedBy, relatedTo: opts.relatedTo }),
+      addRelations(client, id, {
+        blockedBy: opts.blockedBy,
+        blocking: opts.blocking,
+        relatedTo: opts.relatedTo,
+      }),
     );
   }
 
-  if (issue) {
-    try {
-      const dbPath = getCacheDbPath();
-      if (existsSync(dbPath)) {
-        const cache = openCacheDb({ dbPath });
-        try {
+  try {
+    const dbPath = getCacheDbPath();
+    if (existsSync(dbPath)) {
+      const cache = openCacheDb({ dbPath });
+      try {
+        if (issue) {
           patchIssueInCache(cache, {
             id: issue.id,
             identifier: issue.identifier,
@@ -148,17 +154,41 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
             description,
             parentId: opts.parent,
           });
-        } finally {
-          cache.close();
         }
+        if (duplicate) {
+          insertRelationInCache(cache, {
+            type: "duplicate",
+            issueId: duplicate.id,
+            relatedIssueId: duplicate.duplicateOf.id,
+          });
+        }
+        if (relations?.relations) {
+          for (const rel of relations.relations) {
+            insertRelationInCache(cache, rel);
+          }
+        }
+      } finally {
+        cache.close();
       }
-    } catch {
-      // Non-blocking write-through
     }
+  } catch {
+    // Non-blocking write-through
   }
 
   if (opts.json) {
-    printJson({ ...(issue ?? { identifier: id }), ...(relations ? { relations } : {}), ...(duplicate ? { duplicateOf: duplicate.duplicateOf } : {}) });
+    printJson({
+      ...(issue ?? { identifier: id }),
+      ...(relations
+        ? {
+            relations: {
+              blockedBy: relations.blockedBy,
+              blocking: relations.blocking,
+              relatedTo: relations.relatedTo,
+            },
+          }
+        : {}),
+      ...(duplicate ? { duplicateOf: duplicate.duplicateOf } : {}),
+    });
     return;
   }
   if (issue) renderIssue(issue);
@@ -166,6 +196,7 @@ export async function update(id: string | undefined, opts: UpdateOptions): Promi
   if (relations) {
     const parts = [
       ...relations.blockedBy.map((r) => `blocked-by ${r}`),
+      ...relations.blocking.map((r) => `blocking ${r}`),
       ...relations.relatedTo.map((r) => `related-to ${r}`),
     ];
     process.stdout.write(`${id}: ${parts.join(", ")}\n`);
