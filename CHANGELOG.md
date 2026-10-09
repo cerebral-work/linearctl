@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/cerebral-work/linearctl/compare/v0.13.1...v0.14.0) (2026-10-09)
+
+
+### Features
+
+* **cache:** add offline viewer resolution for assignee me and team funnel index ([7c67a04](https://github.com/cerebral-work/linearctl/commit/7c67a043f176cad9080d0a66372594fc5626201a))
+* **cache:** offline viewer resolution for assignee me and team funnel index ([1654eba](https://github.com/cerebral-work/linearctl/commit/1654ebacccefb1bf2e8ef0943443958996bd4753))
+
 ## [0.13.1](https://github.com/cerebral-work/linearctl/compare/v0.13.0...v0.13.1) (2026-10-09)
 
 
