@@ -357,12 +357,9 @@ describe("archived-project sandwich (planner, CER-2586 part 2)", () => {
     expect(plan.ops[0].op).toBe("archive-project");
   });
 
-  test("a sandwich plan carries exactly one _meta warning; the unarchived control none", () => {
+  test("a sandwich plan carries NO check-artifact warning (check-mode simulation makes it check clean)", () => {
     const plan = planFromRules([statusRule()], archivedCensus, META);
-    expect(plan.warnings).toHaveLength(1);
-    expect(plan.warnings[0]).toContain("seq 1-3 archived-project sandwich on Toy Project");
-    expect(plan.warnings[0]).toContain("seq 2 REFUSED");
-    expect(plan.warnings[0]).toContain("seq 3 DRIFT");
+    expect(plan.warnings).toEqual([]);
     const plain = planFromRules([statusRule()], TOY_CENSUS, META);
     expect(plain.warnings).toEqual([]);
   });
