@@ -3922,6 +3922,9 @@ export function planFromRules(
 ): ReorgPlan {
   const ops: ReorgOp[] = [];
   const warnings: string[] = [];
+  /** Emitted archived-project sandwich triples (U, M, R) — the phase-5
+   *  reorder moves each triple as one unit (adjacency is load-bearing). */
+  const sandwichUnits: [ReorgOp, ReorgOp, ReorgOp][] = [];
   const labelById = new Map(
     [...censusData.workspaceLabels, ...censusData.teamLabels].map((l) => [l.id, l] as const),
   );
@@ -3985,9 +3988,10 @@ export function planFromRules(
       // with open issues.
       const sandwich =
         rule.op in PROJECT_SANDWICH_OPS && t.target.type === "project" && t.from.archived === true;
+      let sandwichU: ReorgOp | null = null;
       if (sandwich) {
         seq++;
-        ops.push({
+        sandwichU = {
           seq,
           phase: rule.phase,
           op: "archive-project",
@@ -3996,14 +4000,15 @@ export function planFromRules(
           to: { archived: false },
           evidence: `${rule.evidence} (archived-project sandwich: unarchive to edit)`,
           reversible: true,
-        });
+        };
+        ops.push(sandwichU);
       }
       seq++;
       if (rule.ref) {
         if (refSeq.has(rule.ref)) throw new Error(`duplicate rule ref "${rule.ref}"`);
         refSeq.set(rule.ref, ops.length);
       }
-      ops.push({
+      const middle: ReorgOp = {
         seq,
         phase: rule.phase,
         op: rule.op,
@@ -4017,10 +4022,11 @@ export function planFromRules(
         ...(rule.approval ? { approval: rule.approval } : {}),
         ...(rule.batchKey ? { batchKey: rule.batchKey } : {}),
         ...(rule.allowVisibilityChange === true ? { allowVisibilityChange: true } : {}),
-      });
-      if (sandwich) {
+      };
+      ops.push(middle);
+      if (sandwich && sandwichU) {
         seq++;
-        ops.push({
+        const sandwichR: ReorgOp = {
           seq,
           phase: rule.phase,
           op: "archive-project",
@@ -4035,7 +4041,9 @@ export function planFromRules(
           },
           evidence: `${rule.evidence} (archived-project sandwich: re-archive)`,
           reversible: true,
-        });
+        };
+        ops.push(sandwichR);
+        sandwichUnits.push([sandwichU, middle, sandwichR]);
       }
     }
   }
@@ -4145,12 +4153,41 @@ export function planFromRules(
     "add-project-team": 2,
     "move-issue-team": 3,
   };
-  const slots = ordered.flatMap((o, i) => (o.phase === 5 && o.op in PHASE5_RANK ? [i] : []));
+  // Sandwich triples move through the reorder as ONE unit (ranked by their
+  // middle op): sorting the middle op independently of its unarchive /
+  // re-archive pair would separate them, and apply would then hit the
+  // archived-project guards mid-plan. Non-sandwich plans are unaffected
+  // (every unit is a single op, as before).
+  const unitSpan = new Map<ReorgOp, number>();
+  for (const [u] of sandwichUnits) unitSpan.set(u, 3);
+  const units: ReorgOp[][] = [];
+  for (let i = 0; i < ordered.length; i++) {
+    const span = unitSpan.get(ordered[i]) ?? 1;
+    units.push(ordered.slice(i, i + span));
+    i += span - 1;
+  }
+  const unitRank = (u: ReorgOp[]): number | null => {
+    const ranked = u.find((x) => x.op in PHASE5_RANK);
+    return ranked ? PHASE5_RANK[ranked.op] : null;
+  };
+  const slots = units.flatMap((u, i) => (u[0].phase === 5 && unitRank(u) !== null ? [i] : []));
   const sorted = slots
-    .map((i) => ordered[i])
-    .sort((a, b) => PHASE5_RANK[a.op] - PHASE5_RANK[b.op]);
-  slots.forEach((slot, k) => { ordered[slot] = sorted[k]; });
+    .map((i) => units[i])
+    .sort((a, b) => (unitRank(a) ?? 99) - (unitRank(b) ?? 99));
+  slots.forEach((slot, k) => { units[slot] = sorted[k]; });
+  ordered.length = 0;
+  ordered.push(...units.flat());
   ordered.forEach((o, i) => { o.seq = i + 1; });
+
+  // Sandwich warnings cite seq numbers, so they are emitted only after the
+  // reorders and renumbering above fixed them.
+  for (const o of ordered) {
+    if (!o.evidence.endsWith("(archived-project sandwich: unarchive to edit)")) continue;
+    warnings.push(
+      `seq ${o.seq}-${o.seq + 2} archived-project sandwich on ${o.target.identifier}: until plan-state simulation lands, ` +
+        `\`--check\` reports seq ${o.seq + 1} REFUSED and seq ${o.seq + 2} DRIFT against live state; \`--apply\` is correct`,
+    );
+  }
 
   // labelMap: prune each move's map to the labels that issue carries (by id or
   // an inherited child of the key), then rewrite created:<rule ref> to the

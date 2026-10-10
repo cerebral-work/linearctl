@@ -103,7 +103,14 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   unarchive → op → re-archive sandwich for a modifying op on a census-archived
   project; the re-archive restores the issues Linear's `projectUnarchive`
   cascades open (recorded in the journal as `cascadeIssueIds`), issues before
-  the project, and rollback of an unarchive does the same.
+  the project, and rollback of an unarchive does the same. Until plan-state
+  simulation lands, `--check` reports the sandwich's middle op REFUSED and
+  its re-archive DRIFT against live state (each sandwich plan carries a
+  `_meta.warnings` entry saying so); `--apply` is correct. The re-archive
+  carries the CENSUS archived-issue set, not a live read: an issue archived
+  after the census leaves the re-archive refused by the open-issue guard with
+  the project already unarchived — recover by rolling back the unarchive op.
+  That is deliberate; the set is not derived live.
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
   capped resume keeps advancing).
 - **Batching** is opt-in per op via `batchKey`: identical-input `relabel` /
