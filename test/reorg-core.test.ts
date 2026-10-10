@@ -460,7 +460,13 @@ function fakeClient(be: FakeBackend): LinearClient {
         p.trashed = !!be.projectArchiveTrashes || !query.includes("trash: false");
       });
     if (query.includes("ReorgProjectUnarchive"))
-      return W("projectUnarchive", () => { const p = be.projects.get(vars.id as string)!; p.archived = false; p.trashed = false; });
+      return W("projectUnarchive", () => {
+        const p = be.projects.get(vars.id as string)!;
+        p.archived = false; p.trashed = false;
+        // Linear's projectUnarchive also unarchives the project's archived issues.
+        for (const i of be.issues.values())
+          if (i.projectId === p.id && i.archived) i.archived = false;
+      });
     if (query.includes("ReorgInitiativeArchive"))
       return W("initiativeArchive", () => { be.initiatives.get(vars.id as string)!.archivedAt = "2026-01-02T00:00:00Z"; });
     if (query.includes("ReorgInitiativeUnarchive"))
@@ -2943,6 +2949,136 @@ describe("project guards (check-mode refusals)", () => {
     const clean = await runPlan(fakeClient(be), planWith([keep]), checkOpts());
     expect(clean.refused).toEqual([]);
     expect(clean.drifted).toEqual([]);
+  });
+});
+
+describe("archive-project cascade + archived-project sandwich (CER-2586 part 2)", () => {
+  const checkOpts = () => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+  });
+  const projectOp = (over: Partial<ReorgOp>): ReorgOp =>
+    baseOp({ target: { type: "project", id: "p-1", identifier: "Proj" }, ...over });
+  const mkProject = (over: Partial<FakeProject> = {}): FakeProject => ({
+    id: "p-1", name: "Proj", statusId: "st-1", leadId: null, targetDate: null,
+    trashed: false, teamIds: ["t-1"], initiativeIds: [], ...over,
+  });
+  const mkIssue = (id: string, archived: boolean): FakeIssue => ({
+    ...ISSUE_1, id, identifier: `EX-${id}`, labelIds: [], projectId: "p-1", archived,
+  });
+  const unarchiveOp = () => projectOp({
+    op: "archive-project",
+    from: { archived: true, trashed: false }, to: { archived: false },
+  });
+
+  test("(c) unarchive journals the issues Linear's projectUnarchive cascades open", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    be.issues.set("i-2", mkIssue("i-2", true));
+    be.issues.set("i-1", mkIssue("i-1", true));
+    const j = join(dir, "j.jsonl");
+    await applyPlan(be, [unarchiveOp()], j);
+    // Linear's native cascade (the fake models it): issues come back open
+    expect(be.projects.get("p-1")!.archived).toBe(false);
+    expect(be.issues.get("i-1")!.archived).toBe(false);
+    expect(be.issues.get("i-2")!.archived).toBe(false);
+    // …and the journal records exactly the set it implicitly unarchived
+    const rec = journalRead(j)[0];
+    expect(rec.original?.to.cascadeIssueIds).toEqual(["i-1", "i-2"]);
+  });
+
+  test("(a) rollback of an unarchive re-archives the cascade issues BEFORE the project", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    be.issues.set("i-1", mkIssue("i-1", true));
+    be.issues.set("i-2", mkIssue("i-2", true));
+    const j = join(dir, "j.jsonl");
+    await applyPlan(be, [unarchiveOp()], j);
+    expect(be.mutationCalls).toEqual(["projectUnarchive"]);
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+    expect(rb.rolledBack).toBe(1);
+    // journal order: every issueArchive lands before the projectArchive
+    expect(be.mutationCalls.slice(1)).toEqual(["issueArchive", "issueArchive", "projectArchive"]);
+    expect(be.issues.get("i-1")!.archived).toBe(true);
+    expect(be.issues.get("i-2")!.archived).toBe(true);
+    expect(be.projects.get("p-1")!.archived).toBe(true);
+  });
+
+  test("(e) sandwich end-to-end: unarchive -> edit -> re-archive restores issues then project", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    be.issues.set("i-1", mkIssue("i-1", true));
+    be.issues.set("i-2", mkIssue("i-2", true));
+    const ops = [
+      unarchiveOp(),
+      projectOp({ seq: 2, op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } }),
+      projectOp({
+        seq: 3, op: "archive-project",
+        from: { archived: false, trashed: false },
+        to: { archived: true, cascadeRearchiveIssueIds: ["i-1", "i-2"] },
+      }),
+    ];
+    const j = join(dir, "j.jsonl");
+    const result = await applyPlan(be, ops, j);
+    expect(result.applied).toBe(3);
+    expect(be.mutationCalls).toEqual([
+      "projectUnarchive", "projectUpdate", "issueArchive", "issueArchive", "projectArchive",
+    ]);
+    expect(be.projects.get("p-1")!.statusId).toBe("st-2");
+    expect(be.projects.get("p-1")!.archived).toBe(true);
+    expect(be.issues.get("i-1")!.archived).toBe(true);
+    expect(be.issues.get("i-2")!.archived).toBe(true);
+  });
+
+  test("the open-issue guard exempts only the carried cascade ids", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    be.issues.set("i-1", mkIssue("i-1", false));
+    const exempt = projectOp({
+      op: "archive-project",
+      from: { archived: false, trashed: false },
+      to: { archived: true, cascadeRearchiveIssueIds: ["i-1"] },
+    });
+    const ok = await runPlan(fakeClient(be), planWith([exempt]), checkOpts());
+    expect(ok.refused).toEqual([]);
+    expect(ok.drifted).toEqual([]);
+    // control: without the carried id the same op refuses
+    const plain = projectOp({
+      op: "archive-project",
+      from: { archived: false, trashed: false }, to: { archived: true },
+    });
+    const refused = await runPlan(fakeClient(be), planWith([plain]), checkOpts());
+    expect(refused.refused).toEqual([1]);
+    // and an id NOT carried is still refused
+    be.issues.set("i-2", mkIssue("i-2", false));
+    const partial = await runPlan(fakeClient(be), planWith([exempt]), checkOpts());
+    expect(partial.refused).toEqual([1]);
+  });
+
+  test("(d) controls: no archived issues -> empty cascade record, no issue writes anywhere", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    const j = join(dir, "j.jsonl");
+    await applyPlan(be, [unarchiveOp()], j);
+    expect(journalRead(j)[0].original?.to.cascadeIssueIds).toEqual([]);
+    expect(be.mutationCalls).toEqual(["projectUnarchive"]);
+    const rb = await rollbackPhase(fakeClient(be), j, 1, { pace: fastPace(), apply: true });
+    expect(rb.rolledBack).toBe(1);
+    expect(be.mutationCalls).toEqual(["projectUnarchive", "projectArchive"]);
+    // rollback of a plain archive unarchives and re-archives the cascade set
+    // (empty here) — behavior unchanged when nothing cascaded
+    const be2 = freshBackend();
+    be2.projects.set("p-1", mkProject());
+    const archive = projectOp({
+      op: "archive-project",
+      from: { archived: false, trashed: false }, to: { archived: true },
+    });
+    const j2 = join(dir, "j2.jsonl");
+    await applyPlan(be2, [archive], j2);
+    const rb2 = await rollbackPhase(fakeClient(be2), j2, 1, { pace: fastPace(), apply: true });
+    expect(rb2.rolledBack).toBe(1);
+    expect(be2.mutationCalls).toEqual(["projectArchive", "projectUnarchive"]);
+    expect(be2.projects.get("p-1")!.archived).toBe(false);
   });
 });
 
