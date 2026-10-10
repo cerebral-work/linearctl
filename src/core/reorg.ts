@@ -2097,6 +2097,13 @@ async function rearchiveIssues(ctx: OpCtx, op: ReorgOp, ids: string[]): Promise<
   }
 }
 
+/** Check-mode plan-state simulation: the planned post-state of a target a
+ *  lower-seq op already passed on, keyed `${target.type}:${target.id}`. Seeded
+ *  from the target's live read, advanced by each passing op's expectedPost.
+ *  Only targets an earlier op WROTE carry an entry — every other read stays
+ *  live, so plans without cross-op dependencies behave exactly as before. */
+export type PlanSimulation = Map<string, { state: Record<string, unknown>; writer: number }>;
+
 /**
  * Project guards (LIVE reads, no census trust), run by --check and by apply:
  *  (a) an archived project refuses every modification except the unarchive
@@ -2107,12 +2114,14 @@ async function rearchiveIssues(ctx: OpCtx, op: ReorgOp, ids: string[]): Promise<
  *  (c) remove-project-team refuses when it would leave the project with zero
  *      teams (Linear: "A project must belong to at least one team.").
  */
-export async function assertProjectOpGuards(ctx: OpCtx, op: ReorgOp): Promise<void> {
+export async function assertProjectOpGuards(ctx: OpCtx, op: ReorgOp, sim?: PlanSimulation): Promise<void> {
   if (op.target.type !== "project") return;
   // Creates (create-project-status) target a project that does not exist yet.
   if (op.target.id.startsWith("new:")) return;
   const unarchiving = op.op === "archive-project" && op.to.archived === false;
-  const live = await readProject(ctx, op.target.id);
+  // A lower-seq op in the same plan may already have written this project
+  // (the sandwich's unarchive): read the planned post-state when simulated.
+  const live = sim?.get(`project:${op.target.id}`)?.state ?? (await readProject(ctx, op.target.id));
   if (live.archived === true && !unarchiving)
     throw new Error(
       `${op.op} ${op.target.identifier}: could not modify archived project — unarchive it first`,
@@ -2123,9 +2132,16 @@ export async function assertProjectOpGuards(ctx: OpCtx, op: ReorgOp): Promise<vo
     );
     // A re-archive carrying cascadeRearchiveIssueIds re-archives exactly those
     // issues before the project write — they are exempt; any OTHER open issue
-    // still refuses.
+    // still refuses. Which issues BELONG to the project is always a live
+    // read; an earlier archive-issue op in the same plan updates a member's
+    // archived flag through the simulation.
     const exempt = sortedStrings(op.to.cascadeRearchiveIssueIds);
-    const open = issues.filter((i) => !i.archivedAt && !exempt.includes(i.id));
+    const open = issues.filter((i) => {
+      const simState = sim?.get(`issue:${i.id}`)?.state;
+      const archived =
+        simState && typeof simState.archived === "boolean" ? simState.archived : i.archivedAt != null;
+      return !archived && !exempt.includes(i.id);
+    });
     if (open.length > 0)
       throw new Error(
         `archive-project ${op.target.identifier}: the project cannot be archived as it contains ${open.length} open issue(s) — archive them first`,
@@ -2152,6 +2168,8 @@ export async function assertOpPreconditions(
   journal: JournalRecord[],
   /** --check only: the whole plan, so planned lower-seq renames and creates count. */
   planned?: ReorgOp[],
+  /** --check only: planned post-state of targets earlier ops wrote. */
+  sim?: PlanSimulation,
 ): Promise<void> {
   if (op.op === "move-issue-team" && planned) {
     await assertLabelMapTeams(ctx, op, planned);
@@ -2160,7 +2178,7 @@ export async function assertOpPreconditions(
   if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
   await assertNoVisibilityChange(ctx, op);
-  await assertProjectOpGuards(ctx, op);
+  await assertProjectOpGuards(ctx, op, sim);
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op, planned);
   if (op.op === "archive-state") await assertStateEmpty(ctx, op);
   if (op.op === "delete-team") await assertTeamEmpty(ctx, op);
@@ -2661,10 +2679,20 @@ export async function runPlan(
   if (opts.check && !opts.apply) {
     const drifted: number[] = [];
     const refused: number[] = [];
+    // Plan-state simulation: a target a lower-seq op WROTE is read from the
+    // planned post-state (seeded from its live read, advanced by each passing
+    // op's expectedPost), so an op whose census `from` depends on an earlier
+    // op in the same plan is not reported as drift. Targets no earlier op
+    // wrote are read live, exactly as before. The simulation advances only
+    // through ops that pass — a drifted or refused op contributes no write.
+    const sim: PlanSimulation = new Map();
     for (const op of ops) {
       const def = OP_REGISTRY[op.op];
+      const simKey = `${op.target.type}:${op.target.id}`;
+      const entry = sim.get(simKey);
+      const simNote = entry ? ` (planned state after seq ${entry.writer})` : "";
       try {
-        const live = await def.readState(ctx, op);
+        const live = entry ? entry.state : await def.readState(ctx, op);
         if (op.target.type === "label" && live.inheritedFromId) {
           drifted.push(op.seq);
           opts.onEvent?.({
@@ -2677,22 +2705,25 @@ export async function runPlan(
         const done = drift.length
           ? await isAlreadyApplied(ctx, def, await resolveOpLabelRefs(ctx, journal, op), live)
           : { applied: false };
+        // The simulation advances on the two success paths only.
+        let advance = false;
         if (drift.length && done.applied) {
           opts.onEvent?.({
             kind: "check",
-            detail: `already applied seq ${op.seq} [${op.op}] ${op.target.identifier}`,
+            detail: `already applied seq ${op.seq} [${op.op}] ${op.target.identifier}${simNote}`,
           });
+          advance = true;
         } else if (drift.length) {
           drifted.push(op.seq);
           opts.onEvent?.({
             kind: "drift",
-            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}${"reason" in done && done.reason ? ` — ${done.reason}` : ""}`,
+            detail: `DRIFT seq ${op.seq} [${op.op}] ${op.target.identifier}: ${drift.join("; ")}${"reason" in done && done.reason ? ` — ${done.reason}` : ""}${simNote}`,
           });
         } else {
           // precondition READS apply would run before its first write: a
           // refusal here is its own finding class, distinct from drift
           try {
-            await assertOpPreconditions(ctx, op, journal, plan.ops);
+            await assertOpPreconditions(ctx, op, journal, plan.ops, sim);
           } catch (err) {
             refused.push(op.seq);
             opts.onEvent?.({
@@ -2701,6 +2732,7 @@ export async function runPlan(
             });
             continue;
           }
+          advance = true;
           opts.onEvent?.({ kind: "check", detail: `ok    seq ${op.seq} [${op.op}] ${op.target.identifier}` });
           const lost = await accessLost(ctx, op);
           if (lost > 0)
@@ -2716,6 +2748,14 @@ export async function runPlan(
                 detail: `visibility change (allowed) seq ${op.seq} [${op.op}] ${op.target.identifier}: ${why}`,
               });
           }
+        }
+        if (advance) {
+          // expectedPost keys are readState keys by construction, so the
+          // merge keeps the simulated state in readState shape. A null
+          // expectedPost (a delete form) advances nothing — deletes stay
+          // unsimulated.
+          const post = def.expectedPost(op);
+          if (post !== null) sim.set(simKey, { state: { ...live, ...post }, writer: op.seq });
         }
       } catch (err) {
         drifted.push(op.seq);
@@ -4178,16 +4218,6 @@ export function planFromRules(
   ordered.length = 0;
   ordered.push(...units.flat());
   ordered.forEach((o, i) => { o.seq = i + 1; });
-
-  // Sandwich warnings cite seq numbers, so they are emitted only after the
-  // reorders and renumbering above fixed them.
-  for (const o of ordered) {
-    if (!o.evidence.endsWith("(archived-project sandwich: unarchive to edit)")) continue;
-    warnings.push(
-      `seq ${o.seq}-${o.seq + 2} archived-project sandwich on ${o.target.identifier}: until plan-state simulation lands, ` +
-        `\`--check\` reports seq ${o.seq + 1} REFUSED and seq ${o.seq + 2} DRIFT against live state; \`--apply\` is correct`,
-    );
-  }
 
   // labelMap: prune each move's map to the labels that issue carries (by id or
   // an inherited child of the key), then rewrite created:<rule ref> to the
