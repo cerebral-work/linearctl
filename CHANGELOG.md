@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/cerebral-work/linearctl/compare/v0.16.0...v0.17.0) (2026-10-10)
+
+
+### Features
+
+* refuse archived-project, open-issue archive, and last-team ops in reorg --check ([ba01eef](https://github.com/cerebral-work/linearctl/commit/ba01eeff46c7058d719403ed9bd42ebf6683fb2a))
+* refuse archived-project, open-issue archive, and last-team ops in reorg --check ([2bc70d9](https://github.com/cerebral-work/linearctl/commit/2bc70d949e280d9457ff0de140ea8ecff2010c9e))
+
 ## [0.16.0](https://github.com/cerebral-work/linearctl/compare/v0.15.0...v0.16.0) (2026-10-09)
 
 
