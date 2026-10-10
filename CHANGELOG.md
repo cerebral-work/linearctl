@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/cerebral-work/linearctl/compare/v0.17.0...v0.18.0) (2026-10-10)
+
+
+### Features
+
+* model the projectUnarchive issue cascade and plan the archived-project sandwich ([d3848f4](https://github.com/cerebral-work/linearctl/commit/d3848f4d45252d952bd4c9a4e188f620e704b8cb))
+* model the projectUnarchive issue cascade and plan the archived-project sandwich ([2ceffcb](https://github.com/cerebral-work/linearctl/commit/2ceffcba73d7d512dc8631195b086b479042ed1d))
+
+
+### Bug Fixes
+
+* warn on sandwich plans and keep the triple atomic through the phase-5 reorder ([7b02457](https://github.com/cerebral-work/linearctl/commit/7b0245796be4dc54931278ca895110c0bab47e7e))
+
 ## [0.17.0](https://github.com/cerebral-work/linearctl/compare/v0.16.0...v0.17.0) (2026-10-10)
 
 
