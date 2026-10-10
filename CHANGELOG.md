@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0](https://github.com/cerebral-work/linearctl/compare/v0.18.0...v0.19.0) (2026-10-10)
+
+
+### Features
+
+* **cpm:** implement estate CPM and agent sprint wave runner ([ced4365](https://github.com/cerebral-work/linearctl/commit/ced43658dc01c4aeef02932c9f27f81cbd41623f))
+* **cpm:** implement estate CPM and agent sprint wave runner ([75ce026](https://github.com/cerebral-work/linearctl/commit/75ce026c160367638acbb394762f0c06feaf828f))
+
 ## [0.18.0](https://github.com/cerebral-work/linearctl/compare/v0.17.0...v0.18.0) (2026-10-10)
 
 
