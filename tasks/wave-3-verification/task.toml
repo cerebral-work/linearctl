@@ -1,0 +1,11 @@
+# Wave 3: Verification, Benchmarking & Land-on-Green
+# Target: test/, scripts/benchmark-cache.ts
+provider = "claude"
+model = "sonnet"
+budget_tokens = 200000
+conventional_subject = "feat(verify): establish cache performance benchmarks and e2e verification"
+
+[vars]
+ticket = "EST-524"
+wave = "3"
+path_scope = "test/,scripts/benchmark-cache.ts"

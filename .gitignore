@@ -20,3 +20,4 @@ secrets.env
 
 # Lane persona (lane-persona, ephemeral)
 .agents/persona.md
+.zed/

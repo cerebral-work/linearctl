@@ -1,0 +1,11 @@
+# Wave 1: Core Cache & Funnel Invariants
+# Target: src/core/cache/
+provider = "claude"
+model = "sonnet"
+budget_tokens = 200000
+conventional_subject = "feat(cache): implement local sqlite schema and delta sync engine"
+
+[vars]
+ticket = "EST-522"
+wave = "1"
+path_scope = "src/core/cache/"

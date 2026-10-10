@@ -1,0 +1,11 @@
+# Wave 2: CLI Commands & Relate Integration
+# Target: src/commands/
+provider = "claude"
+model = "sonnet"
+budget_tokens = 200000
+conventional_subject = "feat(cli): wire relate command and local cache query integration"
+
+[vars]
+ticket = "EST-523"
+wave = "2"
+path_scope = "src/commands/"
