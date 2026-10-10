@@ -303,6 +303,13 @@ function fakeClient(be: FakeBackend): LinearClient {
       be.readCalls++;
       return ok({ issues: { nodes: [...be.issues.values()].filter((i) => (inclArchived || !i.archived) && i.teamId === vars.id).map((i) => ({ id: i.id })) } });
     }
+    if (query.includes("ReorgProjectIssues")) {
+      be.readCalls++;
+      const nodes = [...be.issues.values()]
+        .filter((i) => i.projectId === vars.id && (inclArchived || !i.archived))
+        .map((i) => ({ id: i.id, identifier: i.identifier, archivedAt: i.archived ? "2026-01-01T00:00:00Z" : null }));
+      return ok({ issues: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } });
+    }
     if (query.includes("ReorgTeamLabels")) {
       be.readCalls++;
       const nodes = [...be.labels.values()].filter((l) => l.teamId === vars.id).map((l) => ({ id: l.id, retiredAt: l.retiredAt }));
@@ -2824,6 +2831,118 @@ describe("--check runs precondition reads (no writes)", () => {
     const r = await runPlan(fakeClient(be), planWith([op]), checkOpts());
     expect(r.refused).toEqual([1]);
     expect(be.mutationCalls).toEqual([]);
+  });
+});
+
+describe("project guards (check-mode refusals)", () => {
+  const checkOpts = () => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+  });
+  const projectOp = (over: Partial<ReorgOp>): ReorgOp =>
+    baseOp({ target: { type: "project", id: "p-1", identifier: "Proj" }, ...over });
+  const mkProject = (over: Partial<FakeProject> = {}): FakeProject => ({
+    id: "p-1", name: "Proj", statusId: "st-1", leadId: null, targetDate: null,
+    trashed: false, teamIds: ["t-1"], initiativeIds: [], ...over,
+  });
+  const mkIssue = (id: string, archived: boolean): FakeIssue => ({
+    ...ISSUE_1, id, identifier: `EX-${id}`, labelIds: [], archived,
+  });
+  const archiveOp = () => projectOp({
+    op: "archive-project",
+    from: { archived: false, trashed: false }, to: { archived: true },
+  });
+
+  test("archive-project: open issues refuse with the count (a refusal is NOT drift); archiving them first passes", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    be.issues.set("i-1", mkIssue("i-1", false));
+    be.issues.set("i-2", mkIssue("i-2", false));
+    be.issues.set("i-3", mkIssue("i-3", true)); // archived issues do NOT count
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([archiveOp()]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([1]);
+    expect(events.some((e) => e.startsWith("refuse: REFUSE seq 1") && e.includes("2 open issue(s)"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.projects.get("p-1")!.archived ?? false).toBe(false);
+    // positive control: issues archived first -> clean pass
+    be.issues.get("i-1")!.archived = true;
+    be.issues.get("i-2")!.archived = true;
+    const clean = await runPlan(fakeClient(be), planWith([archiveOp()]), checkOpts());
+    expect(clean.refused).toEqual([]);
+    expect(clean.drifted).toEqual([]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("archive-project guard also holds under apply: refuse before any write", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    be.issues.set("i-1", mkIssue("i-1", false));
+    await expect(applyPlan(be, [archiveOp()], join(dir, "j.jsonl"))).rejects.toThrow(/open issue/);
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.projects.get("p-1")!.archived ?? false).toBe(false);
+  });
+
+  test("archived target: project ops are refused; the unarchive form is the one allowed op", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    const ops = [
+      projectOp({ op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } }),
+      projectOp({ seq: 2, op: "set-project-lead", from: { leadId: null }, to: { leadId: "u-1" } }),
+      projectOp({ seq: 3, op: "archive-project", from: { archived: true, trashed: false }, to: { archived: true } }),
+      projectOp({ seq: 4, op: "move-project-initiative", from: { initiativeIds: [] }, to: { toInitiativeId: "in-1" } }),
+    ];
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith(ops), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([1, 2, 3, 4]);
+    expect(events.filter((e) => e.startsWith("refuse: REFUSE") && e.includes("archived project"))).toHaveLength(4);
+    expect(be.mutationCalls).toEqual([]);
+    // exception: unarchiving an archived project is allowed
+    const unarchive = projectOp({
+      op: "archive-project", from: { archived: true, trashed: false }, to: { archived: false },
+    });
+    const ok = await runPlan(fakeClient(be), planWith([unarchive]), checkOpts());
+    expect(ok.refused).toEqual([]);
+    expect(ok.drifted).toEqual([]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("unarchived target (control): set-project-status / set-project-lead / move-project-initiative pass", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    const ops = [
+      projectOp({ op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } }),
+      projectOp({ seq: 2, op: "set-project-lead", from: { leadId: null }, to: { leadId: "u-1" } }),
+      projectOp({ seq: 3, op: "move-project-initiative", from: { initiativeIds: [] }, to: { toInitiativeId: "in-1" } }),
+    ];
+    const r = await runPlan(fakeClient(be), planWith(ops), checkOpts());
+    expect(r.refused).toEqual([]);
+    expect(r.drifted).toEqual([]);
+  });
+
+  test("remove-project-team: removing the last team is refused; leaving one team passes", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ teamIds: ["t-1"] }));
+    const last = projectOp({
+      op: "remove-project-team", from: { teamIds: ["t-1"] }, to: { teamId: "t-1" },
+    });
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([last]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([1]);
+    expect(events.some((e) => e.startsWith("refuse: REFUSE seq 1") && e.includes("at least one team"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+    expect(be.projects.get("p-1")!.teamIds).toEqual(["t-1"]);
+    // positive control: one team remains after the removal
+    be.projects.get("p-1")!.teamIds = ["t-1", "t-2"];
+    const keep = projectOp({
+      op: "remove-project-team", from: { teamIds: ["t-1", "t-2"] }, to: { teamId: "t-1" },
+    });
+    const clean = await runPlan(fakeClient(be), planWith([keep]), checkOpts());
+    expect(clean.refused).toEqual([]);
+    expect(clean.drifted).toEqual([]);
   });
 });
 
