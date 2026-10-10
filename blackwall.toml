@@ -1,0 +1,21 @@
+# blackwall: AI-containment custody config
+# Estate SOP: ~/.agents/sops/blackwall-orchestration.md
+
+[defaults]
+provider = "claude"
+model = "sonnet"
+
+[verify]
+command = "bun run typecheck && bun test && ./scripts/cpm-wave-runner.sh --check"
+
+[merge]
+automerge = false
+
+[pr]
+base = "main"
+
+[budget]
+max_tokens_per_run = 200000
+
+[observability]
+otlp_endpoint = "http://alloy-otlp.tail769bd2.ts.net:4318/v1/traces"

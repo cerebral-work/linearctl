@@ -22,6 +22,8 @@
     "lint": "bun run typecheck",
     "ci": "bun run typecheck && bun test",
     "bench:cache": "bun run scripts/benchmark-cache.ts",
+    "cpm:check": "./scripts/cpm-wave-runner.sh --check",
+    "cpm:wave-runner": "./scripts/cpm-wave-runner.sh --wave all",
     "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/linearctl",
     "quick": "bun run src/index.ts"
   },

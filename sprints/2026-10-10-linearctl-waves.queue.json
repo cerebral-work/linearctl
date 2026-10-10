@@ -1,0 +1,85 @@
+{
+  "slug": "linearctl-waves",
+  "createdAt": "2026-10-10T05:35:00Z",
+  "engineCommit": "HEAD",
+  "runId": null,
+  "queues": {
+    "wave-0": [
+      {
+        "id": "W0.1",
+        "title": "Blackwall & Host Preflight",
+        "spec": "Verify host ceres RAM floor >= 4000MB free, zero .git/index.lock files, and blackwall doctor passing clean."
+      },
+      {
+        "id": "W0.2",
+        "title": "Baseline Typecheck & Test Gate",
+        "spec": "Run bun run typecheck and bun test test/agent-help.test.ts. Verify zero type errors and clean contract pass."
+      },
+      {
+        "id": "W0.3",
+        "title": "Herdr Pane Audit",
+        "spec": "Verify Herdr socket is active and estate/w1B:p6 lane is healthy and authenticated."
+      }
+    ],
+    "wave-1": [
+      {
+        "id": "W1.1",
+        "title": "Drizzle Schema & FTS5 Triggers",
+        "disjointTarget": "src/core/cache/schema.ts,src/core/cache/db.ts",
+        "spec": "Enforce strict schema types and FTS5 triggers for issues, teams, projects, states, labels, and issueRelations."
+      },
+      {
+        "id": "W1.2",
+        "title": "Funnel Ingestion & Delta Sync Engine",
+        "disjointTarget": "src/core/cache/sync.ts",
+        "spec": "Implement and optimize incremental delta sync (updatedAt >= last_sync_at) with sub-second batch transactions."
+      },
+      {
+        "id": "W1.3",
+        "title": "Funnel Contract Parity Validation",
+        "disjointTarget": "docs/funnel-contract.md",
+        "spec": "Verify PullIssue field contracts and down-level compatibility for godseat and downstream agents."
+      }
+    ],
+    "wave-2": [
+      {
+        "id": "W2.1",
+        "title": "Relate Commands & Blocking Links",
+        "disjointTarget": "src/commands/relate.ts",
+        "spec": "Provide dedicated linearctl relate CLI commands with --blocked-by, --blocking, --related-to, and --duplicate-of."
+      },
+      {
+        "id": "W2.2",
+        "title": "Cache Query Engine & FTS5 Search",
+        "disjointTarget": "src/core/cache/query.ts",
+        "spec": "Implement searchCachedIssues, pullCachedIssues, and getCachedIssue with sub-5ms query performance."
+      },
+      {
+        "id": "W2.3",
+        "title": "Write-Through Cache Invalidation",
+        "disjointTarget": "src/commands/file.ts,src/commands/update.ts",
+        "spec": "Ensure mutations in file, update, and relate write through immediately into local SQLite cache."
+      }
+    ],
+    "wave-3": [
+      {
+        "id": "W3.1",
+        "title": "Cache Guardrail Benchmarking",
+        "disjointTarget": "scripts/benchmark-cache.ts",
+        "spec": "Execute bun run bench:cache and enforce SLAs: p99 lookup <= 2ms, p99 funnel query <= 5ms, p99 FTS5 search <= 10ms."
+      },
+      {
+        "id": "W3.2",
+        "title": "E2E Suite & Agent-Help Contract",
+        "disjointTarget": "test/agent-help.test.ts,test/relate-cli.test.ts",
+        "spec": "Run full bun test suite (1,200+ tests) across all modules with zero failures."
+      },
+      {
+        "id": "W3.3",
+        "title": "Single-Binary Compilation & Landing",
+        "disjointTarget": "root",
+        "spec": "Compile standalone binary via bun run build and land on green via signed commit."
+      }
+    ]
+  }
+}
