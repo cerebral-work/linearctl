@@ -3082,6 +3082,113 @@ describe("archive-project cascade + archived-project sandwich (CER-2586 part 2)"
   });
 });
 
+describe("check-mode plan-state simulation", () => {
+  const checkOpts = () => ({
+    check: true, apply: false, resume: false, allowIrreversible: false,
+    journalPath: join(dir, "j.jsonl"), pace: fastPace(),
+  });
+  const projectOp = (over: Partial<ReorgOp>): ReorgOp =>
+    baseOp({ target: { type: "project", id: "p-1", identifier: "Proj" }, ...over });
+  const mkProject = (over: Partial<FakeProject> = {}): FakeProject => ({
+    id: "p-1", name: "Proj", statusId: "st-1", leadId: null, targetDate: null,
+    trashed: false, teamIds: ["t-1"], initiativeIds: [], ...over,
+  });
+  const mkIssue = (id: string, archived: boolean): FakeIssue => ({
+    ...ISSUE_1, id, identifier: `EX-${id}`, labelIds: [], projectId: "p-1", archived,
+  });
+
+  test("(1) remove-project-team after add-project-team in one plan is NOT drift", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ teamIds: ["t-1"] }));
+    const add = projectOp({
+      op: "add-project-team", from: { teamIds: ["t-1"] }, to: { teamIds: ["t-1", "t-2"] },
+    });
+    const rm = projectOp({
+      seq: 2, op: "remove-project-team", from: { teamIds: ["t-1", "t-2"] }, to: { teamId: "t-1" },
+    });
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([add, rm]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([]);
+    expect(events.some((e) => e.startsWith("check: ok    seq 2"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("(2) the archived-project sandwich checks clean: no REFUSE, no DRIFT", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject({ archived: true }));
+    be.issues.set("i-1", mkIssue("i-1", true));
+    be.issues.set("i-2", mkIssue("i-2", true));
+    const ops = [
+      projectOp({ op: "archive-project", from: { archived: true, trashed: false }, to: { archived: false } }),
+      projectOp({ seq: 2, op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } }),
+      projectOp({
+        seq: 3, op: "archive-project",
+        from: { archived: false, trashed: false },
+        to: { archived: true, cascadeRearchiveIssueIds: ["i-1", "i-2"] },
+      }),
+    ];
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith(ops), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.refused).toEqual([]);
+    expect(r.drifted).toEqual([]);
+    expect(events.some((e) => e.startsWith("refuse:") || e.startsWith("drift:"))).toBe(false);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("(3) simulation does not hide genuinely-open issues from the open-issue guard", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    be.issues.set("i-1", mkIssue("i-1", false));
+    be.issues.set("i-2", mkIssue("i-2", false));
+    const archiveOne = baseOp({
+      op: "archive-issue", target: { type: "issue", id: "i-1", identifier: "EX-i-1" },
+      from: { archived: false }, to: { archived: true },
+    });
+    const archiveP = projectOp({
+      seq: 2, op: "archive-project",
+      from: { archived: false, trashed: false }, to: { archived: true },
+    });
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([archiveOne, archiveP]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    // the plan archives i-1 (simulated) but nothing archives i-2: exactly one
+    // open issue remains, and the refusal says so
+    expect(r.refused).toEqual([2]);
+    expect(events.some((e) => e.startsWith("refuse: REFUSE seq 2") && e.includes("1 open issue(s)"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("(c) an op whose from ignores an earlier write drifts against the PLANNED state, naming the writer seq", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    const a = projectOp({ op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } });
+    const b = projectOp({ seq: 2, op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-3" } });
+    const events: string[] = [];
+    const r = await runPlan(fakeClient(be), planWith([a, b]), { ...checkOpts(), onEvent: (e) => events.push(`${e.kind}: ${e.detail}`) });
+    expect(r.drifted).toEqual([2]);
+    expect(events.some((e) => e.startsWith("drift: DRIFT seq 2") && e.includes("planned state after seq 1"))).toBe(true);
+    expect(be.mutationCalls).toEqual([]);
+  });
+
+  test("(4) control: independent targets read live, exactly as today", async () => {
+    const be = freshBackend();
+    be.projects.set("p-1", mkProject());
+    be.projects.set("p-2", { ...mkProject(), id: "p-2", name: "P2" });
+    const ops = [
+      projectOp({ op: "set-project-status", from: { statusId: "st-1" }, to: { statusId: "st-2" } }),
+      projectOp({
+        seq: 2, op: "set-project-lead",
+        target: { type: "project", id: "p-2", identifier: "P2" },
+        from: { leadId: null }, to: { leadId: "u-1" },
+      }),
+    ];
+    const r = await runPlan(fakeClient(be), planWith(ops), checkOpts());
+    expect(r.drifted).toEqual([]);
+    expect(r.refused).toEqual([]);
+    expect(be.mutationCalls).toEqual([]);
+  });
+});
+
 describe("journalPhaseVerified uses the latest marker", () => {
   const mark = (ok: boolean): JournalRecord => ({ seq: "verify", phase: 2, at: "t", ok });
   test("green then red is not verified", () => {
