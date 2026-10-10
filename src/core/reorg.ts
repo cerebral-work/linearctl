@@ -942,6 +942,17 @@ const ISSUES_IN_STATE_Q = /* GraphQL */ `
   }
 `;
 
+/** Open-issue probe for archive-project: Linear refuses while UNARCHIVED
+ *  issues remain ("The project cannot be deleted as it contains N open issues"). */
+const PROJECT_ISSUES_Q = /* GraphQL */ `
+  query ReorgProjectIssues($id: ID!, $first: Int!, $after: String) {
+    issues(filter: { project: { id: { eq: $id } } }, includeArchived: true, first: $first, after: $after) {
+      nodes { id identifier archivedAt }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
 /** A project's initiative joins — initiativeToProjects has no filter argument. */
 const PROJECT_INIT_JOINS_Q = /* GraphQL */ `
   query ReorgProjectInitJoins($projectId: String!, $first: Int!, $after: String) {
@@ -2037,6 +2048,45 @@ async function assertTeamEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
 }
 
 /**
+ * Project guards (LIVE reads, no census trust), run by --check and by apply:
+ *  (a) an archived project refuses every modification except the unarchive
+ *      form of archive-project (Linear: "Could not modify archived project");
+ *  (b) archive-project refuses while the project still holds UNARCHIVED
+ *      issues, with the count (Linear: "The project cannot be deleted as it
+ *      contains N open issues");
+ *  (c) remove-project-team refuses when it would leave the project with zero
+ *      teams (Linear: "A project must belong to at least one team.").
+ */
+export async function assertProjectOpGuards(ctx: OpCtx, op: ReorgOp): Promise<void> {
+  if (op.target.type !== "project") return;
+  // Creates (create-project-status) target a project that does not exist yet.
+  if (op.target.id.startsWith("new:")) return;
+  const unarchiving = op.op === "archive-project" && op.to.archived === false;
+  const live = await readProject(ctx, op.target.id);
+  if (live.archived === true && !unarchiving)
+    throw new Error(
+      `${op.op} ${op.target.identifier}: could not modify archived project — unarchive it first`,
+    );
+  if (op.op === "archive-project" && !unarchiving) {
+    const issues = await paged<{ id: string; identifier?: string; archivedAt?: string | null }>(
+      ctx.client, ctx.pace, PROJECT_ISSUES_Q, "issues", { id: op.target.id }, undefined, true,
+    );
+    const open = issues.filter((i) => !i.archivedAt);
+    if (open.length > 0)
+      throw new Error(
+        `archive-project ${op.target.identifier}: the project cannot be archived as it contains ${open.length} open issue(s) — archive them first`,
+      );
+  }
+  if (op.op === "remove-project-team") {
+    const next = sortedStrings(live.teamIds).filter((t) => t !== op.to.teamId);
+    if (next.length === 0)
+      throw new Error(
+        `remove-project-team ${op.target.identifier}: a project must belong to at least one team — cannot remove its last team (${String(op.to.teamId)})`,
+      );
+  }
+}
+
+/**
  * The reads an op's apply performs before its first write — also run by
  * --check, so a dry run surfaces what apply would refuse. READS ONLY; throws
  * with the refusal text. Skipped by the caller for ops whose live state
@@ -2056,6 +2106,7 @@ export async function assertOpPreconditions(
   if (op.op === "relabel" || op.op === "move-issue-team") await assertNoInheritedWrites(ctx, op);
   if (op.op === "move-issue-team") await assertMovePreconditions(ctx, op, journal);
   await assertNoVisibilityChange(ctx, op);
+  await assertProjectOpGuards(ctx, op);
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op, planned);
   if (op.op === "archive-state") await assertStateEmpty(ctx, op);
   if (op.op === "delete-team") await assertTeamEmpty(ctx, op);
@@ -2363,6 +2414,7 @@ async function executeOne(
       kind: "visibility",
       detail: `visibility change (allowed) seq ${op.seq} [${op.op}] ${op.target.identifier}: ${allowedVis}`,
     });
+  await assertProjectOpGuards(ctx, op);
   if (op.op === "create-team-label") await assertCreateTeamLabelFree(ctx, op);
 
   // 3. write. A thrown error is not proof the write failed (seen live: an
