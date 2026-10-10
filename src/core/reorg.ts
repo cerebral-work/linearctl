@@ -1417,11 +1417,47 @@ export const OP_REGISTRY: Record<ReorgOpKind, OpDef> = {
     expectedPost: (op) => ({ archived: op.to.archived !== false, trashed: false }),
     async apply(ctx, op) {
       const restoring = op.to.archived === false;
-      await mutate(ctx, restoring ? "projectUnarchive" : "projectArchive",
-        restoring ? M.projectUnarchive : M.projectArchive, { id: op.target.id });
+      if (restoring) {
+        // Linear's projectUnarchive also UNARCHIVES the project's archived
+        // issues. Record the set first (journaled via `original`, the
+        // labelIdsComputed precedent) so a rollback can re-archive exactly
+        // these; cascadeRearchiveAfter restores them in the same op (the
+        // inverse of an archive, where leaving them open would not restore
+        // the pre-plan state).
+        const issues = await paged<{ id: string; archivedAt?: string | null }>(
+          ctx.client, ctx.pace, PROJECT_ISSUES_Q, "issues", { id: op.target.id }, undefined, true,
+        );
+        op.to.cascadeIssueIds = issues.filter((i) => i.archivedAt).map((i) => i.id).sort();
+        await mutate(ctx, "projectUnarchive", M.projectUnarchive, { id: op.target.id });
+        if (op.to.cascadeRearchiveAfter === true)
+          await rearchiveIssues(ctx, op, sortedStrings(op.to.cascadeIssueIds));
+        return;
+      }
+      // A re-archive restores the issues an earlier unarchive cascaded open
+      // BEFORE the project — Linear refuses archiving a project with open issues.
+      const cascade = sortedStrings(op.to.cascadeRearchiveIssueIds);
+      if (cascade.length > 0) await rearchiveIssues(ctx, op, cascade);
+      await mutate(ctx, "projectArchive", M.projectArchive, { id: op.target.id });
     },
     inverse(op) {
-      return { ...op, from: op.to, to: { archived: false, trashed: false }, evidence: `rollback of seq ${op.seq}` };
+      if (op.to.archived === false) {
+        // Rollback of an unarchive: re-archive the cascade issues the forward
+        // op journaled, BEFORE re-archiving the project.
+        return {
+          ...op,
+          from: op.to,
+          to: { archived: true, trashed: false, cascadeRearchiveIssueIds: sortedStrings(op.to.cascadeIssueIds) },
+          evidence: `rollback of seq ${op.seq}`,
+        };
+      }
+      // Rollback of an archive: unarchive, then re-archive the issues the
+      // cascade opens (they were archived before the plan ran).
+      return {
+        ...op,
+        from: op.to,
+        to: { archived: false, trashed: false, cascadeRearchiveAfter: true },
+        evidence: `rollback of seq ${op.seq}`,
+      };
     },
   },
 
@@ -2047,6 +2083,20 @@ async function assertTeamEmpty(ctx: OpCtx, op: ReorgOp): Promise<void> {
     throw new Error(`delete-team ${op.target.identifier}: ${member.length} project(s) still attached`);
 }
 
+/** Re-archive the issues an unarchive cascaded open, one verified write each
+ *  (a swallowed issueArchive must not pass silently). */
+async function rearchiveIssues(ctx: OpCtx, op: ReorgOp, ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await mutate(ctx, "issueArchive", M.issueArchive, { id });
+    const back = await readIssue(ctx, id);
+    if (back.archived !== true)
+      throw new ReorgMismatch(op.seq, {
+        expected: { issue: id, archived: true },
+        actual: { archived: back.archived },
+      });
+  }
+}
+
 /**
  * Project guards (LIVE reads, no census trust), run by --check and by apply:
  *  (a) an archived project refuses every modification except the unarchive
@@ -2071,7 +2121,11 @@ export async function assertProjectOpGuards(ctx: OpCtx, op: ReorgOp): Promise<vo
     const issues = await paged<{ id: string; identifier?: string; archivedAt?: string | null }>(
       ctx.client, ctx.pace, PROJECT_ISSUES_Q, "issues", { id: op.target.id }, undefined, true,
     );
-    const open = issues.filter((i) => !i.archivedAt);
+    // A re-archive carrying cascadeRearchiveIssueIds re-archives exactly those
+    // issues before the project write — they are exempt; any OTHER open issue
+    // still refuses.
+    const exempt = sortedStrings(op.to.cascadeRearchiveIssueIds);
+    const open = issues.filter((i) => !i.archivedAt && !exempt.includes(i.id));
     if (open.length > 0)
       throw new Error(
         `archive-project ${op.target.identifier}: the project cannot be archived as it contains ${open.length} open issue(s) — archive them first`,
@@ -3850,6 +3904,17 @@ function planVisibility(ops: ReorgOp[], censusData: CensusData): { rows: Visibil
  * add-project-team rules take `to.teamId`; the planner computes the FULL
  * `to.teamIds` (census membership + the added id) the mutation requires.
  */
+/** Project-modifying op kinds the planner wraps in the unarchive -> op ->
+ *  re-archive sandwich when the census marks the target project archived. */
+const PROJECT_SANDWICH_OPS: Record<string, true> = {
+  "set-project-status": true,
+  "set-project-lead": true,
+  "set-project-target": true,
+  "add-project-team": true,
+  "remove-project-team": true,
+  "move-project-initiative": true,
+};
+
 export function planFromRules(
   rules: ReorgRule[],
   censusData: CensusData,
@@ -3907,12 +3972,33 @@ export function planFromRules(
         throw new Error(`create-team-label rule with ref "${rule.ref}" matched ${targets.length} teams — a ref names exactly one op`);
     }
     for (const t of targets) {
-      seq++;
       const to = { ...rule.to };
       if (rule.op === "add-project-team" && typeof to.teamId === "string" && !to.teamIds) {
         const current = sortedStrings(t.from.teamIds);
         to.teamIds = [...new Set([...current, to.teamId])].sort();
       }
+      // A modifying op on a census-archived project is refused by the project
+      // guards unless the project is unarchived first — plan the
+      // unarchive -> op -> re-archive sandwich. The re-archive restores the
+      // issues Linear's projectUnarchive cascades open (the census archived
+      // set) BEFORE the project, since Linear refuses archiving a project
+      // with open issues.
+      const sandwich =
+        rule.op in PROJECT_SANDWICH_OPS && t.target.type === "project" && t.from.archived === true;
+      if (sandwich) {
+        seq++;
+        ops.push({
+          seq,
+          phase: rule.phase,
+          op: "archive-project",
+          target: t.target,
+          from: { archived: true, trashed: t.from.trashed === true },
+          to: { archived: false },
+          evidence: `${rule.evidence} (archived-project sandwich: unarchive to edit)`,
+          reversible: true,
+        });
+      }
+      seq++;
       if (rule.ref) {
         if (refSeq.has(rule.ref)) throw new Error(`duplicate rule ref "${rule.ref}"`);
         refSeq.set(rule.ref, ops.length);
@@ -3932,6 +4018,25 @@ export function planFromRules(
         ...(rule.batchKey ? { batchKey: rule.batchKey } : {}),
         ...(rule.allowVisibilityChange === true ? { allowVisibilityChange: true } : {}),
       });
+      if (sandwich) {
+        seq++;
+        ops.push({
+          seq,
+          phase: rule.phase,
+          op: "archive-project",
+          target: t.target,
+          from: { archived: false, trashed: false },
+          to: {
+            archived: true,
+            cascadeRearchiveIssueIds: censusData.issues
+              .filter((i) => i.projectId === t.target.id && i.archived)
+              .map((i) => i.id)
+              .sort(),
+          },
+          evidence: `${rule.evidence} (archived-project sandwich: re-archive)`,
+          reversible: true,
+        });
+      }
     }
   }
   // batchKey contract is "identical input": two batchable ops under one key

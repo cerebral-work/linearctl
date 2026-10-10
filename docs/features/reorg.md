@@ -92,6 +92,18 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   see Batching) as `REFUSE`. A `name:` ref whose planned create has not run yet
   is reported as drift and says so. The plain dry run reports the same
   plan-shape refusals and exits 1 instead of suggesting `--apply`.
+- **Project guards.** `--check` (as a refusal, never a silent skip) and
+  `apply` (before any write) refuse project ops Linear would reject: an
+  `archive-project` whose project still holds unarchived issues (refused with
+  the count, like Linear's "The project cannot be deleted as it contains N
+  open issues"), any op targeting an archived project except the unarchive
+  form of `archive-project` ("Could not modify archived project"), and a
+  `remove-project-team` that would leave the project with zero teams ("A
+  project must belong to at least one team."). The planner emits an
+  unarchive → op → re-archive sandwich for a modifying op on a census-archived
+  project; the re-archive restores the issues Linear's `projectUnarchive`
+  cascades open (recorded in the journal as `cascadeIssueIds`), issues before
+  the project, and rollback of an unarchive does the same.
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
   capped resume keeps advancing).
 - **Batching** is opt-in per op via `batchKey`: identical-input `relabel` /

@@ -309,6 +309,55 @@ describe("by-id selection + duplicate refusal", () => {
   });
 });
 
+describe("archived-project sandwich (planner, CER-2586 part 2)", () => {
+  const archivedCensus: CensusData = {
+    ...TOY_CENSUS,
+    projects: [{ ...TOY_CENSUS.projects[0], archivedAt: "2026-09-01T00:00:00Z" }],
+    issues: [
+      { ...TOY_CENSUS.issues[0], archived: true },
+      { id: "i-9", identifier: "EX-9", teamId: "t-ex", teamKey: "EX", stateId: "s-todo", labelIds: [], projectId: "p-1", cycleId: null, archived: true },
+    ],
+  };
+  const statusRule = () =>
+    rule({ op: "set-project-status", match: { entity: "project", where: { name: "Toy Project" } }, to: { statusId: "st-done" } });
+
+  test("(b) a modifying op on an archived project becomes unarchive -> op -> re-archive", () => {
+    const plan = planFromRules([statusRule()], archivedCensus, META);
+    expect(plan.ops.map((o) => o.op)).toEqual(["archive-project", "set-project-status", "archive-project"]);
+    const [u, m, r] = plan.ops;
+    expect([u.seq, m.seq, r.seq]).toEqual([1, 2, 3]);
+    expect(u.target.id).toBe("p-1");
+    expect(r.target.id).toBe("p-1");
+    // anchors: U expects the archived live state; R expects the post-U state
+    expect(u.from).toMatchObject({ archived: true, trashed: false });
+    expect(u.to).toMatchObject({ archived: false });
+    expect(r.from).toMatchObject({ archived: false, trashed: false });
+    expect(r.to.archived).toBe(true);
+    // R restores the issues Linear's unarchive cascades open (census archived set)
+    expect(r.to.cascadeRearchiveIssueIds).toEqual(["i-1", "i-9"]);
+    // all three are reversible and carry the rule's phase
+    for (const o of [u, m, r]) {
+      expect(o.reversible).toBe(true);
+      expect(o.phase).toBe(1);
+    }
+  });
+
+  test("positive control: the same rule on an unarchived project plans one op", () => {
+    const plan = planFromRules([statusRule()], TOY_CENSUS, META);
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].op).toBe("set-project-status");
+  });
+
+  test("control: archive-project itself is not sandwiched", () => {
+    const plan = planFromRules(
+      [rule({ op: "archive-project", match: { entity: "project", where: { name: "Toy Project" } }, to: { archived: true } })],
+      archivedCensus, META,
+    );
+    expect(plan.ops).toHaveLength(1);
+    expect(plan.ops[0].op).toBe("archive-project");
+  });
+});
+
 describe("planner warnings + coercion", () => {
   test("warns when a to-be-deleted team is referenced by rules or still on census projects", () => {
     const census = {
