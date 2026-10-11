@@ -7,8 +7,8 @@ SHELL := bash
 
 .PHONY: help dev build typecheck test bench check smoke hygiene cpm-check wave-runner
 
-help: ## List targets
-	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z0-9_-]+:.*## / { printf "  %-16s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+help: ## Display this categorized list of available Makefile targets
+	@awk 'BEGIN {FS = ":.*##"; printf "\n\033[1mUsage:\033[0m\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z0-9_.-]+:.*?##/ { printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1;33m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
 
 dev: ## Run development CLI
 	bun run dev
