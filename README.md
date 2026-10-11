@@ -120,6 +120,37 @@ linearctl search --cache "reconcile loop" --team CER --json
 - **Single-Binary:** Fully self-contained in `dist/linearctl` with zero external database processes or runtime C dependencies.
 - **Full Architecture & Reference:** See [`docs/features/local-cache.md`](./docs/features/local-cache.md).
 
+## Optional Beads Graph Integration (`linearctl beads` / `pull --beads`)
+
+Discovery-based integration with [gastownhall/beads](https://github.com/gastownhall/beads) (`bd`). Enables AI coding agents and autonomous loops to track Linear issue dependencies locally and find unblocked work (`ready` tasks) without network overhead.
+
+```bash
+# Initialize local Beads workspace in the current repository
+linearctl beads init --team CER
+
+# Inspect graph status and unblocked ready count
+linearctl beads status
+
+# Synchronize issues and blocking relations between Linear and local Beads graph
+linearctl beads sync
+
+# Discover unblocked ready tasks
+linearctl beads ready --json
+
+# Stream only unblocked tasks through the ingestion funnel
+linearctl pull --beads --json
+
+# Atomically claim an unblocked task locally
+linearctl beads claim CER-101 --push
+
+# Close a task and immediately unblock downstream dependencies
+linearctl beads close CER-101 --reason "Fixed in commit abc123" --push
+```
+
+- **Non-Invasive:** Projects without Beads continue to function identically with zero overhead.
+- **Dual Execution Engine:** Fully interoperable with the system `bd` CLI if installed; embeds an autonomous standalone graph engine when `bd` is not present.
+- **Full Architecture & Reference:** See [`docs/features/beads.md`](./docs/features/beads.md).
+
 ## The funnel contract — machine-to-machine Linear control
 
 The core in-cluster primitive. `linearctl pull` + `linearctl update --state` +

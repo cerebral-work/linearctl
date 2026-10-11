@@ -9,7 +9,8 @@ Full design: `docs/spec.md`. Roadmap: `docs/roadmap.md`. Tooling rationale: `doc
 `whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
 `triage`, `stale`, `xref`, `milestone`, `show`, `ratelimit`, `doc`
 (get-overview / set-overview), `cache` (sync / status / clear / query),
-`pull --cache` / `search --cache`, and `mcp serve` (stdio MCP server — 12 tools:
+`beads` (init / status / sync / pull / push / ready / show / claim / close / export / import),
+`pull --cache` / `pull --beads` / `search --cache`, and `mcp serve` (stdio MCP server — 12 tools:
 reads `whoami`/`project_list`/`digest`/`triage`/`milestone`/`stale`/`project_overview_get`,
 writes `file_issue`/`project_create`/`issue_update`/`issue_close`/`project_overview_set`)
 are implemented and
@@ -50,5 +51,5 @@ commit a key; `*.env` is git-ignored.
 ## Layout
 
 `src/index.ts` (commander dispatch) · `src/client.ts` (LinearClient factory) ·
-`src/commands/*` (one file per subcommand) · `src/core/cache/*` (local SQLite ORM, delta sync, query engine) · `src/lib/*` (pure helpers) ·
+`src/commands/*` (one file per subcommand) · `src/core/cache/*` (local SQLite ORM, delta sync, query engine) · `src/core/beads/*` (optional discovery-based Beads graph engine) · `src/lib/*` (pure helpers) ·
 `test/*` · `docs/` · `.github/workflows/` (`ci`, `release`, `linear-release[-dev]`).
