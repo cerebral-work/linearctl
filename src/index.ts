@@ -52,7 +52,9 @@ import {
   beadsCloseCmd,
   beadsExportCmd,
   beadsImportCmd,
+  beadsPlanCmd,
 } from "./commands/beads.js";
+import { planGenerateCmd, planScheduleCmd } from "./commands/plan.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -516,6 +518,76 @@ beadsCmd
   .description("Import issues from an issues.jsonl file into local Beads workspace.")
   .option("--dry-run", "preview import without writing")
   .action((file, opts) => beadsImportCmd(file, opts));
+
+beadsCmd
+  .command("plan")
+  .description("Generate a Saga Spec 0040 CPM plan (.saga/plans/*.toml) from the local Beads graph.")
+  .option("--name <name>", "flow name (default: linear-cpm-plan)")
+  .option("--desc <text>", "flow description")
+  .option("--out <file>", "output file path (default stdout)")
+  .option("--team <key...>", "filter by team key(s)")
+  .option("--priority <0-4>", "filter by priority threshold", (v: string) => parseInt(v, 10))
+  .option("--include-closed", "include closed issues in the plan")
+  .option("--max-concurrency <n>", "max concurrent steps in wave (default: 3)", (v: string) => parseInt(v, 10))
+  .option("--pr-base <branch>", "base branch for pull requests (default: development)")
+  .option("--on-halt <policy>", "halt policy: cancel-dependents or halt-all", "cancel-dependents")
+  .option("--add-critic", "pair each builder step with a critic review step")
+  .option("--schedule", "calculate CPM schedule and wave breakdown")
+  .option("--json", "emit JSON")
+  .action((opts) => beadsPlanCmd(opts));
+
+const planCmd = program
+  .command("plan")
+  .description("Generate and inspect Saga Spec 0040 critical-path plans (.saga/plans/*.toml) from Linear and Beads.")
+  .option("--name <name>", "flow name (default: linear-cpm-plan)")
+  .option("--desc <text>", "flow description")
+  .option("--out <file>", "output file path (default stdout)")
+  .option("--from <source>", "source of issues: beads, linear, or auto", "auto")
+  .option("--team <key...>", "filter by team key(s)")
+  .option("--project <ref>", "filter by project ID or name")
+  .option("--milestone <ref>", "filter by milestone ID or name")
+  .option("--label <name...>", "filter by label(s)")
+  .option("--priority <0-4>", "filter by priority threshold", (v: string) => parseInt(v, 10))
+  .option("--include-closed", "include closed issues in the plan")
+  .option("--max-concurrency <n>", "max concurrent steps in wave (default: 3)", (v: string) => parseInt(v, 10))
+  .option("--pr-base <branch>", "base branch for pull requests (default: development)")
+  .option("--on-halt <policy>", "halt policy: cancel-dependents or halt-all", "cancel-dependents")
+  .option("--open-prs", "enable PR creation on critic pass")
+  .option("--merge-on-green", "enable automated merge step after critic")
+  .option("--add-critic", "pair each builder step with a critic review step")
+  .option("--schedule", "calculate CPM schedule and wave breakdown")
+  .option("--json", "emit JSON")
+  .action((opts) => planGenerateCmd(opts));
+
+planCmd
+  .command("generate")
+  .description("Generate a Saga Spec 0040 plan file from Linear issues or local Beads graph.")
+  .option("--name <name>", "flow name (default: linear-cpm-plan)")
+  .option("--desc <text>", "flow description")
+  .option("--out <file>", "output file path (default stdout)")
+  .option("--from <source>", "source of issues: beads, linear, or auto", "auto")
+  .option("--team <key...>", "filter by team key(s)")
+  .option("--project <ref>", "filter by project ID or name")
+  .option("--milestone <ref>", "filter by milestone ID or name")
+  .option("--label <name...>", "filter by label(s)")
+  .option("--priority <0-4>", "filter by priority threshold", (v: string) => parseInt(v, 10))
+  .option("--include-closed", "include closed issues in the plan")
+  .option("--max-concurrency <n>", "max concurrent steps in wave (default: 3)", (v: string) => parseInt(v, 10))
+  .option("--pr-base <branch>", "base branch for pull requests (default: development)")
+  .option("--on-halt <policy>", "halt policy: cancel-dependents or halt-all", "cancel-dependents")
+  .option("--open-prs", "enable PR creation on critic pass")
+  .option("--merge-on-green", "enable automated merge step after critic")
+  .option("--add-critic", "pair each builder step with a critic review step")
+  .option("--schedule", "calculate CPM schedule and wave breakdown")
+  .option("--json", "emit JSON")
+  .action((opts) => planGenerateCmd(opts));
+
+planCmd
+  .command("schedule [file]")
+  .description("Print critical-path schedule (es, ef, ls, lf, slack) and execution waves for a plan file or stdin.")
+  .option("--max-concurrency <n>", "max concurrency override", (v: string) => parseInt(v, 10))
+  .option("--json", "emit JSON")
+  .action((file, opts) => planScheduleCmd(file, opts));
 
 const cacheCmd = program
   .command("cache")

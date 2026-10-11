@@ -119,7 +119,7 @@ interface RawLinearRelationNode {
 /**
  * Fetch issues from Linear GraphQL API with pagination.
  */
-async function fetchLinearIssues(
+export async function fetchLinearIssues(
   client: LinearClient,
   options: BeadsSyncOptions
 ): Promise<RawLinearIssueNode[]> {
@@ -164,7 +164,7 @@ async function fetchLinearIssues(
 /**
  * Fetch issue relations from Linear GraphQL API.
  */
-async function fetchLinearRelations(client: LinearClient): Promise<RawLinearRelationNode[]> {
+export async function fetchLinearRelations(client: LinearClient): Promise<RawLinearRelationNode[]> {
   const allNodes: RawLinearRelationNode[] = [];
   let after: string | undefined = undefined;
 

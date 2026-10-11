@@ -414,3 +414,9 @@ export async function beadsImportCmd(filePath: string, opts: { dryRun?: boolean 
 
   process.stdout.write(pc.green(`✓ Imported ${importedIssues.length} issues (${added} added, ${updated} updated)\n`));
 }
+
+export async function beadsPlanCmd(opts: import("./plan.js").PlanCmdOptions): Promise<void> {
+  const { planGenerateCmd } = await import("./plan.js");
+  await planGenerateCmd({ ...opts, from: "beads" });
+}
+
