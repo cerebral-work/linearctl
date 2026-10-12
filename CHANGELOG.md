@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.1](https://github.com/cerebral-work/linearctl/compare/v0.21.0...v0.21.1) (2026-10-12)
+
+
+### Documentation
+
+* author initial roadmap feature spec and sync product roadmap ([c7e24ea](https://github.com/cerebral-work/linearctl/commit/c7e24ea7ffd4f14eae6fcbfd248aa1c3ab4a223d))
+* author initial roadmap feature spec and sync product roadmap ([d3973f7](https://github.com/cerebral-work/linearctl/commit/d3973f7a6470a2b9ef00303a5dd259381aa9cde5))
+
 ## [0.21.0](https://github.com/cerebral-work/linearctl/compare/v0.20.0...v0.21.0) (2026-10-12)
 
 
