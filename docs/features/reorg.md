@@ -103,14 +103,24 @@ linearctl reorg rollback reorg-plan.jsonl.applied.jsonl --phase N --apply   # wr
   unarchive → op → re-archive sandwich for a modifying op on a census-archived
   project; the re-archive restores the issues Linear's `projectUnarchive`
   cascades open (recorded in the journal as `cascadeIssueIds`), issues before
-  the project, and rollback of an unarchive does the same. Until plan-state
-  simulation lands, `--check` reports the sandwich's middle op REFUSED and
-  its re-archive DRIFT against live state (each sandwich plan carries a
-  `_meta.warnings` entry saying so); `--apply` is correct. The re-archive
+  the project, and rollback of an unarchive does the same. The re-archive
   carries the CENSUS archived-issue set, not a live read: an issue archived
   after the census leaves the re-archive refused by the open-issue guard with
   the project already unarchived — recover by rolling back the unarchive op.
   That is deliberate; the set is not derived live.
+- **Plan-state simulation in `--check`.** A target an earlier op in the same
+  plan writes is read from the planned post-state (seeded from its live read,
+  advanced by each passing op's expected post-state, keyed by target type +
+  id), not from the stale census anchor — so `remove-project-team` after
+  `add-project-team`, or the sandwich's middle op and re-archive, check clean
+  instead of reporting DRIFT/REFUSE. The simulation advances only through ops
+  that pass; an op whose `from` ignores an earlier write drifts against the
+  planned state, with the writer seq named. What stays live: collection
+  emptiness probes (`delete-team`, `archive-state`), label-name and
+  inheritance reads, move preconditions, team privacy and members, creates
+  (`new:` targets), delete forms, and WHICH issues belong to a project (the
+  open-issue guard reads membership live and takes only each member's
+  archived flag from the simulation).
 - **`--resume`** skips journaled-ok seqs (before `--max-ops` slices, so a
   capped resume keeps advancing).
 - **Batching** is opt-in per op via `batchKey`: identical-input `relabel` /
