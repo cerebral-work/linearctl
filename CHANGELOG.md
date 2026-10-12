@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.0](https://github.com/cerebral-work/linearctl/compare/v0.20.0...v0.21.0) (2026-10-12)
+
+
+### Features
+
+* simulate planned writes in reorg --check (plan-state simulation) ([fb758b6](https://github.com/cerebral-work/linearctl/commit/fb758b6967ca276c23a44dc0a1fed57f99681892))
+* simulate planned writes in reorg --check (plan-state simulation) ([c593493](https://github.com/cerebral-work/linearctl/commit/c593493c97a5db3f54cf0a37b48a15ff7e25ae31))
+
 ## [0.20.0](https://github.com/cerebral-work/linearctl/compare/v0.19.0...v0.20.0) (2026-10-12)
 
 
