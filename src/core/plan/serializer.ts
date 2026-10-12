@@ -18,7 +18,7 @@ function escapeTomlString(str: string): string {
 function formatTomlString(str: string): string {
   if (str.includes("\n")) {
     // Multi-line basic string
-    const escaped = str.replace(/\\/g, "\\\\").replace(/"""/g, '"""');
+    const escaped = str.replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"');
     return `"""\n${escaped}\n"""`;
   }
   return `"${escapeTomlString(str)}"`;
@@ -182,11 +182,16 @@ function parseTomlValue(val: string): unknown {
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return trimmed
       .slice(1, -1)
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\")
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t");
+      .replace(/\\([\\"/nrt])/g, (_, char) => {
+        switch (char) {
+          case '"': return '"';
+          case '\\': return '\\';
+          case 'n': return '\n';
+          case 'r': return '\r';
+          case 't': return '\t';
+          default: return char;
+        }
+      });
   }
   return trimmed;
 }
