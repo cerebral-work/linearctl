@@ -21,6 +21,7 @@ Linear via the dogfood loop) · `in-progress` · `shipped`.
 | [Templates](./template.md) | `linearctl template` | ticketed CER-1562 | File issues from reusable markdown templates. |
 | [TUI dashboard](./tui.md) | `linearctl tui` | ticketed CER-1550 | Full-screen keyboard-driven dashboard — 5 panes over the same `core/*`. |
 | [Interactive mode](./interactive.md) | `linearctl <cmd> --interactive` | shipped (core) CER-1551 | Prompts, spinners, styled output when TTY + no `--json` + missing args. |
+| [Beads Integration](./beads.md) | `linearctl beads` · `pull --beads` | shipped CER-2660 | Optional, discovery-based Beads graph issue tracking & dependency resolution for Linear state. |
 
 ## Reference
 

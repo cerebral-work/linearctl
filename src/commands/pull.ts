@@ -1,6 +1,7 @@
 import { makeClient } from "../client.js";
 import { pullIssues } from "../core/pull.js";
 import { printJson } from "../lib/output.js";
+import { usageError } from "../lib/errors.js";
 
 export interface PullOptions {
   team?: string[];
@@ -20,6 +21,8 @@ export interface PullOptions {
   limit?: number;
   /** Read from local SQLite cache instead of live Linear API. */
   cache?: boolean;
+  /** Filter to unblocked ready tasks using discovered local Beads graph. */
+  beads?: boolean;
 }
 
 /**
@@ -33,6 +36,18 @@ export interface PullOptions {
  * lifts it. Ordered by `updatedAt` desc.
  */
 export async function pull(opts: PullOptions): Promise<void> {
+  let readyIds: Set<string> | null = null;
+  if (opts.beads) {
+    const { discoverBeads, loadBeadsIssues, getReadyIssues } = await import("../core/beads/index.js");
+    const discovery = discoverBeads();
+    if (!discovery.found) {
+      throw usageError("No Beads workspace discovered. Run 'linearctl beads init' to initialize, or set BEADS_DIR.");
+    }
+    const beadsIssues = loadBeadsIssues(discovery);
+    const ready = getReadyIssues(beadsIssues);
+    readyIds = new Set(ready.map((r) => r.id));
+  }
+
   const useCache = opts.cache ?? (process.env.LINEARCTL_CACHE === "true");
 
   if (useCache) {
@@ -40,7 +55,7 @@ export async function pull(opts: PullOptions): Promise<void> {
     const { pullCachedIssues } = await import("../core/cache/query.js");
     const cache = openCacheDb();
     try {
-      const items = pullCachedIssues(cache, {
+      let items = pullCachedIssues(cache, {
         teamKeys: opts.team,
         state: opts.state,
         stateSet: opts.stateSet,
@@ -54,6 +69,9 @@ export async function pull(opts: PullOptions): Promise<void> {
         createdSince: opts.createdSince,
         limit: opts.limit,
       });
+      if (readyIds) {
+        items = items.filter((item) => readyIds.has(item.identifier) || readyIds.has(item.id));
+      }
       printJson(items);
       return;
     } finally {
@@ -62,7 +80,7 @@ export async function pull(opts: PullOptions): Promise<void> {
   }
 
   const client = makeClient();
-  const items = await pullIssues(client, {
+  let items = await pullIssues(client, {
     teamKeys: opts.team,
     state: opts.state,
     stateSet: opts.stateSet,
@@ -76,6 +94,10 @@ export async function pull(opts: PullOptions): Promise<void> {
     createdSince: opts.createdSince,
     limit: opts.limit,
   });
+
+  if (readyIds) {
+    items = items.filter((item) => readyIds.has(item.identifier) || readyIds.has(item.id));
+  }
 
   // JSON is the only output path — `pull` exists for machine consumption.
   // `--json` is accepted for consistency with every other command, but the
