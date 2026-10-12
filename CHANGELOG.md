@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.20.0](https://github.com/cerebral-work/linearctl/compare/v0.19.0...v0.20.0) (2026-10-12)
+
+
+### Features
+
+* **beads,plan:** integrate Beads graph tracking and Saga Spec 0040 CPM plan generation ([4ce0a9b](https://github.com/cerebral-work/linearctl/commit/4ce0a9bbbb80f151da7773cf182d2dec28174d42))
+* **beads:** integrate optional discovery-based beads graph issue tracking ([9ad0fd5](https://github.com/cerebral-work/linearctl/commit/9ad0fd598653aa88db08d65e7de6b38c4700a41e))
+* **plan:** add Saga Spec 0040 CPM plan generation and wave scheduling ([b741406](https://github.com/cerebral-work/linearctl/commit/b741406ff45a867b9119ebd391ac8f359d0de468))
+
+
+### Bug Fixes
+
+* **milestone:** resolve --project option absorption on gap subcommand (CER-2820) ([c732ce4](https://github.com/cerebral-work/linearctl/commit/c732ce4a9a8dd1ff662f86731cd6c93523319992))
+* **milestone:** resolve --project option absorption on gap subcommand (CER-2820) ([c9b847e](https://github.com/cerebral-work/linearctl/commit/c9b847e736de43e77ea4cf1c766afba9671aa370))
+* **plan:** eliminate CodeQL double-unescape and redundant quote replacement in serializer ([fcfceea](https://github.com/cerebral-work/linearctl/commit/fcfceea079c0604f96fa1e6a425bb558784c9ebe))
+
 ## [0.19.0](https://github.com/cerebral-work/linearctl/compare/v0.18.0...v0.19.0) (2026-10-10)
 
 
