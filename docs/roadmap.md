@@ -13,17 +13,17 @@ This document outlines the product vision, architecture milestones, and delivery
 
 ```mermaid
 flowchart LR
-    H0["Retrospective\n(v0.1.0 – v0.13.0)"] --> H1["Horizon 1: Cluster Deploy\n(v0.14.0)"]
-    H1 --> H2["Horizon 2: K8s Operator\n(v0.15.0)"]
-    H2 --> H3["Horizon 3: Agent Gateway\n(v0.16.0)"]
+    H0["Retrospective\n(v0.1.0 – v0.21.0)"] --> H1["Horizon 1: Cluster Deploy\n(v0.22.0)"]
+    H1 --> H2["Horizon 2: K8s Operator\n(v0.23.0)"]
+    H2 --> H3["Horizon 3: Agent Gateway\n(v0.24.0)"]
     H3 --> H4["Horizon 4: v1.0 Stabilization\n(v1.0.0)"]
 ```
 
 ---
 
-## Retrospective: Completed Milestones (v0.1.0 – v0.13.0)
+## Retrospective: Completed Milestones (v0.1.0 – v0.21.0)
 
-The foundational CLI capabilities, local cache engine, and release pipeline are complete.
+The foundational CLI capabilities, local cache engine, graph tracking, plan generation, and release pipelines are complete.
 
 ### Core CLI Foundations (M0 – M2)
 - **Scaffolding & SDK Integration (M0):** Initial Bun project configuration with `@linear/sdk`.
@@ -45,9 +45,21 @@ The foundational CLI capabilities, local cache engine, and release pipeline are 
 - Reorganization batch write error recovery and automatic state re-read (PR #195).
 - In-repo distroless container builds signed with Cosign and published to Harbor (CER-2647).
 
+### Issue Relations & Write-Through Cache (v0.14.0 – v0.19.0)
+- Direct issue relation wiring (`linearctl relate`, CER-2815) supporting `blockedBy`, `blocking`, `relatedTo`, and `duplicateOf` with non-blocking write-through to `issue_relations`.
+- Hardened multi-team cache resolution and benchmark guardrails.
+
+### Beads Graph Tracking & Saga Spec 0040 CPM Planning (v0.20.0)
+- Discovery-based local Beads graph tracking (`linearctl beads`, CER-2660) with state sync, claim, close, and ready inspection.
+- Saga Spec 0040 Critical Path Method (CPM) plan generation and wave scheduling (`linearctl plan`, CER-2821).
+- Milestone gap project option absorption fix (`linearctl milestone gap --project`, CER-2820).
+
+### In-Memory Plan State Simulation (v0.21.0)
+- Simulated reorg execution (`linearctl reorg --check`, CER-2810) evaluating planned writes against virtual state to catch invalid transitions before application.
+
 ---
 
-## Horizon 1: Production Cluster Deployment (Target: v0.14.0)
+## Horizon 1: Production Cluster Deployment (Target: v0.22.0)
 
 **Goal:** Run `linearctl` as an always-on deployment in the `unsigned-paas` Kubernetes cluster.
 
@@ -64,7 +76,7 @@ The foundational CLI capabilities, local cache engine, and release pipeline are 
 
 ---
 
-## Horizon 2: Kubernetes Operator Mode (Target: v0.15.0)
+## Horizon 2: Kubernetes Operator Mode (Target: v0.23.0)
 
 **Goal:** Introduce `linearctl-operator` to reconcile declarative Kubernetes Custom Resources directly with Linear.
 
@@ -98,7 +110,7 @@ spec:
 
 ---
 
-## Horizon 3: Reverie & Agent Mesh Supergateway (Target: v0.16.0)
+## Horizon 3: Reverie & Agent Mesh Supergateway (Target: v0.24.0)
 
 **Goal:** Establish `linearctl` as the central ticket access layer for autonomous agent clusters.
 
@@ -143,6 +155,9 @@ The following table maps delivery horizons to Linear project milestones and trac
 | **Shipped** | M2 · Write + batch | CER-1031..CER-1050 | Closed | 2026-07-28 |
 | **Shipped** | M4 · Native agent | CER-1148, CER-1149, CER-1550 | Closed | 2026-09-30 |
 | **Shipped** | Local Ticket Copy ORM Cache | CER-2650..CER-2664 | Closed | 2026-10-08 |
+| **Shipped** | Issue Relations & Write-Through | CER-2815, CER-2612 | Closed | 2026-10-10 |
+| **Shipped** | Beads Graph & CPM Planning | CER-2660, CER-2821, CER-2820 | Closed | 2026-10-12 |
+| **Shipped** | Reorg Plan Simulation | CER-2810 | Closed | 2026-10-12 |
 | **Horizon 1** | Production Deployment | CER-2647 | In Progress | 2026-10-20 |
 | **Horizon 2** | Kubernetes Operator | CER-1695, CER-1696, CER-1698, CER-1699 | Backlog | 2026-11-15 |
 | **Horizon 3** | reverie Cloud Tie-In | CER-1693, CER-1846 | Backlog | 2026-11-30 |

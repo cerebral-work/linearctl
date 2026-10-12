@@ -17,6 +17,8 @@ secrets.env
 .DS_Store
 .blackwall/
 .dagr/
+.saga/
+.beads/
 
 # Lane persona (lane-persona, ephemeral)
 .agents/persona.md

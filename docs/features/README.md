@@ -22,6 +22,11 @@ Linear via the dogfood loop) · `in-progress` · `shipped`.
 | [TUI dashboard](./tui.md) | `linearctl tui` | ticketed CER-1550 | Full-screen keyboard-driven dashboard — 5 panes over the same `core/*`. |
 | [Interactive mode](./interactive.md) | `linearctl <cmd> --interactive` | shipped (core) CER-1551 | Prompts, spinners, styled output when TTY + no `--json` + missing args. |
 | [Beads Integration](./beads.md) | `linearctl beads` · `pull --beads` | shipped CER-2660 | Optional, discovery-based Beads graph issue tracking & dependency resolution for Linear state. |
+| [Roadmap timeline](./roadmap.md) | `linearctl roadmap` | shipped CER-1688 | Milestone timeline view with target dates, progress bars, and issue lists. |
+| [CPM Plan generation](./plan.md) | `linearctl plan` | shipped CER-2821 | Saga Spec 0040 Critical Path Method (CPM) plans and wave scheduling. |
+| [Local ORM cache](./local-cache.md) | `linearctl cache` | shipped CER-2650 | Sub-millisecond SQLite replica with delta sync and write-through. |
+| [Workspace reorg](./reorg.md) | `linearctl reorg` | shipped CER-2810 | Workspace audit, plan, and mutation simulation with atomic rollback. |
+| [Backup](./backup.md) | `linearctl backup` | shipped CER-1555 | Read-only JSONL workspace backup and entity manifest verification. |
 
 ## Reference
 
