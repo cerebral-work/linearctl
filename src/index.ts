@@ -159,9 +159,15 @@ milestoneCmd
 milestoneCmd
   .command("gap")
   .description("Milestone coverage gaps: empty milestones, unassigned issues, doc-section gaps.")
-  .requiredOption("--project <ref>", "project (UUID, slug id, or name)")
+  .option("--project <ref>", "project (UUID, slug id, or name)")
   .option("--json", "emit JSON")
-  .action((opts) => milestoneGap(opts));
+  .action((opts: { project?: string; json?: boolean }, cmd: Command) => {
+    const allOpts = cmd.optsWithGlobals();
+    const project = opts.project ?? (allOpts.project as string | undefined);
+    const json = (opts.json ?? allOpts.json) as boolean | undefined;
+    if (!project) throw usageError("milestone gap needs --project <ref>.");
+    return milestoneGap({ project, json });
+  });
 
 const projectCmd = program
   .command("project")

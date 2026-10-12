@@ -108,6 +108,7 @@ function subcommandExample(command: Command, names: string[]): string {
     "milestone create": "linearctl milestone create 'Launch' --project 'Example project' --json",
     "milestone update": "linearctl milestone update 00000000-0000-4000-8000-000000000001 --name Launch --json",
     "milestone delete": "linearctl milestone delete 00000000-0000-4000-8000-000000000001 --json",
+    "milestone gap": "linearctl milestone gap --project 'Example project' --json",
     "doc create": "linearctl doc create 'Runbook' --team ENG --content 'Setup instructions' --json",
     "doc update": "linearctl doc update 00000000-0000-4000-8000-000000000001 --content 'Setup instructions' --json",
     "handoff create": "linearctl handoff create --title 'Next steps' --body 'Run the checks' --json",
