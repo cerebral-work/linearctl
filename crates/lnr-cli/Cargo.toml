@@ -24,3 +24,9 @@ tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+# cargo-machete 0.9.1 finds no use of these (2026-10-14, xtask contract v1 gate).
+# Listed, not removed: dropping dependencies belongs in its own change. Remove
+# them there and delete this list.
+ignored = ["anyhow", "clap", "tracing"]
