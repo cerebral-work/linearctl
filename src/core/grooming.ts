@@ -16,6 +16,8 @@ export interface TriageItem {
   estimate: number | null;
   reasons: string[];
   url: string;
+  labels?: string[];
+  project?: string | null;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function triage(
     if (!issue.assignee) reasons.push("unassigned");
     if (issue.estimate == null) reasons.push("unestimated");
     if (!issue.priority) reasons.push("no-priority");
+    const labels = (issue.labels?.nodes ?? []).map((l) => l.name).sort();
     return {
       identifier: issue.identifier,
       title: issue.title,
@@ -62,6 +65,8 @@ export async function triage(
       estimate: issue.estimate ?? null,
       reasons,
       url: issue.url,
+      labels,
+      project: issue.project?.name ?? null,
     };
   });
 }

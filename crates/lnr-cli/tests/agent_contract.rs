@@ -589,4 +589,44 @@ fn ported_linear_and_cache_commands_work_end_to_end() {
 
     let clear = run_lnr(&["cache", "clear", "--db", db_str, "--json"], "", None);
     assert_eq!(clear.code, 0, "stderr={}", clear.err);
+
+    let intake_single = run_lnr(
+        &[
+            "intake",
+            "ENG-123",
+            "--require-label",
+            "agent-eligible",
+            "--json",
+        ],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(intake_single.code, 0, "stderr={}", intake_single.err);
+    let intake_json: Value = serde_json::from_str(&intake_single.out).unwrap();
+    assert_eq!(intake_json["linear_issue_id"].as_str(), Some("ENG-123"));
+    assert_eq!(intake_json["workflow"].as_str(), Some("bugfix"));
+    assert_eq!(intake_json["tier"].as_str(), Some("capable"));
+
+    let intake_triage = run_lnr(
+        &[
+            "intake",
+            "--triage",
+            "--team",
+            "ENG",
+            "--require-label",
+            "agent-eligible",
+            "--all",
+            "--json",
+        ],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(intake_triage.code, 0, "stderr={}", intake_triage.err);
+    let intake_triage_json: Value = serde_json::from_str(&intake_triage.out).unwrap();
+    assert_eq!(intake_triage_json.as_array().unwrap().len(), 1);
+    assert_eq!(intake_triage_json[0]["eligible"].as_bool(), Some(true));
+    assert_eq!(
+        intake_triage_json[0]["linear_issue_id"].as_str(),
+        Some("ENG-123")
+    );
 }

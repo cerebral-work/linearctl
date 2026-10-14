@@ -9,3 +9,4 @@ This directory holds the LeanSpec registry for `lnr` (`linearctl`). Every spec i
 | [0003](0003-borrow-researchd-xerj.md) | Borrow domain, BM25/token-budget, Saga/CPM/DBR, security, and xtask DAG code from `researchd` and `xerj` | complete | high |
 | [0004](0004-complete-rust-cutover.md) | Complete the Rust strangler cutover across all CLI commands and `dist/lnr` binary | complete | high |
 | [0005](0005-k8s-operator-crds-and-blackwall.md) | Kubernetes Operator CRDs, Blackwall Digest Contract, and In-Cluster MCP Bridge | complete | high |
+| [0006](0006-intake-plan-submission-and-runbook.md) | Canonical setup runbook and escapement `PlanSubmission` intake mapping | complete | high |
