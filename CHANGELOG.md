@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.0](https://github.com/cerebral-work/lnr/compare/v0.23.0...v0.24.0) (2026-10-14)
+
+
+### Features
+
+* **rust:** borrow BM25, token-budget, Saga/CPM/DBR/DSM, security, and xtask DAG from researchd and xerj ([9d29457](https://github.com/cerebral-work/lnr/commit/9d29457e5f073b525663507c95cdc4dd57db2c94))
+* **rust:** borrow BM25, token-budget, Saga/CPM/DBR/DSM, security, and xtask DAG from researchd and xerj ([43c5754](https://github.com/cerebral-work/lnr/commit/43c57546be1b4999a44bfab8befbfd071dee587d))
+
 ## [0.23.0](https://github.com/cerebral-work/lnr/compare/v0.22.0...v0.23.0) (2026-10-14)
 
 
