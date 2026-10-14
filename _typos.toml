@@ -1,0 +1,2 @@
+[files]
+extend-exclude = ["vendor/", "Cargo.lock", "bun.lock", "node_modules/", "dist/", "test/fixtures/"]

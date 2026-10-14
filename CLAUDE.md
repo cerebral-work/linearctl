@@ -1,55 +1,14 @@
-# linearctl — Claude Code project guide
+# lnr (linearctl) — Claude Code project guide
 
-`linearctl` — a headless TypeScript CLI on **`@linear/sdk`** for recurring
-Linear workflows (digest, file, triage, milestone). Built + shipped with **bun**.
-Full design: `docs/spec.md`. Roadmap: `docs/roadmap.md`. Tooling rationale: `docs/decisions.md`.
+Canonical rules for people and agents live in [`AGENTS.md`](AGENTS.md). Read [`AGENTS.md`](AGENTS.md) first.
 
-## Status: command surface complete + plugin/MCP shipped
+`lnr` (backward-compatible alias: `linearctl`) is a headless CLI and operator on **`@linear/sdk`** for recurring Linear workflows (`digest`, `file`, `triage`, `milestone`, `roadmap`, `plan`, `reorg`, `cache`, `beads`, `mcp serve`), paired with an estate Rust strangler workspace (`crates/lnr-domain`, `crates/lnr-cli`, `xtask`).
+Full design: `docs/spec.md` and `specs/`. Roadmap: `docs/roadmap.md`. Tooling rationale: `docs/decisions.md`.
 
-`whoami`, `project` (create / list), `file`, `update` / `close`, `digest`,
-`triage`, `stale`, `xref`, `milestone`, `show`, `ratelimit`, `doc`
-(get-overview / set-overview), `cache` (sync / status / clear / query),
-`beads` (init / status / sync / pull / push / ready / show / claim / close / export / import),
-`pull --cache` / `pull --beads` / `search --cache`, and `mcp serve` (stdio MCP server — 12 tools:
-reads `whoami`/`project_list`/`digest`/`triage`/`milestone`/`stale`/`project_overview_get`,
-writes `file_issue`/`project_create`/`issue_update`/`issue_close`/`project_overview_set`)
-are implemented and
-verified against the live API — **every command in §6 is implemented; no stubs
-remain.** The
-linearctl Project + backlog are dogfood-filed in Linear (team CER). If you add a
-*new* command, keep it honest: ship a verified body, not a silent no-op.
-
-## Toolchain (bun — see docs/decisions.md ADR-0001)
+## Toolchain
 
 - `bun run dev -- <args>` — run from source (e.g. `bun run dev -- whoami`)
-- `bun run typecheck` — `tsc --noEmit` (bun strips types; tsc is the only checker)
-- `bun test` — unit tests (`test/**`)
-- `bun run bench:cache` — latency benchmark (10k issues, sub-millisecond p99 guardrails)
-- `bun run build` — `bun build --compile` → `dist/linearctl` single binary
-- **Distribution:** SLSA-attested single binaries via
-  `mise use -g "github:cerebral-work/linearctl"`. bun, not Node, at runtime.
-
-## Authentication
-
-`LINEAR_API_KEY` is read from the environment only (1Password `Cerebral · Linear
-API`, vault `cloud`). The CLI never stores, prints, or persists the key. Never
-commit a key; `*.env` is git-ignored.
-
-## Conventions
-
-- **Conventional Commits** (release-please drives versioning): `feat:`, `fix:`,
-  `feat!:` / `BREAKING CHANGE` (pre-1.0 → minor bump), `chore:`, `docs:`, `ci:`.
-- **Signed commits always.** Never `--no-gpg-sign`.
-- **PRs only** — no direct push to `main`. **Merge-commit** PRs (`gh pr merge
-  --merge`) per the estate merge-style SOP (2026-08-06: never squash; API
-  rebase-merge lands unsigned — rebase locally + fast-forward if linear history
-  is wanted). release-please's own Release PRs: merge-commit too.
-- **Linear is the tracker**, not GitHub Issues. Tickets live in `docs/spec.md`'s
-  ticket table until the project files them itself via `linearctl file` (the dogfooding
-  loop) — do **not** hand-file linearctl tickets into Linear.
-
-## Layout
-
-`src/index.ts` (commander dispatch) · `src/client.ts` (LinearClient factory) ·
-`src/commands/*` (one file per subcommand) · `src/core/cache/*` (local SQLite ORM, delta sync, query engine) · `src/core/beads/*` (optional discovery-based Beads graph engine) · `src/lib/*` (pure helpers) ·
-`test/*` · `docs/` · `.github/workflows/` (`ci`, `release`, `linear-release[-dev]`).
+- `make check` — full quality gate (`tsc --noEmit`, `cargo fmt --check`, `cargo clippy -j 2`, `bun test`, `cargo test -j 2`, `cargo deny check`)
+- `make smoke` — cache benchmark (`bench:cache`), agent CLI contract test, `lnr-cli` smoke test, and `lnr-domain` zero-I/O check
+- `bun run build` — `bun build --compile` → `dist/lnr` + `dist/linearctl` single binaries
+- **Distribution:** SLSA-attested single binaries via `mise use -g "github:cerebral-work/lnr"` (or `"github:cerebral-work/linearctl"`).

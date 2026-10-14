@@ -266,11 +266,13 @@ export function lintRecipe(recipe: LoopRecipe, file: string): LintFinding[] {
 
 /** Find the default loop-recipes directories (repo-local + user-global). */
 export function recipeDirs(): string[] {
-  const dirs: string[] = [];
-  const cwdRecipes = join(process.cwd(), ".linearctl", "loop-recipes");
-  dirs.push(cwdRecipes);
+  const dirs: string[] = [
+    join(process.cwd(), ".lnr", "loop-recipes"),
+    join(process.cwd(), ".linearctl", "loop-recipes"),
+  ];
   const home = process.env.HOME;
   if (home) {
+    dirs.push(join(home, ".config", "lnr", "loop-recipes"));
     dirs.push(join(home, ".config", "linearctl", "loop-recipes"));
   }
   return dirs.filter((d) => {

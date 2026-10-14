@@ -1,0 +1,33 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Inherited ONLY by projects tagged 'rust'.
+# Every task is scoped to its project and caps jobs at 2 (shared workstation).
+inheritedBy:
+  tag: 'rust'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+    - 'build.rs'
+    - 'Cargo.toml'
+    - '/Cargo.lock'
+    - '/rust-toolchain.toml'
+
+tasks:
+  build:
+    command: 'cargo build -p $project -j 2 --locked'
+    inputs: ['@group(sources)']
+  test:
+    # A crate with no tests yet (a placeholder) must not fail the task:
+    # nextest exits 4 on "no tests to run" unless --no-tests says otherwise.
+    command: 'cargo nextest run -p $project --build-jobs 2 --locked --no-tests=warn'
+    inputs: ['@group(sources)']
+  clippy:
+    command: 'cargo clippy -p $project --all-targets -j 2 --locked -- -D warnings'
+    inputs: ['@group(sources)']
+  format:
+    command: 'cargo fmt -p $project -- --check'
+    inputs: ['@group(sources)']
+  check:
+    command: 'cargo check -p $project -j 2 --locked'
+    inputs: ['@group(sources)']

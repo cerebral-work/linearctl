@@ -1,4 +1,4 @@
-<h1 align="center">linearctl</h1>
+<h1 align="center">lnr <sub>(linearctl)</sub></h1>
 
 <p align="center">
   <em>Linear API orchestration — from headless CLI to in-cluster reconciliation loop.</em>
@@ -6,6 +6,7 @@
 
 <p align="center">
   <img alt="built with bun" src="https://img.shields.io/badge/built%20with-bun-000000?logo=bun&logoColor=white">
+  <img alt="Rust 1.94.1" src="https://img.shields.io/badge/Rust-1.94.1-000000?logo=rust&logoColor=white">
   <img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white">
   <img alt="@linear/sdk v86" src="https://img.shields.io/badge/%40linear%2Fsdk-v86-5e6ad2?logo=linear&logoColor=white">
   <img alt="tests" src="https://img.shields.io/badge/tests-100%2B%20passing-brightgreen">
@@ -14,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/cerebral-work/linearctl/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/cerebral-work/linearctl/ci.yml?label=CI"></a>
-  <a href="https://github.com/cerebral-work/linearctl/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/cerebral-work/linearctl?display_name=tag"></a>
+  <a href="https://github.com/cerebral-work/lnr/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/cerebral-work/lnr/ci.yml?label=CI"></a>
+  <a href="https://github.com/cerebral-work/lnr/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/cerebral-work/lnr?display_name=tag"></a>
   <a href="https://linear.app/docs/loops"><img alt="Loops" src="https://img.shields.io/badge/Loops-9%20recipes-5e6ad2"></a>
 </p>
 
@@ -23,14 +24,13 @@
 
 ## What is this?
 
-`linearctl` is a **Linear API orchestrator** — a single-binary TypeScript
-service that runs three ways:
+`lnr` (backward-compatible CLI alias: `linearctl`) is a **Linear API orchestrator** — a single-binary CLI and service that runs three ways:
 
-1. **CLI** — 27 headless commands for the Linear workflows you keep
+1. **CLI** — headless commands (`lnr <command>` or `linearctl <command>`) for the Linear workflows you keep
    re-improvising by hand: `pull`, `cache`, `digest`, `triage`, `stale`, `file`,
-   `update`, `comment`, `milestone`, `cycle`, `roadmap`, `release-notes`,
+   `update`, `comment`, `milestone`, `cycle`, `roadmap`, `plan`, `release-notes`,
    `standup`, `xref`, `search`, `show`, `history`, `loops lint`, and more.
-2. **MCP server** — `linearctl mcp serve` exposes 12 tools to Claude Desktop /
+2. **MCP server** — `lnr mcp serve` exposes 12 tools to Claude Desktop /
    Claude Code over stdio.
 3. **In-cluster Deployment** — a Helm chart deploying a leader-elected
    always-on `Deployment` that owns the schedule + webhook ingress, publishes
@@ -38,12 +38,12 @@ service that runs three ways:
    contract for downstream Kubernetes operators.
 
 Built on the official [`@linear/sdk`](https://www.npmjs.com/package/@linear/sdk)
-v86 + live Linear GraphQL API. No scraping, no undocumented endpoints.
+v86 + live Linear GraphQL API, paired with an estate Rust strangler workspace (`crates/lnr-domain`, `crates/lnr-cli`, `xtask`). No scraping, no undocumented endpoints.
 
 ```mermaid
 flowchart TD
   subgraph cli["CLI (headless)"]
-    DEV["operator · script · CI<br/>26 commands · --json"]
+    DEV["operator · script · CI<br/>lnr / linearctl · --json"]
   end
   subgraph mcp["MCP server"]
     CLAUDE["Claude Desktop / Code<br/>12 tools over stdio"]
@@ -55,7 +55,7 @@ flowchart TD
   end
   CRON["internal scheduler<br/>5min tick + named jobs"] --> LEADER
   WEBHOOK["Linear webhook<br/>ProjectUpdate · AgentSession"] -->|HTTPS| LEADER
-  FUNNEL["funnel contract<br/>linearctl pull --json"] --> OPERATOR["soma-operator<br/>(separate deployment)"]
+  FUNNEL["funnel contract<br/>lnr pull --json"] --> OPERATOR["soma-operator<br/>(separate deployment)"]
   DEV --> cli
   CLAUDE --> mcp
 ```
@@ -66,9 +66,10 @@ flowchart TD
 
 ```bash
 # install via mise (no Node runtime — bun embeds it)
-mise use -g "github:cerebral-work/linearctl"
-linearctl whoami
-linearctl digest --since 7d --team CER --json | jq
+mise use -g "github:cerebral-work/lnr"
+lnr whoami
+lnr digest --since 7d --team CER --json | jq
+# `linearctl` remains supported as a backward-compatible binary alias
 ```
 
 ### As an in-cluster Deployment
@@ -90,10 +91,9 @@ kubectl logs deploy/linearctl-orchestra -f
 ```bash
 bun install                 # bun ≥ 1.3 (see .prototools)
 bun run dev -- whoami       # run from source
-bun run typecheck           # tsc --noEmit
-bun test                    # 100+ unit tests
-bun run bench:cache         # latency benchmark (10k issues, <1ms p99 guardrail)
-bun run build               # bun build --compile → dist/linearctl
+make check                  # tsc + rustfmt + clippy (-j 2) + bun test + cargo test (-j 2) + cargo deny
+make smoke                  # latency benchmark + CLI contract + zero-I/O Rust domain check
+bun run build               # bun build --compile → dist/lnr + dist/linearctl
 helm template ./deploy/chart # render the chart locally
 ```
 </details>

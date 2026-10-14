@@ -1,10 +1,11 @@
 {
-  "name": "linearctl",
+  "name": "lnr",
   "version": "0.21.1",
   "private": true,
-  "description": "linearctl — a headless CLI for frequently ad-hocced Linear workflows (digest, file, triage, milestone), built on @linear/sdk.",
+  "description": "lnr (linearctl) — a headless CLI for frequently ad-hocced Linear workflows (digest, file, triage, milestone), built on @linear/sdk.",
   "type": "module",
   "bin": {
+    "lnr": "dist/lnr",
     "linearctl": "dist/linearctl"
   },
   "engines": {
@@ -15,7 +16,7 @@
     "whoami": "bun run src/index.ts whoami",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/linearctl",
+    "build": "bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/lnr && cp -f dist/lnr dist/linearctl",
     "dev:watch": "bun --watch run src/index.ts",
     "test:watch": "bun test --watch",
     "test:fast": "bun test --filter",
@@ -24,7 +25,7 @@
     "bench:cache": "bun run scripts/benchmark-cache.ts",
     "cpm:check": "./scripts/cpm-wave-runner.sh --check",
     "cpm:wave-runner": "./scripts/cpm-wave-runner.sh --wave all",
-    "dev:all": "bun run typecheck && bun test && bun build ./src/index.ts --compile --minify --define 'process.env.DEV=\"false\"' --outfile dist/linearctl",
+    "dev:all": "bun run typecheck && bun test && bun run build",
     "quick": "bun run src/index.ts"
   },
   "keywords": [

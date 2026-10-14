@@ -1,0 +1,12 @@
+[profile.default]
+fail-fast = true
+
+[profile.ci]
+retries = 1
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.pre-push]
+retries = 2

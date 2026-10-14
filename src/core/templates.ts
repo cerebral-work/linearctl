@@ -10,11 +10,14 @@ export interface TemplateEntry {
 }
 
 const REPO_DIR = ".linearctl/templates";
+const LNR_REPO_DIR = ".lnr/templates";
 const userDir = (): string => join(homedir(), ".config/linearctl/templates");
+const lnrUserDir = (): string => join(homedir(), ".config/lnr/templates");
 
 /**
- * Discover templates: repo-local `.linearctl/templates/*.md` overrides
- * user-global `~/.config/linearctl/templates/*.md` on name collision.
+ * Discover templates: repo-local `.lnr/templates/*.md` and `.linearctl/templates/*.md`
+ * override user-global `~/.config/lnr/templates/*.md` and `~/.config/linearctl/templates/*.md`
+ * on name collision.
  */
 export function listTemplates(cwd: string = process.cwd()): TemplateEntry[] {
   const byName = new Map<string, TemplateEntry>();
@@ -23,11 +26,13 @@ export function listTemplates(cwd: string = process.cwd()): TemplateEntry[] {
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".md")) continue;
       const name = basename(f, ".md");
-      if (source === "user" && byName.has(name)) continue;
+      if (byName.has(name)) continue;
       byName.set(name, { name, path: join(dir, f), source });
     }
   };
+  scan(join(cwd, LNR_REPO_DIR), "repo");
   scan(join(cwd, REPO_DIR), "repo");
+  scan(lnrUserDir(), "user");
   scan(userDir(), "user");
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

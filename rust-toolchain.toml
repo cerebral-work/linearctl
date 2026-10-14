@@ -1,0 +1,5 @@
+[toolchain]
+# Exactly the Rust baked into the CI image ci-rust-runner:v0.1.6.
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
