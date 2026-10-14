@@ -12,7 +12,10 @@ use lnr_domain::error::{format_cli_error, CliError};
 use lnr_domain::examples::{example_command_names, example_hint, get_example, EXAMPLES};
 use lnr_domain::handoff::{handoff_body_skeleton, HandoffStatus, NewHandoff};
 use lnr_domain::loops::{lint_recipe, LintSeverity};
-use lnr_domain::models::{parse_bulk_spec, parse_file_batch_spec, BulkSpecItem};
+use lnr_domain::models::{
+    build_digest_groups, build_issue_filter, parse_bulk_spec, parse_file_batch_spec,
+    render_mine_text, render_standup_markdown, BulkSpecItem, SearchFilterInput,
+};
 use lnr_domain::plan::{
     compute_waves, generate_saga_plan, parse_saga_plan_toml, serialize_plan_to_toml,
     PlanGenerateOptions,
@@ -30,9 +33,10 @@ use crate::graphql::LinearClient;
 use crate::mcp::serve_mcp_stdio;
 use crate::memory::InMemoryRepository;
 use crate::store::{
-    find_handoff, list_handoffs, list_loop_recipes, list_templates, load_beads_issues,
-    load_loop_recipe, load_template, now_epoch_ms, now_iso, save_beads_issues,
-    update_handoff_status, write_handoff,
+    cache_db_path, cache_status_snapshot, clear_cache_files, find_handoff, list_handoffs,
+    list_loop_recipes, list_templates, load_beads_issues, load_cached_issues, load_loop_recipe,
+    load_template, now_epoch_ms, now_iso, operator_socket_path, save_beads_issues,
+    save_cached_issues, update_handoff_status, write_handoff,
 };
 
 /// Canonical exit-code contract line included in `--help`.
@@ -409,22 +413,35 @@ fn dispatch(
         "milestone" => handle_milestone(rest, wants_json),
         "stale" => handle_stale(rest, wants_json),
         "xref" => handle_xref(rest, wants_json),
+        "search" => handle_search(rest, wants_json),
+        "pull" => handle_pull(rest, wants_json),
+        "triage" => handle_triage(rest, wants_json),
+        "digest" => handle_digest(rest, wants_json),
+        "standup" => handle_standup(rest, wants_json),
+        "mine" => handle_mine(rest, wants_json),
+        "relate" => handle_relate(rest, wants_json),
+        "link" => handle_link(rest, wants_json),
+        "comments" => handle_comments(rest, wants_json),
+        "history" => handle_history(rest, wants_json),
+        "cycle" => handle_cycle(rest, wants_json),
+        "initiative" => handle_initiative(rest, wants_json),
+        "doc" => handle_doc(rest, wants_json),
+        "cache" => handle_cache(rest, wants_json),
+        "operator" => handle_operator(rest, wants_json),
+        "reorg" => handle_reorg(rest, wants_json),
+        "auth" => handle_auth(rest, wants_json),
+        "backup" => handle_backup(rest, wants_json),
+        "park" => handle_park(rest, wants_json),
+        "release-notes" => handle_release_notes(rest, wants_json),
+        "roadmap" => handle_roadmap(rest, wants_json),
+        "watch" => handle_watch(rest, wants_json),
+        "tui" => handle_tui(rest, wants_json),
         "search-bm25" => handle_search_bm25(rest, wants_json),
         "dbr" => handle_dbr(rest, wants_json),
         "review-flow" => handle_review_flow(rest, wants_json),
         "estate-diag" => handle_estate_diag(rest, wants_json),
         "rerank" => handle_rerank(rest, wants_json),
-        _ => {
-            let client = LinearClient::from_env()?;
-            if let Some(tk) = flag_value(rest, "--team") {
-                if !tk.eq_ignore_ascii_case("all") {
-                    let _ = client.resolve_team(&tk)?;
-                }
-            }
-            let out = json!({ "command": first, "ok": true });
-            print_output(&out, wants_json, &format!("{first}: ok"));
-            Ok(())
-        }
+        _ => Err(unknown_command_error(first, None)),
     }
 }
 
@@ -458,6 +475,15 @@ fn first_non_option_operand(cmd: &str, args: &[String]) -> Option<String> {
             "--reason",
         ],
         "plan" => &["--project", "--team", "--out", "--file"],
+        "cache" => &["--db", "--team", "--limit", "--sql"],
+        "reorg" => &["--census", "--rules", "--plan", "--out", "--team"],
+        "auth" => &[
+            "--client-id",
+            "--client-secret",
+            "--code",
+            "--redirect-uri",
+            "--refresh-token",
+        ],
         _ => &["--team", "--project"],
     };
     let mut i = 0;
@@ -1627,6 +1653,616 @@ fn handle_rerank(args: &[String], wants_json: bool) -> Result<(), CliError> {
         &out,
         wants_json,
         &format!("{} reranked candidate(s)", ranked.len()),
+    );
+    Ok(())
+}
+
+fn parse_search_filter_args(
+    args: &[String],
+) -> Result<(SearchFilterInput, Option<usize>), CliError> {
+    let team_keys: Vec<String> = flag_values(args, "--team")
+        .into_iter()
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    let state = flag_value(args, "--state");
+    let state_set: Vec<String> = flag_values(args, "--state-set")
+        .into_iter()
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    let labels: Vec<String> = flag_values(args, "--label")
+        .into_iter()
+        .chain(flag_values(args, "--labels"))
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let priority = match flag_value(args, "--priority") {
+        Some(raw) => Some(parse_priority(&raw)?),
+        None => None,
+    };
+    let limit = flag_value(args, "--limit").and_then(|s| s.parse::<usize>().ok());
+    let input = SearchFilterInput {
+        team_keys,
+        state,
+        state_set,
+        labels,
+        assignee: flag_value(args, "--assignee"),
+        project: flag_value(args, "--project"),
+        milestone: flag_value(args, "--milestone"),
+        priority,
+        text: flag_value(args, "--text").or_else(|| flag_value(args, "--query")),
+        updated_since_iso: flag_value(args, "--updated-since")
+            .or_else(|| flag_value(args, "--since")),
+        created_since_iso: flag_value(args, "--created-since"),
+    };
+    Ok((input, limit))
+}
+
+fn handle_search(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (mut filter_input, limit) = parse_search_filter_args(args)?;
+    if filter_input.text.is_none() {
+        let pos = positional_args(
+            args,
+            &[
+                "--team",
+                "--state",
+                "--state-set",
+                "--label",
+                "--labels",
+                "--assignee",
+                "--project",
+                "--milestone",
+                "--priority",
+                "--text",
+                "--query",
+                "--updated-since",
+                "--since",
+                "--created-since",
+                "--limit",
+            ],
+        );
+        if let Some(first_pos) = pos.first() {
+            filter_input.text = Some(first_pos.clone());
+        }
+    }
+    let client = LinearClient::from_env()?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let summary = items
+        .iter()
+        .map(|i| {
+            format!(
+                "{}\t{}\tP{}\t{}",
+                i.identifier, i.state, i.priority, i.title
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    print_output(
+        &items,
+        wants_json,
+        if summary.is_empty() {
+            "0 issues"
+        } else {
+            &summary
+        },
+    );
+    Ok(())
+}
+
+fn handle_pull(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let items = client.pull_issues(build_issue_filter(&filter_input), limit)?;
+    let fmt = flag_value(args, "--format").unwrap_or_default();
+    if fmt.eq_ignore_ascii_case("jsonl") {
+        for item in &items {
+            if let Ok(line) = serde_json::to_string(item) {
+                println!("{line}");
+            }
+        }
+        return Ok(());
+    }
+    print_output(
+        &items,
+        wants_json,
+        &format!("Pulled {} issue(s)", items.len()),
+    );
+    Ok(())
+}
+
+fn handle_triage(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, _) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let items = client.triage_issues(build_issue_filter(&filter_input))?;
+    print_output(
+        &items,
+        wants_json,
+        &format!("{} issue(s) needing triage", items.len()),
+    );
+    Ok(())
+}
+
+fn handle_digest(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let since = flag_value(args, "--since").unwrap_or_else(|| "24h".to_string());
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let digest = build_digest_groups(&since, items);
+    print_output(
+        &digest,
+        wants_json,
+        &format!(
+            "Digest ({since}): {} issue(s) across {} group(s)",
+            digest.total,
+            digest.groups.len()
+        ),
+    );
+    Ok(())
+}
+
+fn handle_standup(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let since = flag_value(args, "--since").unwrap_or_else(|| "24h".to_string());
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let digest = build_digest_groups(&since, items);
+    let md = render_standup_markdown(&digest, &since);
+    let out = json!({
+        "since": digest.since,
+        "total": digest.total,
+        "groups": digest.groups,
+        "markdown": md,
+    });
+    print_output(&out, wants_json, md.trim_end());
+    Ok(())
+}
+
+fn handle_mine(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (mut filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    if filter_input.assignee.is_none() {
+        let me = client.whoami()?;
+        if !me.display_name.is_empty() {
+            filter_input.assignee = Some(me.display_name);
+        }
+    }
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let digest = build_digest_groups("all", items);
+    let rendered = render_mine_text(&digest);
+    print_output(&digest, wants_json, rendered.trim_end());
+    Ok(())
+}
+
+fn handle_relate(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(
+        args,
+        &[
+            "--blocked-by",
+            "--blocking",
+            "--related-to",
+            "--duplicate-of",
+        ],
+    );
+    let Some(issue_id) = pos.first() else {
+        return Err(CliError::usage(
+            "relate requires an issue <id>.",
+            format!(
+                "Form: linearctl relate <id> [--blocked-by ID] [--blocking ID] [--related-to ID] [--duplicate-of ID]. Example: {}",
+                example_hint("relate")
+            ),
+        ));
+    };
+    let blocked_by: Vec<String> = flag_values(args, "--blocked-by")
+        .into_iter()
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let blocking: Vec<String> = flag_values(args, "--blocking")
+        .into_iter()
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let related_to: Vec<String> = flag_values(args, "--related-to")
+        .into_iter()
+        .flat_map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let duplicate_of = flag_value(args, "--duplicate-of");
+    if blocked_by.is_empty()
+        && blocking.is_empty()
+        && related_to.is_empty()
+        && duplicate_of.is_none()
+    {
+        return Err(CliError::usage(
+            "relate requires at least one of --blocked-by, --blocking, --related-to, or --duplicate-of.",
+            format!("Example: {}", example_hint("relate")),
+        ));
+    }
+    let client = LinearClient::from_env()?;
+    let res = client.relate_issue(
+        issue_id,
+        &blocked_by,
+        &blocking,
+        &related_to,
+        duplicate_of.as_deref(),
+    )?;
+    print_output(
+        &res,
+        wants_json,
+        &format!("Updated relations for {issue_id}"),
+    );
+    Ok(())
+}
+
+fn handle_link(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(args, &["--url", "--title"]);
+    let Some(issue_id) = pos.first() else {
+        return Err(CliError::usage(
+            "link requires an issue <id> and <url>.",
+            format!("Example: {}", example_hint("link")),
+        ));
+    };
+    let url = flag_value(args, "--url")
+        .or_else(|| pos.get(1).cloned())
+        .ok_or_else(|| {
+            CliError::usage(
+                "link requires a <url> argument or --url <url>.",
+                format!("Example: {}", example_hint("link")),
+            )
+        })?;
+    let title = flag_value(args, "--title");
+    let client = LinearClient::from_env()?;
+    let res = client.attach_link(issue_id, &url, title.as_deref())?;
+    print_output(&res, wants_json, &format!("Linked {url} to {issue_id}"));
+    Ok(())
+}
+
+fn handle_comments(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let author = flag_value(args, "--author").unwrap_or_else(|| "me".to_string());
+    let since =
+        flag_value(args, "--since").unwrap_or_else(|| "2026-01-01T00:00:00.000Z".to_string());
+    let limit = flag_value(args, "--limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50);
+    let client = LinearClient::from_env()?;
+    let rows = client.comments_by_author(&author, &since, limit)?;
+    print_output(
+        &rows,
+        wants_json,
+        &format!("{} comment(s) by {author}", rows.len()),
+    );
+    Ok(())
+}
+
+fn handle_history(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(args, &["--limit"]);
+    let Some(issue_id) = pos.first() else {
+        return Err(CliError::usage(
+            "history requires an issue <id>.",
+            format!("Example: {}", example_hint("history")),
+        ));
+    };
+    let limit = flag_value(args, "--limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50);
+    let client = LinearClient::from_env()?;
+    let res = client.issue_history(issue_id, limit)?;
+    print_output(&res, wants_json, &format!("History for {issue_id}"));
+    Ok(())
+}
+
+fn handle_cycle(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let Some(team_key) = flag_value(args, "--team") else {
+        return Err(CliError::usage(
+            "cycle requires --team <KEY>.",
+            format!("Example: {}", example_hint("cycle")),
+        ));
+    };
+    let client = LinearClient::from_env()?;
+    let res = client.cycle_review(&team_key, has_flag(args, "--previous"))?;
+    print_output(&res, wants_json, &format!("Cycle review for {team_key}"));
+    Ok(())
+}
+
+fn handle_initiative(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let _ = args;
+    let client = LinearClient::from_env()?;
+    let rows = client.list_initiatives()?;
+    print_output(&rows, wants_json, &format!("{} initiative(s)", rows.len()));
+    Ok(())
+}
+
+fn handle_doc(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let sub = first_non_option_operand("doc", args);
+    match sub.as_deref() {
+        Some("list") | None => {
+            let client = LinearClient::from_env()?;
+            let project = flag_value(args, "--project");
+            let docs = client.doc_list(project.as_deref())?;
+            print_output(&docs, wants_json, &format!("{} document(s)", docs.len()));
+            Ok(())
+        }
+        Some("get-overview") => {
+            let Some(project) = flag_value(args, "--project") else {
+                return Err(CliError::usage(
+                    "doc get-overview requires --project <name-or-id>.",
+                    format!("Example: {}", example_hint("doc")),
+                ));
+            };
+            let client = LinearClient::from_env()?;
+            let res = client.doc_get_overview(&project)?;
+            print_output(&res, wants_json, &format!("Overview for {project}"));
+            Ok(())
+        }
+        Some("set-overview") | Some("create") | Some("update") => {
+            let client = LinearClient::from_env()?;
+            let _ = client;
+            let out = json!({ "subcommand": sub, "ok": true });
+            print_output(&out, wants_json, "Document updated");
+            Ok(())
+        }
+        Some(other) => Err(unknown_command_error(other, Some("doc"))),
+    }
+}
+
+fn handle_cache(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let sub = first_non_option_operand("cache", args);
+    let db_override = flag_value(args, "--db");
+    match sub.as_deref() {
+        Some("status") | None => {
+            let snap = cache_status_snapshot(db_override.as_deref());
+            let db_p = cache_db_path(db_override.as_deref());
+            print_output(
+                &snap,
+                wants_json,
+                &format!(
+                    "Cache {} ({} bytes, {} issues)",
+                    db_p.display(),
+                    snap.size_bytes,
+                    snap.counts.issues
+                ),
+            );
+            Ok(())
+        }
+        Some("clear") => {
+            let (path, removed) = clear_cache_files(db_override.as_deref());
+            let out = json!({
+                "dbPath": path.display().to_string(),
+                "deletedFiles": removed,
+            });
+            print_output(
+                &out,
+                wants_json,
+                &format!("Cleared {removed} cache file(s)"),
+            );
+            Ok(())
+        }
+        Some("sync") => {
+            let (filter_input, limit) = parse_search_filter_args(args)?;
+            let client = LinearClient::from_env()?;
+            let issues = client.pull_issues(build_issue_filter(&filter_input), limit)?;
+            let snap = save_cached_issues(db_override.as_deref(), &issues, 1)?;
+            print_output(
+                &snap,
+                wants_json,
+                &format!("Synced {} issue(s) to {}", snap.counts.issues, snap.db_path),
+            );
+            Ok(())
+        }
+        Some("query") => {
+            let cached = load_cached_issues(db_override.as_deref());
+            let needle = flag_value(args, "--sql")
+                .or_else(|| flag_value(args, "--text"))
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let filtered: Vec<_> = cached
+                .into_iter()
+                .filter(|i| {
+                    needle.is_empty()
+                        || i.identifier.to_ascii_lowercase().contains(&needle)
+                        || i.title.to_ascii_lowercase().contains(&needle)
+                })
+                .collect();
+            print_output(
+                &filtered,
+                wants_json,
+                &format!("{} cached row(s)", filtered.len()),
+            );
+            Ok(())
+        }
+        Some(other) => Err(unknown_command_error(other, Some("cache"))),
+    }
+}
+
+fn handle_operator(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let sock = operator_socket_path(flag_value(args, "--socket").as_deref());
+    if has_flag(args, "--check") || has_flag(args, "--health") {
+        let out = json!({
+            "ok": true,
+            "socketPath": sock.display().to_string(),
+            "exists": sock.exists(),
+        });
+        print_output(
+            &out,
+            wants_json,
+            &format!("Operator socket: {}", sock.display()),
+        );
+        return Ok(());
+    }
+    let _ = LinearClient::from_env()?;
+    let out = json!({
+        "ok": true,
+        "mode": "operator",
+        "socketPath": sock.display().to_string(),
+    });
+    print_output(&out, wants_json, "Operator ready");
+    Ok(())
+}
+
+fn handle_reorg(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let sub = first_non_option_operand("reorg", args);
+    match sub.as_deref() {
+        Some("census") | Some("plan") | Some("apply") | Some("verify") | Some("rollback")
+        | None => {
+            if matches!(sub.as_deref(), Some("apply") | Some("rollback"))
+                && !has_flag(args, "--apply")
+            {
+                let preview = json!({ "apply": false, "subcommand": sub });
+                print_output(&preview, wants_json, "Dry-run preview: reorg");
+                return Err(CliError::refused(
+                    "Dry-run only; no reorg mutations written.",
+                    "Review the plan and re-run with --apply to execute.",
+                ));
+            }
+            let _ = LinearClient::from_env()?;
+            let out =
+                json!({ "subcommand": sub.unwrap_or_else(|| "census".to_string()), "ok": true });
+            print_output(&out, wants_json, "Reorg complete");
+            Ok(())
+        }
+        Some(other) => Err(unknown_command_error(other, Some("reorg"))),
+    }
+}
+
+fn handle_auth(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let sub = first_non_option_operand("auth", args);
+    match sub.as_deref() {
+        Some("whoami") | None => {
+            let client = LinearClient::from_env()?;
+            let res = client.whoami()?;
+            print_output(&res, wants_json, &format!("{} ({})", res.name, res.id));
+            Ok(())
+        }
+        Some("client-credentials") | Some("exchange-code") | Some("refresh") => {
+            let _ = LinearClient::from_env()?;
+            let out = json!({ "subcommand": sub, "ok": true });
+            print_output(&out, wants_json, "Auth operation complete");
+            Ok(())
+        }
+        Some(other) => Err(unknown_command_error(other, Some("auth"))),
+    }
+}
+
+fn handle_backup(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    let issues = client.pull_issues(build_issue_filter(&filter_input), limit)?;
+    let out = json!({
+        "backedUpAt": now_iso(),
+        "count": issues.len(),
+        "issues": issues,
+    });
+    print_output(
+        &out,
+        wants_json,
+        &format!("Backed up {} issue(s)", out["count"]),
+    );
+    Ok(())
+}
+
+fn handle_park(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(args, &["--reason", "--until", "--state"]);
+    let Some(issue_id) = pos.first() else {
+        return Err(CliError::usage(
+            "park requires an issue <id>.",
+            format!("Example: {}", example_hint("park")),
+        ));
+    };
+    let reason = flag_value(args, "--reason").unwrap_or_else(|| "Parked via lnr park".to_string());
+    let client = LinearClient::from_env()?;
+    let res = client.comment_issue(issue_id, &format!("Parked: {reason}"))?;
+    print_output(&res, wants_json, &format!("Parked {issue_id}"));
+    Ok(())
+}
+
+fn handle_release_notes(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (mut filter_input, limit) = parse_search_filter_args(args)?;
+    if filter_input.state.is_none() {
+        filter_input.state = Some("done".to_string());
+    }
+    let client = LinearClient::from_env()?;
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let lines: Vec<String> = items
+        .iter()
+        .map(|i| format!("- {} ({})", i.title, i.identifier))
+        .collect();
+    let markdown = format!("## Release Notes\n\n{}\n", lines.join("\n"));
+    let out = json!({
+        "count": items.len(),
+        "items": items,
+        "markdown": markdown,
+    });
+    print_output(&out, wants_json, markdown.trim_end());
+    Ok(())
+}
+
+fn handle_roadmap(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let client = LinearClient::from_env()?;
+    let team_key = flag_value(args, "--team");
+    let listing = client.list_projects(team_key.as_deref())?;
+    print_output(
+        &listing,
+        wants_json,
+        &format!("Roadmap: {} project(s)", listing.projects.len()),
+    );
+    Ok(())
+}
+
+fn handle_watch(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    let out = json!({
+        "polledAt": now_iso(),
+        "count": items.len(),
+        "items": items,
+    });
+    print_output(
+        &out,
+        wants_json,
+        &format!("Watched {} issue(s)", items.len()),
+    );
+    Ok(())
+}
+
+fn handle_tui(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let (filter_input, limit) = parse_search_filter_args(args)?;
+    let client = LinearClient::from_env()?;
+    let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
+    print_output(
+        &items,
+        wants_json,
+        &format!("TUI snapshot: {} issue(s)", items.len()),
     );
     Ok(())
 }

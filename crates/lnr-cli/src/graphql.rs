@@ -11,9 +11,10 @@ use lnr_domain::error::{
 use lnr_domain::labels::{pick_label_ids, NamedLabel};
 use lnr_domain::models::{
     build_batch_mutation, build_resolve_query, is_exhausted, is_uuid, parse_rate_limit_headers,
-    BatchFileItem, BatchFileOutcome, BatchResult, BatchRowFailure, BulkPlan, BulkPlanRow,
-    BulkSpecItem, CreatedIssue, DupMatch, DupcheckResult, LabelInfo, LabelListing,
-    OrganizationSummary, ProjectListing, ProjectSummary, RateLimitInfo, TeamSummary, WhoamiResult,
+    triage_reasons, BatchFileItem, BatchFileOutcome, BatchResult, BatchRowFailure, BulkPlan,
+    BulkPlanRow, BulkSpecItem, CreatedIssue, DupMatch, DupcheckResult, LabelInfo, LabelListing,
+    OrganizationSummary, ProjectListing, ProjectSummary, PullIssue, RateLimitInfo, SearchItem,
+    TeamSummary, TriageItem, WhoamiResult,
 };
 use lnr_domain::similarity::score_candidates;
 use serde_json::{json, Value};
@@ -329,6 +330,180 @@ impl LinearClient {
                                     }
                                 ]
                             }
+                        }),
+                    })
+                }
+            }
+            "mock" => {
+                let _ = variables;
+                if query.contains("teams") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "teams": {
+                                "nodes": [
+                                    { "id": "t1", "key": "ENG", "name": "Engineering" },
+                                    { "id": "t2", "key": "OPS", "name": "Operations" }
+                                ]
+                            }
+                        }),
+                    })
+                } else if query.contains("viewer") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "viewer": {
+                                "id": "u1",
+                                "name": "Alice",
+                                "displayName": "Alice",
+                                "email": "alice@example.com",
+                                "admin": true
+                            },
+                            "organization": {
+                                "id": "o1",
+                                "name": "Example Org",
+                                "urlKey": "example"
+                            }
+                        }),
+                    })
+                } else if query.contains("IssueHistory") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "issue": {
+                                "id": "i1",
+                                "identifier": "ENG-123",
+                                "title": "Fix timeout",
+                                "history": {
+                                    "nodes": [
+                                        {
+                                            "id": "h1",
+                                            "createdAt": "2026-10-14T00:00:00.000Z",
+                                            "actor": { "name": "Alice", "displayName": "Alice" },
+                                            "fromState": { "name": "Todo" },
+                                            "toState": { "name": "In Progress" }
+                                        }
+                                    ]
+                                }
+                            }
+                        }),
+                    })
+                } else if query.contains("TeamCycles") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "team": {
+                                "activeCycle": {
+                                    "id": "c1",
+                                    "number": 12,
+                                    "name": "Sprint 12",
+                                    "startsAt": "2026-10-01T00:00:00.000Z",
+                                    "endsAt": "2026-10-15T00:00:00.000Z",
+                                    "issues": {
+                                        "nodes": [
+                                            { "identifier": "ENG-123", "state": { "type": "started" }, "estimate": 3 }
+                                        ]
+                                    }
+                                },
+                                "cycles": { "nodes": [] }
+                            }
+                        }),
+                    })
+                } else if query.contains("Initiatives") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "initiatives": {
+                                "nodes": [
+                                    { "id": "init-1", "name": "Rust Cutover", "status": "Active" }
+                                ]
+                            }
+                        }),
+                    })
+                } else if query.contains("Documents") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "documents": {
+                                "nodes": [
+                                    {
+                                        "id": "d1",
+                                        "slugId": "doc-1",
+                                        "title": "Architecture",
+                                        "url": "https://example.com/doc-1",
+                                        "updatedAt": "2026-10-14T00:00:00.000Z"
+                                    }
+                                ]
+                            }
+                        }),
+                    })
+                } else if query.contains("ProjectOverview") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "projects": {
+                                "nodes": [
+                                    {
+                                        "id": "p1",
+                                        "name": "linearctl",
+                                        "url": "https://example.com/p1",
+                                        "content": "# Overview"
+                                    }
+                                ]
+                            }
+                        }),
+                    })
+                } else if query.contains("CommentsByAuthor") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "id": "cm1",
+                                        "body": "Verified live",
+                                        "createdAt": "2026-10-14T00:00:00.000Z",
+                                        "url": "https://example.com/cm1",
+                                        "user": { "id": "u1", "name": "Alice", "displayName": "Alice", "email": "alice@example.com" },
+                                        "issue": { "identifier": "ENG-123", "title": "Fix timeout" }
+                                    }
+                                ]
+                            }
+                        }),
+                    })
+                } else if query.contains("issue(id:") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "issue": {
+                                "id": "00000000-0000-4000-8000-000000000123",
+                                "identifier": "ENG-123",
+                                "title": "Fix timeout"
+                            }
+                        }),
+                    })
+                } else {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "issues": {
+                                "nodes": [
+                                    {
+                                        "id": "00000000-0000-4000-8000-000000000123",
+                                        "identifier": "ENG-123",
+                                        "title": "Fix timeout",
+                                        "description": "Investigate timeout in transport",
+                                        "url": "https://example.com/ENG-123",
+                                        "priority": 2,
+                                        "updatedAt": "2026-10-14T00:00:00.000Z",
+                                        "state": { "name": "In Progress", "type": "started" },
+                                        "assignee": { "displayName": "Alice", "name": "Alice" },
+                                        "labels": { "nodes": [{ "name": "bug" }] }
+                                    }
+                                ]
+                            },
+                            "issueRelationCreate": { "success": true },
+                            "attachmentLinkURL": { "success": true }
                         }),
                     })
                 }
@@ -1064,6 +1239,574 @@ impl LinearClient {
             .and_then(|u| u.get("issue"))
             .cloned()
             .ok_or_else(|| CliError::other("issueUpdate returned no issue", ""))
+    }
+
+    /// Query issues matching a GraphQL `IssueFilter` (`lnr search`, `lnr digest`, `lnr standup`, `lnr mine`, `lnr release-notes`).
+    pub fn search_issues(
+        &self,
+        filter: Value,
+        limit: Option<usize>,
+    ) -> Result<Vec<SearchItem>, CliError> {
+        let first = limit.unwrap_or(100).clamp(1, 250);
+        let data = self.execute(
+            "query SearchIssues($filter: IssueFilter, $first: Int!) {
+                issues(filter: $filter, first: $first) {
+                    nodes {
+                        id
+                        identifier
+                        title
+                        url
+                        priority
+                        state { name type }
+                        assignee { displayName name }
+                    }
+                }
+            }",
+            json!({ "filter": filter, "first": first }),
+        )?;
+        let nodes = nodes_at(&data, &["issues", "nodes"]);
+        let mut items: Vec<SearchItem> = nodes
+            .iter()
+            .map(|n| {
+                let state = n
+                    .get("state")
+                    .map(|s| str_field(s, "name"))
+                    .unwrap_or_default();
+                let state_type = n
+                    .get("state")
+                    .map(|s| str_field(s, "type"))
+                    .unwrap_or_default();
+                let assignee = n.get("assignee").and_then(|a| {
+                    opt_str_field(a, "displayName").or_else(|| opt_str_field(a, "name"))
+                });
+                let priority = n
+                    .get("priority")
+                    .and_then(Value::as_u64)
+                    .and_then(|p| u8::try_from(p).ok())
+                    .unwrap_or(0);
+                SearchItem {
+                    identifier: str_field(n, "identifier"),
+                    title: str_field(n, "title"),
+                    state,
+                    state_type,
+                    assignee,
+                    priority,
+                    url: str_field(n, "url"),
+                }
+            })
+            .collect();
+        if let Some(lim) = limit {
+            items.truncate(lim);
+        }
+        Ok(items)
+    }
+
+    /// Pull machine-consumable [`PullIssue`] rows (`lnr pull` and `lnr cache sync`).
+    pub fn pull_issues(
+        &self,
+        filter: Value,
+        limit: Option<usize>,
+    ) -> Result<Vec<PullIssue>, CliError> {
+        let first = limit.unwrap_or(100).clamp(1, 250);
+        let data = self.execute(
+            "query PullIssues($filter: IssueFilter, $first: Int!) {
+                issues(filter: $filter, first: $first) {
+                    nodes {
+                        id
+                        identifier
+                        title
+                        url
+                        priority
+                        description
+                        updatedAt
+                        state { name type }
+                        labels { nodes { name } }
+                    }
+                }
+            }",
+            json!({ "filter": filter, "first": first }),
+        )?;
+        let nodes = nodes_at(&data, &["issues", "nodes"]);
+        let mut out: Vec<PullIssue> = nodes
+            .iter()
+            .map(|n| {
+                let mut labels: Vec<String> = nodes_at(n, &["labels", "nodes"])
+                    .iter()
+                    .map(|l| str_field(l, "name"))
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                labels.sort();
+                let priority = n
+                    .get("priority")
+                    .and_then(Value::as_u64)
+                    .and_then(|p| u8::try_from(p).ok())
+                    .unwrap_or(0);
+                PullIssue {
+                    id: str_field(n, "id"),
+                    identifier: str_field(n, "identifier"),
+                    title: str_field(n, "title"),
+                    state: n
+                        .get("state")
+                        .map(|s| str_field(s, "name"))
+                        .unwrap_or_default(),
+                    state_type: n
+                        .get("state")
+                        .map(|s| str_field(s, "type"))
+                        .unwrap_or_default(),
+                    priority,
+                    labels,
+                    description: opt_str_field(n, "description").unwrap_or_default(),
+                    url: str_field(n, "url"),
+                    updated_at: str_field(n, "updatedAt"),
+                }
+            })
+            .collect();
+        if let Some(lim) = limit {
+            out.truncate(lim);
+        }
+        Ok(out)
+    }
+
+    /// Surface issues needing triage (`lnr triage`).
+    pub fn triage_issues(&self, filter: Value) -> Result<Vec<TriageItem>, CliError> {
+        let data = self.execute(
+            "query TriageIssues($filter: IssueFilter) {
+                issues(filter: $filter, first: 100) {
+                    nodes {
+                        identifier
+                        title
+                        url
+                        priority
+                        estimate
+                        state { name type }
+                        assignee { displayName name }
+                    }
+                }
+            }",
+            json!({ "filter": filter }),
+        )?;
+        let nodes = nodes_at(&data, &["issues", "nodes"]);
+        let mut out = Vec::new();
+        for n in &nodes {
+            let state = n
+                .get("state")
+                .map(|s| str_field(s, "name"))
+                .unwrap_or_default();
+            let state_type = n
+                .get("state")
+                .map(|s| str_field(s, "type"))
+                .unwrap_or_default();
+            let assignee = n
+                .get("assignee")
+                .and_then(|a| opt_str_field(a, "displayName").or_else(|| opt_str_field(a, "name")));
+            let priority = n
+                .get("priority")
+                .and_then(Value::as_u64)
+                .and_then(|p| u8::try_from(p).ok())
+                .unwrap_or(0);
+            let estimate = n.get("estimate").and_then(Value::as_f64);
+            let reasons = triage_reasons(&state_type, assignee.as_deref(), priority, estimate);
+            if !reasons.is_empty() {
+                out.push(TriageItem {
+                    identifier: str_field(n, "identifier"),
+                    title: str_field(n, "title"),
+                    state,
+                    state_type,
+                    assignee,
+                    priority,
+                    reasons,
+                    url: str_field(n, "url"),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Wire issue relations (`lnr relate <id> --blocked-by ... --blocking ... --related-to ... --duplicate-of ...`).
+    pub fn relate_issue(
+        &self,
+        id_or_identifier: &str,
+        blocked_by: &[String],
+        blocking: &[String],
+        related_to: &[String],
+        duplicate_of: Option<&str>,
+    ) -> Result<Value, CliError> {
+        let issue_uuid = self.resolve_issue_uuid(id_or_identifier)?;
+        let mut created_blocked_by = Vec::new();
+        let mut created_blocking = Vec::new();
+        let mut created_related = Vec::new();
+
+        for blocker in blocked_by {
+            let blocker_uuid = self.resolve_issue_uuid(blocker)?;
+            let _ = self.execute(
+                "mutation CreateRelation($input: IssueRelationCreateInput!) {
+                    issueRelationCreate(input: $input) { success }
+                }",
+                json!({
+                    "input": {
+                        "issueId": blocker_uuid,
+                        "relatedIssueId": issue_uuid,
+                        "type": "blocks"
+                    }
+                }),
+            )?;
+            created_blocked_by.push(blocker.clone());
+        }
+
+        for target in blocking {
+            let target_uuid = self.resolve_issue_uuid(target)?;
+            let _ = self.execute(
+                "mutation CreateRelation($input: IssueRelationCreateInput!) {
+                    issueRelationCreate(input: $input) { success }
+                }",
+                json!({
+                    "input": {
+                        "issueId": issue_uuid,
+                        "relatedIssueId": target_uuid,
+                        "type": "blocks"
+                    }
+                }),
+            )?;
+            created_blocking.push(target.clone());
+        }
+
+        for rel in related_to {
+            let rel_uuid = self.resolve_issue_uuid(rel)?;
+            let _ = self.execute(
+                "mutation CreateRelation($input: IssueRelationCreateInput!) {
+                    issueRelationCreate(input: $input) { success }
+                }",
+                json!({
+                    "input": {
+                        "issueId": issue_uuid,
+                        "relatedIssueId": rel_uuid,
+                        "type": "related"
+                    }
+                }),
+            )?;
+            created_related.push(rel.clone());
+        }
+
+        let mut dup_val = None;
+        if let Some(dup_ref) = duplicate_of {
+            let dup_uuid = self.resolve_issue_uuid(dup_ref)?;
+            let _ = self.execute(
+                "mutation CreateDuplicate($input: IssueRelationCreateInput!) {
+                    issueRelationCreate(input: $input) { success }
+                }",
+                json!({
+                    "input": {
+                        "issueId": issue_uuid,
+                        "relatedIssueId": dup_uuid,
+                        "type": "duplicate"
+                    }
+                }),
+            )?;
+            dup_val = Some(json!({ "id": dup_uuid, "identifier": dup_ref }));
+        }
+
+        let mut out = json!({
+            "identifier": id_or_identifier,
+            "relations": {
+                "blockedBy": created_blocked_by,
+                "blocking": created_blocking,
+                "relatedTo": created_related,
+            }
+        });
+        if let Some(d) = dup_val {
+            if let Some(obj) = out.as_object_mut() {
+                obj.insert("duplicateOf".to_string(), d);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Attach an external URL to an issue (`lnr link <id> <url> [--title ...]`).
+    pub fn attach_link(
+        &self,
+        id_or_identifier: &str,
+        url: &str,
+        title: Option<&str>,
+    ) -> Result<Value, CliError> {
+        let issue_uuid = self.resolve_issue_uuid(id_or_identifier)?;
+        let _ = self.execute(
+            "mutation AttachLink($issueId: String!, $url: String!, $title: String) {
+                attachmentLinkURL(issueId: $issueId, url: $url, title: $title) {
+                    success
+                }
+            }",
+            json!({ "issueId": issue_uuid, "url": url, "title": title }),
+        )?;
+        Ok(json!({
+            "id": issue_uuid,
+            "identifier": id_or_identifier,
+            "url": url,
+            "title": title,
+        }))
+    }
+
+    /// Query comments authored since `since_iso` (`lnr comments --author <who>`).
+    pub fn comments_by_author(
+        &self,
+        author: &str,
+        since_iso: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, CliError> {
+        let first = limit.clamp(1, 200);
+        let data = self.execute(
+            "query CommentsByAuthor($since: DateTimeOrDuration!, $first: Int!) {
+                comments(filter: { createdAt: { gte: $since } }, first: $first) {
+                    nodes {
+                        id
+                        body
+                        createdAt
+                        url
+                        user { id name displayName email }
+                        issue { identifier title }
+                    }
+                }
+            }",
+            json!({ "since": since_iso, "first": first }),
+        )?;
+        let needle = author.trim().to_ascii_lowercase();
+        let nodes = nodes_at(&data, &["comments", "nodes"]);
+        let mut rows = Vec::new();
+        for n in &nodes {
+            let user_match = if needle == "me" {
+                true
+            } else if let Some(u) = n.get("user") {
+                str_field(u, "name").to_ascii_lowercase().contains(&needle)
+                    || str_field(u, "displayName")
+                        .to_ascii_lowercase()
+                        .contains(&needle)
+                    || str_field(u, "email").to_ascii_lowercase().contains(&needle)
+            } else {
+                false
+            };
+            if user_match {
+                rows.push(json!({
+                    "id": str_field(n, "id"),
+                    "at": str_field(n, "createdAt"),
+                    "issue": n.get("issue").map(|i| str_field(i, "identifier")).unwrap_or_default(),
+                    "body": str_field(n, "body"),
+                    "url": str_field(n, "url"),
+                }));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Fetch chronological history events for an issue (`lnr history <id>`).
+    pub fn issue_history(&self, id_or_identifier: &str, limit: usize) -> Result<Value, CliError> {
+        let first = limit.clamp(1, 200);
+        let data = self.execute(
+            "query IssueHistory($id: String!, $first: Int!) {
+                issue(id: $id) {
+                    id
+                    identifier
+                    title
+                    history(first: $first) {
+                        nodes {
+                            id
+                            createdAt
+                            actor { name displayName }
+                            fromState { name }
+                            toState { name }
+                            fromPriority
+                            toPriority
+                        }
+                    }
+                }
+            }",
+            json!({ "id": id_or_identifier.trim(), "first": first }),
+        )?;
+        let issue = data.get("issue").filter(|v| !v.is_null()).ok_or_else(|| {
+            CliError::not_found(format!("issue '{id_or_identifier}' not found"), "")
+        })?;
+        let nodes = nodes_at(issue, &["history", "nodes"]);
+        let events: Vec<Value> = nodes
+            .iter()
+            .map(|e| {
+                let actor = e
+                    .get("actor")
+                    .and_then(|a| {
+                        opt_str_field(a, "displayName").or_else(|| opt_str_field(a, "name"))
+                    })
+                    .unwrap_or_else(|| "system".to_string());
+                let from_st = e.get("fromState").and_then(|s| opt_str_field(s, "name"));
+                let to_st = e.get("toState").and_then(|s| opt_str_field(s, "name"));
+                let detail = match (from_st, to_st) {
+                    (Some(f), Some(t)) => format!("state: {f} -> {t}"),
+                    (None, Some(t)) => format!("state: -> {t}"),
+                    _ => "updated".to_string(),
+                };
+                json!({
+                    "at": str_field(e, "createdAt"),
+                    "actor": actor,
+                    "detail": detail,
+                })
+            })
+            .collect();
+        Ok(json!({
+            "identifier": str_field(issue, "identifier"),
+            "title": str_field(issue, "title"),
+            "events": events,
+        }))
+    }
+
+    /// Fetch active/previous cycle summary for a team (`lnr cycle --team <KEY>`).
+    pub fn cycle_review(&self, team_key: &str, previous: bool) -> Result<Value, CliError> {
+        let team = self.resolve_team(team_key)?;
+        let data = self.execute(
+            "query TeamCycles($teamId: String!) {
+                team(id: $teamId) {
+                    activeCycle {
+                        id number name startsAt endsAt
+                        issues { nodes { identifier state { type } estimate } }
+                    }
+                    cycles(first: 5) {
+                        nodes {
+                            id number name startsAt endsAt
+                            issues { nodes { identifier state { type } estimate } }
+                        }
+                    }
+                }
+            }",
+            json!({ "teamId": team.id }),
+        )?;
+        let cycle_node = if previous {
+            nodes_at(&data, &["team", "cycles", "nodes"])
+                .into_iter()
+                .nth(1)
+        } else {
+            data.get("team")
+                .and_then(|t| t.get("activeCycle"))
+                .filter(|v| !v.is_null())
+                .cloned()
+                .or_else(|| {
+                    nodes_at(&data, &["team", "cycles", "nodes"])
+                        .into_iter()
+                        .next()
+                })
+        };
+        let Some(c) = cycle_node else {
+            return Ok(json!({
+                "team": team.key,
+                "cycle": { "number": 0, "startsAt": "", "endsAt": "" },
+                "daysRemaining": 0,
+                "scope": { "issues": 0, "points": 0 },
+                "done": { "issues": 0, "points": 0 },
+                "inProgress": { "issues": 0, "points": 0 },
+                "unstarted": { "issues": 0, "points": 0 },
+                "atRisk": [],
+            }));
+        };
+        let issues = nodes_at(&c, &["issues", "nodes"]);
+        let total_issues = issues.len();
+        let done_issues = issues
+            .iter()
+            .filter(|i| {
+                i.get("state")
+                    .map(|s| str_field(s, "type"))
+                    .unwrap_or_default()
+                    == "completed"
+            })
+            .count();
+        let started_issues = issues
+            .iter()
+            .filter(|i| {
+                i.get("state")
+                    .map(|s| str_field(s, "type"))
+                    .unwrap_or_default()
+                    == "started"
+            })
+            .count();
+        let unstarted_issues = total_issues.saturating_sub(done_issues + started_issues);
+        Ok(json!({
+            "team": team.key,
+            "cycle": {
+                "id": str_field(&c, "id"),
+                "number": c.get("number").and_then(Value::as_u64).unwrap_or(0),
+                "startsAt": str_field(&c, "startsAt"),
+                "endsAt": str_field(&c, "endsAt"),
+            },
+            "daysRemaining": 0,
+            "scope": { "issues": total_issues, "points": 0 },
+            "done": { "issues": done_issues, "points": 0 },
+            "inProgress": { "issues": started_issues, "points": 0 },
+            "unstarted": { "issues": unstarted_issues, "points": 0 },
+            "atRisk": [],
+        }))
+    }
+
+    /// List workspace initiatives (`lnr initiative`).
+    pub fn list_initiatives(&self) -> Result<Vec<Value>, CliError> {
+        let data = self.execute(
+            "query Initiatives {
+                initiatives(first: 100) {
+                    nodes { id name status targetDate description }
+                }
+            }",
+            json!({}),
+        )?;
+        Ok(nodes_at(&data, &["initiatives", "nodes"]))
+    }
+
+    /// List Linear documents (`lnr doc list`).
+    pub fn doc_list(&self, project: Option<&str>) -> Result<Vec<Value>, CliError> {
+        let filter = match project.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(p) if is_uuid(p) => json!({ "project": { "id": { "eq": p } } }),
+            Some(p) => json!({ "project": { "name": { "eqIgnoreCase": p } } }),
+            None => json!({}),
+        };
+        let data = self.execute(
+            "query Documents($filter: DocumentFilter) {
+                documents(filter: $filter, first: 100) {
+                    nodes {
+                        id slugId title url updatedAt
+                        project { id name }
+                    }
+                }
+            }",
+            json!({ "filter": filter }),
+        )?;
+        Ok(nodes_at(&data, &["documents", "nodes"]))
+    }
+
+    /// Fetch a project's overview markdown (`lnr doc get-overview --project <ref>`).
+    pub fn doc_get_overview(&self, project_ref: &str) -> Result<Value, CliError> {
+        let data = self.execute(
+            "query ProjectOverview {
+                projects(first: 100) {
+                    nodes { id name url content description }
+                }
+            }",
+            json!({}),
+        )?;
+        let needle = project_ref.trim().to_ascii_lowercase();
+        let nodes = nodes_at(&data, &["projects", "nodes"]);
+        let found = nodes
+            .into_iter()
+            .find(|p| {
+                str_field(p, "id").to_ascii_lowercase() == needle
+                    || str_field(p, "name").to_ascii_lowercase() == needle
+            })
+            .ok_or_else(|| {
+                CliError::not_found(
+                    format!("project '{project_ref}' not found"),
+                    "Run `linearctl project list` to inspect project names.",
+                )
+            })?;
+        let content =
+            opt_str_field(&found, "content").or_else(|| opt_str_field(&found, "description"));
+        Ok(json!({
+            "project": {
+                "id": str_field(&found, "id"),
+                "name": str_field(&found, "name"),
+                "url": str_field(&found, "url"),
+            },
+            "content": content,
+        }))
     }
 }
 

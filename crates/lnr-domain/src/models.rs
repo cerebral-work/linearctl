@@ -517,6 +517,405 @@ pub fn build_batch_mutation(n: usize) -> String {
     )
 }
 
+/// Terminal Linear workflow state types excluded by default in `search`, `pull`, `triage`, and `mine`.
+pub const TERMINAL_STATE_TYPES: &[&str] = &["completed", "canceled"];
+
+/// Map friendly `--state` alias strings to canonical Linear workflow state types.
+#[must_use]
+pub fn state_type_alias(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "triage" => Some("triage"),
+        "backlog" => Some("backlog"),
+        "todo" | "unstarted" => Some("unstarted"),
+        "started" | "in-progress" => Some("started"),
+        "done" | "completed" => Some("completed"),
+        "canceled" | "cancelled" => Some("canceled"),
+        "duplicate" => Some("duplicate"),
+        _ => None,
+    }
+}
+
+/// Input options for composing a Linear GraphQL `IssueFilter` (`search` and `pull`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchFilterInput {
+    /// Team keys (e.g. `["ENG", "OPS"]`). `"all"` lifts team filtering.
+    pub team_keys: Vec<String>,
+    /// Single state name or type alias (`"done"`, `"todo"`, `"all"`, etc.).
+    pub state: Option<String>,
+    /// Multiple state names/types combined with `or`.
+    pub state_set: Vec<String>,
+    /// Label names (`some.name.eqIgnoreCase`).
+    pub labels: Vec<String>,
+    /// Assignee filter (`"none"` or resolved user UUID).
+    pub assignee: Option<String>,
+    /// Project UUID or exact name.
+    pub project: Option<String>,
+    /// Milestone UUID or exact name.
+    pub milestone: Option<String>,
+    /// Priority number (`0..=4`).
+    pub priority: Option<u8>,
+    /// Substring match across `title` and `description`.
+    pub text: Option<String>,
+    /// ISO-8601 lower bound for `updatedAt`.
+    pub updated_since_iso: Option<String>,
+    /// ISO-8601 lower bound for `createdAt`.
+    pub created_since_iso: Option<String>,
+}
+
+/// Compose a Linear GraphQL `IssueFilter` JSON object from [`SearchFilterInput`].
+#[must_use]
+pub fn build_issue_filter(opts: &SearchFilterInput) -> Value {
+    use serde_json::json;
+
+    let mut and_clauses: Vec<Value> = Vec::new();
+
+    if !opts.state_set.is_empty() {
+        let clauses: Vec<Value> = opts
+            .state_set
+            .iter()
+            .map(|s| match state_type_alias(s) {
+                Some(tp) => json!({ "state": { "type": { "eq": tp } } }),
+                None => json!({ "state": { "name": { "eqIgnoreCase": s } } }),
+            })
+            .collect();
+        if clauses.len() == 1 {
+            if let Some(first) = clauses.into_iter().next() {
+                and_clauses.push(first);
+            }
+        } else {
+            and_clauses.push(json!({ "or": clauses }));
+        }
+    } else {
+        match opts.state.as_deref().map(str::trim) {
+            None | Some("") => {
+                and_clauses.push(json!({ "state": { "type": { "nin": TERMINAL_STATE_TYPES } } }));
+            }
+            Some(s) if s.eq_ignore_ascii_case("all") => {}
+            Some(s) => match state_type_alias(s) {
+                Some(tp) => and_clauses.push(json!({ "state": { "type": { "eq": tp } } })),
+                None => and_clauses.push(json!({ "state": { "name": { "eqIgnoreCase": s } } })),
+            },
+        }
+    }
+
+    for label in &opts.labels {
+        and_clauses.push(json!({ "labels": { "some": { "name": { "eqIgnoreCase": label } } } }));
+    }
+
+    if let Some(ass) = opts.assignee.as_deref().map(str::trim) {
+        if ass.eq_ignore_ascii_case("none") {
+            and_clauses.push(json!({ "assignee": { "null": true } }));
+        } else if is_uuid(ass) {
+            and_clauses.push(json!({ "assignee": { "id": { "eq": ass } } }));
+        } else if !ass.is_empty() {
+            and_clauses.push(json!({ "assignee": { "displayName": { "eqIgnoreCase": ass } } }));
+        }
+    }
+
+    if let Some(proj) = opts
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if is_uuid(proj) {
+            and_clauses.push(json!({ "project": { "id": { "eq": proj } } }));
+        } else {
+            and_clauses.push(json!({ "project": { "name": { "eqIgnoreCase": proj } } }));
+        }
+    }
+
+    if let Some(ms) = opts
+        .milestone
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if is_uuid(ms) {
+            and_clauses.push(json!({ "projectMilestone": { "id": { "eq": ms } } }));
+        } else {
+            and_clauses.push(json!({ "projectMilestone": { "name": { "eqIgnoreCase": ms } } }));
+        }
+    }
+
+    if let Some(p) = opts.priority {
+        and_clauses.push(json!({ "priority": { "eq": p } }));
+    }
+
+    if let Some(txt) = opts
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        and_clauses.push(json!({
+            "or": [
+                { "title": { "containsIgnoreCase": txt } },
+                { "description": { "containsIgnoreCase": txt } }
+            ]
+        }));
+    }
+
+    if let Some(up) = opts
+        .updated_since_iso
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        and_clauses.push(json!({ "updatedAt": { "gte": up } }));
+    }
+
+    if let Some(cr) = opts
+        .created_since_iso
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        and_clauses.push(json!({ "createdAt": { "gte": cr } }));
+    }
+
+    let mut root = serde_json::Map::new();
+    let scoped_teams: Vec<String> = opts
+        .team_keys
+        .iter()
+        .flat_map(|t| t.split(','))
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty() && s != "ALL")
+        .collect();
+    if !scoped_teams.is_empty() {
+        root.insert("team".to_string(), json!({ "key": { "in": scoped_teams } }));
+    }
+    if !and_clauses.is_empty() {
+        root.insert("and".to_string(), Value::Array(and_clauses));
+    }
+    Value::Object(root)
+}
+
+/// Issue summary row returned by `lnr search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchItem {
+    /// Issue identifier (e.g. `"CER-101"`).
+    pub identifier: String,
+    /// Issue title.
+    pub title: String,
+    /// Workflow state name.
+    pub state: String,
+    /// Workflow state type (`"triage"`, `"unstarted"`, `"started"`, `"completed"`, etc.).
+    pub state_type: String,
+    /// Optional assignee display name.
+    pub assignee: Option<String>,
+    /// Priority number (`0..=4`).
+    pub priority: u8,
+    /// Canonical issue URL.
+    pub url: String,
+}
+
+/// Machine-consumable issue record emitted by `lnr pull` (`docs/funnel-contract.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullIssue {
+    /// Linear issue UUID.
+    pub id: String,
+    /// Issue identifier (e.g. `"CER-101"`).
+    pub identifier: String,
+    /// Issue title.
+    pub title: String,
+    /// Workflow state name.
+    pub state: String,
+    /// Workflow state type.
+    pub state_type: String,
+    /// Priority (`0..=4`).
+    pub priority: u8,
+    /// Sorted label names.
+    pub labels: Vec<String>,
+    /// Issue description markdown (`""` when empty).
+    pub description: String,
+    /// Canonical issue URL.
+    pub url: String,
+    /// Last updated timestamp (ISO-8601).
+    pub updated_at: String,
+}
+
+/// Issue surfaced by `lnr triage` with classification reasons.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriageItem {
+    /// Issue identifier.
+    pub identifier: String,
+    /// Issue title.
+    pub title: String,
+    /// Workflow state name.
+    pub state: String,
+    /// Workflow state type.
+    pub state_type: String,
+    /// Assignee display name if present.
+    pub assignee: Option<String>,
+    /// Priority (`0..=4`).
+    pub priority: u8,
+    /// Reasons this issue needs triage (`"triage"`, `"unassigned"`, `"no-priority"`, `"unestimated"`).
+    pub reasons: Vec<String>,
+    /// Canonical URL.
+    pub url: String,
+}
+
+/// Compute triage reasons for an active issue.
+#[must_use]
+pub fn triage_reasons(
+    state_type: &str,
+    assignee: Option<&str>,
+    priority: u8,
+    estimate: Option<f64>,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if state_type.eq_ignore_ascii_case("triage") {
+        reasons.push("triage".to_string());
+    }
+    if assignee.is_none_or(|a| a.trim().is_empty()) {
+        reasons.push("unassigned".to_string());
+    }
+    if priority == 0 {
+        reasons.push("no-priority".to_string());
+    }
+    if estimate.is_none() {
+        reasons.push("unestimated".to_string());
+    }
+    reasons
+}
+
+/// Group of issues sharing a workflow state type in `lnr digest` / `lnr mine` / `lnr standup`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DigestGroup {
+    /// Workflow state type (`"started"`, `"completed"`, `"unstarted"`, `"triage"`, `"backlog"`, `"canceled"`).
+    #[serde(rename = "type")]
+    pub state_type: String,
+    /// Number of issues in this group.
+    pub count: usize,
+    /// Issues in this group.
+    pub items: Vec<SearchItem>,
+}
+
+/// Output of `lnr digest`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DigestResult {
+    /// ISO-8601 lower bound timestamp.
+    pub since: String,
+    /// Total issues across all groups.
+    pub total: usize,
+    /// Issues grouped by workflow state type.
+    pub groups: Vec<DigestGroup>,
+}
+
+/// Group flat [`SearchItem`] entries into canonical workflow state type buckets.
+#[must_use]
+pub fn build_digest_groups(since: &str, items: Vec<SearchItem>) -> DigestResult {
+    const ORDER: &[&str] = &[
+        "started",
+        "triage",
+        "unstarted",
+        "backlog",
+        "completed",
+        "canceled",
+    ];
+    let total = items.len();
+    let mut buckets: BTreeMap<String, Vec<SearchItem>> = BTreeMap::new();
+    for item in items {
+        let key = if item.state_type.is_empty() {
+            "unstarted".to_string()
+        } else {
+            item.state_type.to_ascii_lowercase()
+        };
+        buckets.entry(key).or_default().push(item);
+    }
+    let mut groups = Vec::new();
+    for &canonical in ORDER {
+        if let Some(list) = buckets.remove(canonical) {
+            groups.push(DigestGroup {
+                state_type: canonical.to_string(),
+                count: list.len(),
+                items: list,
+            });
+        }
+    }
+    for (other, list) in buckets {
+        groups.push(DigestGroup {
+            state_type: other,
+            count: list.len(),
+            items: list,
+        });
+    }
+    DigestResult {
+        since: since.to_string(),
+        total,
+        groups,
+    }
+}
+
+/// Render a [`DigestResult`] as standup markdown (`Done`, `In progress`, `Up next`, `Needs triage`).
+#[must_use]
+pub fn render_standup_markdown(digest: &DigestResult, since_label: &str) -> String {
+    let mut lines = vec![format!(
+        "**Standup** · last {since_label} · {} issue(s) touched",
+        digest.total
+    )];
+    for group in &digest.groups {
+        let heading = match group.state_type.as_str() {
+            "completed" => Some("Done"),
+            "started" => Some("In progress"),
+            "unstarted" => Some("Up next"),
+            "triage" => Some("Needs triage"),
+            _ => None,
+        };
+        let Some(h) = heading else {
+            continue;
+        };
+        lines.push(String::new());
+        lines.push(format!("**{h}** ({})", group.count));
+        for item in &group.items {
+            match &item.assignee {
+                Some(a) if !a.is_empty() => {
+                    lines.push(format!("- {} {} — {a}", item.identifier, item.title));
+                }
+                _ => lines.push(format!("- {} {}", item.identifier, item.title)),
+            }
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// Render a [`DigestResult`] as the human `lnr mine` view.
+#[must_use]
+pub fn render_mine_text(result: &DigestResult) -> String {
+    if result.total == 0 {
+        return "No issues assigned to you.\n".to_string();
+    }
+    let mut lines = vec![format!("{} issue(s) assigned to you", result.total)];
+    for group in &result.groups {
+        let heading = match group.state_type.as_str() {
+            "started" => "In progress",
+            "triage" => "Needs triage",
+            "unstarted" => "Up next",
+            "backlog" => "Backlog",
+            "completed" => "Done",
+            "canceled" => "Canceled",
+            other => other,
+        };
+        lines.push(String::new());
+        lines.push(format!("{heading} ({})", group.count));
+        for item in &group.items {
+            let tag = match item.priority {
+                1 => " [urgent]",
+                2 => " [high]",
+                _ => "",
+            };
+            lines.push(format!("  {}  {}{tag}", item.identifier, item.title));
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -549,5 +948,33 @@ mod tests {
         let batch = parse_file_batch_spec(r#"[{"title":"Example","team":"ENG"}]"#).unwrap();
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].title, "Example");
+    }
+
+    #[test]
+    fn builds_issue_filter_and_digest_standup_views() {
+        let f = build_issue_filter(&SearchFilterInput {
+            team_keys: vec!["eng".to_string()],
+            state: Some("todo".to_string()),
+            labels: vec!["bug".to_string()],
+            priority: Some(1),
+            ..Default::default()
+        });
+        assert_eq!(f["team"]["key"]["in"][0].as_str(), Some("ENG"));
+        let items = vec![SearchItem {
+            identifier: "ENG-1".to_string(),
+            title: "Fix BM25".to_string(),
+            state: "In Progress".to_string(),
+            state_type: "started".to_string(),
+            assignee: Some("Alice".to_string()),
+            priority: 1,
+            url: "https://linear.app/x/issue/ENG-1".to_string(),
+        }];
+        let digest = build_digest_groups("2026-10-14T00:00:00.000Z", items);
+        assert_eq!(digest.total, 1);
+        let standup = render_standup_markdown(&digest, "24h");
+        assert!(standup.contains("**In progress** (1)"));
+        assert!(standup.contains("- ENG-1 Fix BM25 — Alice"));
+        let mine = render_mine_text(&digest);
+        assert!(mine.contains("ENG-1  Fix BM25 [urgent]"));
     }
 }
