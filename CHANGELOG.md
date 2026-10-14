@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.0](https://github.com/cerebral-work/lnr/compare/v0.22.0...v0.23.0) (2026-10-14)
+
+
+### Features
+
+* **rust:** port domain, CLI, GraphQL client, stores, and MCP server to Rust ([008a618](https://github.com/cerebral-work/lnr/commit/008a6187ba8c40f01bdf92fb9954d540862f3531))
+* **rust:** port domain, CLI, GraphQL client, stores, and MCP server to Rust ([ec19ac3](https://github.com/cerebral-work/lnr/commit/ec19ac3ed0d34a724f88f2a15d52f13ab5b8b59b))
+
 ## [0.22.0](https://github.com/cerebral-work/linearctl/compare/v0.21.1...v0.22.0) (2026-10-14)
 
 
