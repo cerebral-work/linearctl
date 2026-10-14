@@ -109,11 +109,13 @@ daemon; `auth exchange-code` / `auth refresh` cover the browser install path.
 slice proving auth end-to-end; run it first on any new machine.
 
 ### 6.2 `linearctl digest` — *implemented + verified*
-`linearctl digest [--since 7d] [--team CER...] [--json]`. Issues updated within the
+`linearctl digest [--since 7d] [--team CER...] [--format default|blackwall] [--json]`. Issues updated within the
 window, grouped by workflow-state type (completed / started / unstarted / triage /
 backlog / canceled). Filter `{ updatedAt: { gte }, team?: { key: { in } } }`,
 `orderBy: updatedAt`, fully paginated via `fetchNext()`. `--team` is repeatable;
 omit it (or pass `all`) for every accessible team.
+- **Frozen JSON contract (`schema_version: 1`):** `digest --json` emits `{ schema_version: 1, since, total, groups }` so downstream consumers (such as Blackwall) can assert schema compatibility.
+- **Blackwall task-batch output (`--format blackwall`):** Emits valid Blackwall TOML (`schema_version = 1`, `since = "..."`, and `[[task]]` tables with `id`, `title`, `state`, `state_type`, `url`, and `prompt`) suitable for piping directly to `blackwall run -f -`.
 
 ### 6.3 `linearctl file` — *implemented + verified*
 `linearctl file <title> --team CER [--project ID] [--desc <md|->] [--label name...] [--json]`.
@@ -280,6 +282,13 @@ logs. See `src/lib/oauth.ts` (transport), `src/lib/secrets.ts` (1Password),
 `linearctl relate <id> [--blocked-by <id...>] [--blocking <id...>] [--related-to <id...>] [--duplicate-of <canonical>] [--json]`.
 Wire issue relations across Linear issues with non-blocking write-through to the local SQLite cache (`issue_relations` table).
 Supports forward blocking, reverse blocked-by, bidirectional related-to, and duplicate-of canonical tracking.
+
+### 6.20 `linearctl operator` — *implemented + verified*
+`linearctl operator [--namespace <ns>] [--emit-crds] [--reconcile <file|->] [--port 8080] [--sync-interval 5m] [--json]`.
+In-cluster Kubernetes controller and CRD reconciler (`linear.cerebral.work/v1alpha1`):
+- `--emit-crds`: Emits the three CustomResourceDefinition manifests (`LinearProject`, `LinearDigestSchedule`, `LinearTicketBinding`) as multi-document YAML (or JSON array with `--json`) and exits `0`. Static manifests are also committed under `deploy/chart/crds/`.
+- `--reconcile <file|->`: Reconciles a Custom Resource manifest (`LinearProject`, `LinearDigestSchedule`, or `LinearTicketBinding`) and outputs the reconciled `status` (plus rendered `ConfigMap` for `LinearDigestSchedule`, or dry-run/applied action plan for `LinearTicketBinding`).
+- **In-cluster MCP supergateway bridge (`deploy/chart/templates/mcp-service.yaml`):** Opt-in via `.Values.mcp.enabled=true` in `deploy/chart/values.yaml`; wraps `linearctl mcp serve` stdio inside `supergateway` and exposes a cluster-internal `Service` on port 8080.
 
 ## 7. Proposed additional workflows (backlog)
 

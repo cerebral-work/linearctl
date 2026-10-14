@@ -79,6 +79,7 @@ program
   .option("--since <window>", "look-back window (e.g. 7d, 24h, 2w)", "7d")
   .option("--team <key...>", "restrict to team key(s) (e.g. CER); omit or 'all' for every team")
   .option("--project <ref>", "restrict to a project (id or name)")
+  .option("--format <fmt>", "output format: 'default' or 'blackwall' (Blackwall task-batch TOML)", "default")
   .option("--json", "emit JSON")
   .action((opts) => digest(opts));
 
@@ -882,6 +883,9 @@ program
   .option("--socket <path>", "Unix socket path (default: ~/.local/state/linearctl/operator.sock)")
   .option("--queue-poll-interval <ms>", "queue poll interval in ms")
   .option("--timeout <ms>", "probe connect timeout in ms (default: 1000, env: LINEARCTL_OPERATOR_TIMEOUT)")
+  .option("--namespace <ns>", "Kubernetes namespace to watch/reconcile", "linear-system")
+  .option("--emit-crds", "emit CustomResourceDefinition manifests (YAML or JSON) and exit 0")
+  .option("--reconcile <file|->", "reconcile a single Custom Resource manifest from file or '-' for stdin")
   .option("--json", "emit the listening address as JSON")
   .option("--role <name...>", "boot a maintainer-agent role on cadence (repeatable: intake-triage, grooming)")
   .option("--check", "connect to a running operator, GET /readyz, exit 0/1 (does NOT start the daemon)")

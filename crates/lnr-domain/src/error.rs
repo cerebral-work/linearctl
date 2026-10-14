@@ -102,6 +102,10 @@ pub enum DomainError {
         "invalid source citation {0:?}; expected owner/repo@sha:path, arxiv:, doi:, or https://"
     )]
     InvalidSource(String),
+
+    /// Validation error on a domain resource or manifest.
+    #[error("{0}")]
+    Validation(String),
 }
 
 /// Stable CLI failure category mapped to a deterministic process exit code.

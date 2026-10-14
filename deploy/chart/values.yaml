@@ -128,3 +128,15 @@ networkPolicy:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+
+# MCP SSE / HTTP bridge via supergateway (CER-1693).
+# Opt-in (`mcp.enabled: false` by default). When enabled, renders an in-cluster
+# Deployment and Service (`{{ .Release.Name }}-mcp`) that wraps `linearctl mcp serve`
+# over cluster-internal SSE/HTTP via `supergateway`.
+mcp:
+  enabled: false
+  port: 8080
+  supergateway:
+    image: "supercorp/supergateway:latest"
+  service:
+    type: ClusterIP

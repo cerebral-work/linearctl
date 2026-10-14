@@ -460,7 +460,25 @@ fn ported_linear_and_cache_commands_work_end_to_end() {
     let digest = run_lnr(&["digest", "--since", "24h", "--json"], "", Some("mock"));
     assert_eq!(digest.code, 0, "stderr={}", digest.err);
     let digest_json: Value = serde_json::from_str(&digest.out).unwrap();
+    assert_eq!(digest_json["schema_version"].as_u64(), Some(1));
     assert_eq!(digest_json["total"].as_u64(), Some(1));
+
+    let digest_bw = run_lnr(
+        &["digest", "--since", "24h", "--format", "blackwall"],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(digest_bw.code, 0, "stderr={}", digest_bw.err);
+    assert!(digest_bw.out.contains("[[task]]"));
+    assert!(digest_bw.out.contains("schema_version = 1"));
+    assert!(digest_bw.out.contains("id = \"ENG-123\""));
+
+    let digest_bad = run_lnr(
+        &["digest", "--since", "24h", "--format", "bogus"],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(digest_bad.code, 2);
 
     let standup = run_lnr(&["standup", "--since", "24h", "--json"], "", Some("mock"));
     assert_eq!(standup.code, 0, "stderr={}", standup.err);
@@ -521,6 +539,28 @@ fn ported_linear_and_cache_commands_work_end_to_end() {
     assert_eq!(op.code, 0, "stderr={}", op.err);
     let op_json: Value = serde_json::from_str(&op.out).unwrap();
     assert_eq!(op_json["ok"].as_bool(), Some(true));
+    assert_eq!(op_json["namespace"].as_str(), Some("linear-system"));
+
+    let crds = run_lnr(&["operator", "--emit-crds", "--json"], "", None);
+    assert_eq!(crds.code, 0, "stderr={}", crds.err);
+    let crds_json: Value = serde_json::from_str(&crds.out).unwrap();
+    assert_eq!(crds_json.as_array().unwrap().len(), 3);
+
+    let reconcile = run_lnr(
+        &["operator", "--reconcile", "-", "--json"],
+        r#"{"kind":"LinearProject","metadata":{"name":"lnr-proj","namespace":"linear-system"},"spec":{"projectRef":"linearctl","team":"CER","syncInterval":"5m"}}"#,
+        None,
+    );
+    assert_eq!(reconcile.code, 0, "stderr={}", reconcile.err);
+    let rec_json: Value = serde_json::from_str(&reconcile.out).unwrap();
+    assert_eq!(
+        rec_json["status"]["conditions"][0]["type"].as_str(),
+        Some("Ready")
+    );
+    assert_eq!(
+        rec_json["status"]["conditions"][0]["status"].as_str(),
+        Some("True")
+    );
 
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
