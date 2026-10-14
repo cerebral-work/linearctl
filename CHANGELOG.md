@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.0](https://github.com/cerebral-work/lnr/compare/v0.25.0...v0.26.0) (2026-10-14)
+
+
+### Features
+
+* **rust:** complete CLI subcommand cutover and native binary build ([6bfae6e](https://github.com/cerebral-work/lnr/commit/6bfae6ed7e9377807522b3d9e50b97baa6335459))
+* **rust:** complete CLI subcommand cutover and native binary build ([151f097](https://github.com/cerebral-work/lnr/commit/151f097266ad90aeffb0c6a6e580de4d788db447))
+
 ## [0.25.0](https://github.com/cerebral-work/lnr/compare/v0.24.0...v0.25.0) (2026-10-14)
 
 
