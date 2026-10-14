@@ -1,2 +1,21 @@
+[default.extend-words]
+# Linear GraphQL `nin` (not in) filter operator.
+nin = "nin"
+# Deliberate misspelling: tests check the "did you mean" suggestion for it.
+commnt = "commnt"
+# Names: the ratatui crate, the sade npm package, Matthew Skelton (Team Topologies).
+ratatui = "ratatui"
+sade = "sade"
+skelton = "skelton"
+# Identifiers and accepted spellings in code: INH_CENSUS, befores, whos, "ANDed",
+# "unparseable".
+inh = "inh"
+befores = "befores"
+whos = "whos"
+ded = "ded"
+unparseable = "unparseable"
+
 [files]
-extend-exclude = ["vendor/", "Cargo.lock", "bun.lock", "node_modules/", "dist/", "test/fixtures/"]
+# CHANGELOG.md is release-please output; its short commit hashes (ba01eef,
+# 1caf7a2) read as misspelt words.
+extend-exclude = ["vendor/", "Cargo.lock", "bun.lock", "node_modules/", "dist/", "test/fixtures/", "CHANGELOG.md"]
