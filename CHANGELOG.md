@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.28.0](https://github.com/cerebral-work/lnr/compare/v0.27.0...v0.28.0) (2026-10-14)
+
+
+### Features
+
+* **xtask:** add cargo xtask ci, install and tools (xtask contract v1) ([2eeb3d5](https://github.com/cerebral-work/lnr/commit/2eeb3d56797ea68bd5c795acc3cabb353bae7e0c))
+* **xtask:** add the estate xtask contract v1 gate (tools, ci, install) ([5c0d57b](https://github.com/cerebral-work/lnr/commit/5c0d57be7d2db7f40153dad63cf7a9a011032e74))
+
+
+### Documentation
+
+* **readme:** add a Build section (cargo xtask ci, cargo xtask install) ([4dd734c](https://github.com/cerebral-work/lnr/commit/4dd734c3f25c86e915a020769b2e535c3982551c))
+
 ## [0.27.0](https://github.com/cerebral-work/lnr/compare/v0.26.0...v0.27.0) (2026-10-14)
 
 
