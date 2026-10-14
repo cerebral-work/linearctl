@@ -2,8 +2,16 @@
 
 use std::io::{self, BufRead, Write};
 
+use lnr_domain::bm25::{Bm25IssueDoc, Bm25IssueIndex};
 use lnr_domain::error::{error_envelope, CliError};
 use lnr_domain::priority::parse_priority;
+use lnr_domain::reviews::{plan_linear_code_review, LinearCodeReviewRequest};
+use lnr_domain::security::inspect_protocol_payload;
+use lnr_domain::token_budget::{budget_json_response, opt_max_tokens};
+use lnr_domain::workstream::{
+    WorkstreamQueueConfig, WorkstreamQueueMetrics, DEFAULT_DBR_MAX_UTILIZATION,
+    ESTATE_WAVE_CONCURRENCY_CAP,
+};
 use serde_json::{json, Value};
 
 use crate::graphql::LinearClient;
@@ -128,6 +136,50 @@ pub fn mcp_tools_list() -> Value {
                 "name": "template_list",
                 "description": "List discovered local and user issue templates.",
                 "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "bm25_search",
+                "description": "Rank Linear issues or local documents using XERJ Lucene BM25 scoring with _explain breakdowns.",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["query", "docs"],
+                    "properties": {
+                        "query": { "type": "string" },
+                        "limit": { "type": "integer" },
+                        "max_tokens": { "type": "integer" },
+                        "docs": {
+                            "type": "array",
+                            "items": { "type": "object" }
+                        }
+                    }
+                }
+            },
+            {
+                "name": "queue_admission",
+                "description": "Evaluate Little's Law, Kingman VUT queue wait, and Goldratt Drum-Buffer-Rope (DBR) admission.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "active_wip": { "type": "integer" },
+                        "current_buffer_depth": { "type": "integer" },
+                        "arrival_rate_per_hour": { "type": "number" },
+                        "service_rate_per_hour": { "type": "number" }
+                    }
+                }
+            },
+            {
+                "name": "review_flow",
+                "description": "Plan a linear-code-review Saga flow with CPM critical path and gate receipt.",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["title"],
+                    "properties": {
+                        "issue_id": { "type": "string" },
+                        "pr_number": { "type": "integer" },
+                        "title": { "type": "string" },
+                        "diff_summary": { "type": "string" }
+                    }
+                }
             }
         ]
     })
@@ -135,6 +187,18 @@ pub fn mcp_tools_list() -> Value {
 
 /// Dispatch one MCP `tools/call` invocation and return its JSON payload.
 pub fn dispatch_mcp_tool(name: &str, args: &Value) -> Result<Value, CliError> {
+    let raw_args = serde_json::to_string(args).unwrap_or_default();
+    let inspection = inspect_protocol_payload("tools/call", &raw_args);
+    if !inspection.clean {
+        return Err(CliError::refused(
+            format!(
+                "MCP payload rejected by security inspection: {:?}",
+                inspection.flags
+            ),
+            "",
+        ));
+    }
+
     match name {
         "whoami" => {
             let client = LinearClient::from_env()?;
@@ -276,6 +340,79 @@ pub fn dispatch_mcp_tool(name: &str, args: &Value) -> Result<Value, CliError> {
             let items = list_templates()?;
             Ok(serde_json::to_value(items).unwrap_or_else(|_| json!([])))
         }
+        "bm25_search" => {
+            let query = args
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("bm25_search requires 'query'", ""))?;
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(10);
+            let docs_val = args
+                .get("docs")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            let docs: Vec<Bm25IssueDoc> = serde_json::from_value(docs_val)
+                .map_err(|e| CliError::usage(format!("invalid 'docs' array: {e}"), ""))?;
+            let index = Bm25IssueIndex::build(docs);
+            let hits = index.search(query, limit);
+            Ok(json!({ "issues": hits }))
+        }
+        "queue_admission" => {
+            let active_wip = args
+                .get("active_wip")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(2);
+            let current_buffer_depth = args
+                .get("current_buffer_depth")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(1);
+            let arrival_rate_per_hour = args
+                .get("arrival_rate_per_hour")
+                .and_then(Value::as_f64)
+                .unwrap_or(10.0);
+            let service_rate_per_hour = args
+                .get("service_rate_per_hour")
+                .and_then(Value::as_f64)
+                .unwrap_or(20.0);
+            let cfg = WorkstreamQueueConfig {
+                active_wip,
+                current_buffer_depth,
+                max_buffer_depth: ESTATE_WAVE_CONCURRENCY_CAP * 2,
+                arrival_rate_per_hour,
+                service_rate_per_hour,
+                arrival_cv: 0.5,
+                service_cv: 0.5,
+                max_safe_utilization: DEFAULT_DBR_MAX_UTILIZATION,
+            };
+            let metrics = WorkstreamQueueMetrics::evaluate(&cfg);
+            Ok(serde_json::to_value(metrics).unwrap_or_else(|_| json!({})))
+        }
+        "review_flow" => {
+            let title = args
+                .get("title")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("review_flow requires 'title'", ""))?;
+            let req = LinearCodeReviewRequest {
+                issue_id: args
+                    .get("issue_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                pr_number: args.get("pr_number").and_then(Value::as_u64),
+                title: title.to_string(),
+                diff_summary: args
+                    .get("diff_summary")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            };
+            let receipt =
+                plan_linear_code_review(&req).map_err(|e| CliError::usage(e.to_string(), ""))?;
+            Ok(serde_json::to_value(receipt).unwrap_or_else(|_| json!({})))
+        }
         other => Err(CliError::not_found(
             format!("unknown MCP tool '{other}'"),
             "",
@@ -343,31 +480,47 @@ pub fn serve_mcp_stdio(version: &str) -> Result<(), CliError> {
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                match dispatch_mcp_tool(tool_name, &arguments) {
-                    Ok(val) => {
-                        let text =
-                            serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string());
-                        json!({
-                            "jsonrpc": "2.0",
-                            "id": req_id,
-                            "result": {
-                                "content": [{ "type": "text", "text": text }],
-                                "isError": false
-                            }
-                        })
-                    }
-                    Err(err) => {
-                        let text = serde_json::to_string_pretty(&error_envelope(&err, "", None))
-                            .unwrap_or_else(|_| err.message.clone());
-                        json!({
-                            "jsonrpc": "2.0",
-                            "id": req_id,
-                            "result": {
-                                "content": [{ "type": "text", "text": text }],
-                                "isError": true
-                            }
-                        })
-                    }
+                let max_tokens_res = opt_max_tokens(&arguments);
+                match max_tokens_res {
+                    Err(msg) => json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "content": [{ "type": "text", "text": msg }],
+                            "isError": true
+                        }
+                    }),
+                    Ok(max_tokens) => match dispatch_mcp_tool(tool_name, &arguments) {
+                        Ok(val) => {
+                            let raw_text = serde_json::to_string_pretty(&val)
+                                .unwrap_or_else(|_| val.to_string());
+                            let text = match max_tokens {
+                                Some(budget) => budget_json_response(&raw_text, budget),
+                                None => raw_text,
+                            };
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": req_id,
+                                "result": {
+                                    "content": [{ "type": "text", "text": text }],
+                                    "isError": false
+                                }
+                            })
+                        }
+                        Err(err) => {
+                            let text =
+                                serde_json::to_string_pretty(&error_envelope(&err, "", None))
+                                    .unwrap_or_else(|_| err.message.clone());
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": req_id,
+                                "result": {
+                                    "content": [{ "type": "text", "text": text }],
+                                    "isError": true
+                                }
+                            })
+                        }
+                    },
                 }
             }
             _ => json!({

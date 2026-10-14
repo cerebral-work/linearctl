@@ -31,6 +31,8 @@ dbg_macro = "warn"
 unnecessary_map_or = "warn"
 
 [workspace.dependencies]
+# Pure zero-I/O domain crate shared by lnr-cli and xtask.
+lnr-domain = { path = "crates/lnr-domain" }
 # Derive (de)serialization for domain types and CLI output.
 serde = { version = "1", features = ["derive"] }
 # JSON output for the CLI.
@@ -47,8 +49,41 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
 
 [profile.dev]
 debug = "line-tables-only"
+
+# Borrowed from xerj/engine/Cargo.toml:
+# CI test profile: optimized codegen without whole-program LTO and with explicit panic = "unwind"
+# so test binaries share artifacts instead of rebuilding the dependency graph.
+[profile.ci-test]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"
+strip = false
+
+# Fast verification profile: the BUILD half of the implement -> build -> verify loop.
+[profile.quick]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 2
+debug = false
+strip = true
+incremental = true
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
+lto = "thin"
+codegen-units = 16
+
+[profile.profiling-final]
+inherits = "release"
+debug = 1
+strip = false

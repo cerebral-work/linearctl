@@ -6,3 +6,4 @@ This directory holds the LeanSpec registry for `lnr` (`linearctl`). Every spec i
 |---|---|---|---|
 | [0001](0001-lnr-strangler-architecture.md) | `lnr` rename and Rust strangler architecture | complete | high |
 | [0002](0002-lnr-rust-port.md) | Port `lnr` domain, CLI, GraphQL client, stores, and MCP server to Rust | complete | high |
+| [0003](0003-borrow-researchd-xerj.md) | Borrow domain, BM25/token-budget, Saga/CPM/DBR, security, and xtask DAG code from `researchd` and `xerj` | complete | high |

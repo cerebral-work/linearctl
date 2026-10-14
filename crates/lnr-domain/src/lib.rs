@@ -23,6 +23,7 @@
 #![deny(missing_docs)]
 
 pub mod beads;
+pub mod bm25;
 pub mod closest;
 pub mod crypto;
 pub mod error;
@@ -35,10 +36,16 @@ pub mod models;
 pub mod plan;
 pub mod priority;
 mod repository;
+pub mod reviews;
+pub mod saga;
+pub mod security;
 pub mod similarity;
 pub mod story;
 pub mod template;
 pub mod time;
+pub mod token_budget;
+pub mod versionset;
+pub mod workstream;
 
 pub use error::{
     assert_batch_succeeded, classify_api_error, error_envelope, format_cli_error, ApiErrorInput,

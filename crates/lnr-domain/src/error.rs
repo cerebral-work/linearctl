@@ -34,6 +34,48 @@ pub enum DomainError {
     /// No item with this id exists in the repository.
     #[error("item {0} not found")]
     NotFound(String),
+
+    /// Invalid flow configuration or specification.
+    #[error("invalid flow specification: {0}")]
+    InvalidFlow(String),
+
+    /// Cyclic dependency detected within a flow graph or VersionSet.
+    #[error("cyclic dependency detected in flow: {0}")]
+    CyclicDependency(String),
+
+    /// A step or package depends on another node that does not exist in the closure.
+    #[error("step {step:?} depends on non-existent step {missing:?}")]
+    MissingDependency {
+        /// Identifier of the step or package declaring the dependency.
+        step: String,
+        /// Identifier of the missing dependency.
+        missing: String,
+    },
+
+    /// Specified step was not found.
+    #[error("step {0:?} not found in flow")]
+    StepNotFound(String),
+
+    /// Execution error during activity or provider processing.
+    #[error("activity execution error: {0}")]
+    ActivityError(String),
+
+    /// A package version conflict was detected in a VersionSet.
+    #[error("version conflict in VersionSet for package {package}: {message}")]
+    VersionConflict {
+        /// Package name.
+        package: String,
+        /// Description of the conflict.
+        message: String,
+    },
+
+    /// Invalid VersionSet manifest or specification.
+    #[error("invalid VersionSet manifest: {0}")]
+    InvalidVersionSet(String),
+
+    /// A security containment, capability attenuation, or governance invariant failed.
+    #[error("security violation: {0}")]
+    SecurityViolation(String),
 }
 
 /// Stable CLI failure category mapped to a deterministic process exit code.

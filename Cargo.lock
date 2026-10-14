@@ -462,6 +462,9 @@ name = "xtask"
 version = "0.21.1"
 dependencies = [
  "anyhow",
+ "lnr-domain",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

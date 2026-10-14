@@ -1,0 +1,108 @@
+$schema: https://projectfile.org/schema/v1.json
+kind: SoftwareSourceCode
+
+identity:
+  namespace: io.todie.cerebral
+  name: lnr
+  version: "0.21.1"
+  title:
+    en: "lnr (linearctl)"
+  summary:
+    en: "Estate Linear API orchestrator: headless CLI, stdio MCP server, Kubernetes operator, and Rust strangler workspace."
+  created: "2026-03-01"
+  modified: "2026-10-14"
+
+repositories:
+  - url: "https://github.com/cerebral-work/lnr.git"
+    type: git
+    branch: main
+    role: origin
+
+links:
+  - type: source-code
+    url: https://github.com/cerebral-work/lnr
+  - type: bugs
+    url: https://github.com/cerebral-work/lnr/issues
+  - type: documentation
+    url: https://github.com/cerebral-work/lnr/tree/main/docs
+
+license:
+  spdx: MIT
+  file: LICENSE
+
+copyright:
+  year: 2026
+
+people:
+  - family-names: Todie
+    given-names: Christian M.
+    email: chris@todie.io
+    roles: [founder, author, maintainer, copyright]
+
+organizations:
+  - name: "Cerebral"
+    url: https://github.com/cerebral-work
+    roles: [funder, copyright, maintainer]
+
+keywords:
+  - lnr
+  - linearctl
+  - linear
+  - mcp
+  - operator
+  - saga
+  - cpm
+  - bm25
+  - xerj
+  - rust
+
+technologies:
+  - rust
+  - typescript
+  - bun
+  - graphql
+  - mcp
+
+requirements:
+  runtime:
+    rust: ">=1.85"
+
+org:
+  projectfile:
+    operating-system: [ linux ]
+    architecture: [ amd64 ]
+    health:
+      endpoints:
+        - path: /healthz
+          port: 8788
+          protocol: http
+          kind: liveness
+        - path: /readyz
+          port: 8788
+          protocol: http
+          kind: readiness
+        - path: /metrics
+          port: 8788
+          protocol: http
+          kind: readiness
+    ci:
+      nodes:
+        hygiene:
+          needs:
+            spec-check: true
+            toolchain-check: true
+            projectfile-check: true
+            versionset-check: true
+            graph-audit: true
+        check:
+          needs:
+            hygiene: true
+            cargo-fmt: true
+            cargo-clippy: true
+            cargo-test: true
+            bun-test: true
+        smoke:
+          goal: true
+          needs:
+            check: true
+            xerj-check: true
