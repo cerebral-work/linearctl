@@ -33,6 +33,7 @@ pub mod examples;
 pub mod governance;
 pub mod handoff;
 mod item;
+pub mod k8s;
 pub mod labels;
 pub mod links;
 pub mod loops;

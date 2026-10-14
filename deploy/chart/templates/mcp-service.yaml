@@ -1,0 +1,92 @@
+{{- if .Values.mcp.enabled }}
+{{- /*
+Cluster-internal MCP SSE/HTTP bridge via supergateway (CER-1693).
+Wraps `linearctl mcp serve` stdio inside the cluster without requiring a public ingress.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-mcp
+  labels:
+    app.kubernetes.io/name: linearctl-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: linearctl-mcp
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: linearctl-mcp
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: linearctl-mcp-bridge
+          image: {{ .Values.mcp.supergateway.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          args:
+            - "--stdio"
+            - "linearctl mcp serve"
+            - "--port"
+            - {{ .Values.mcp.port | quote }}
+          ports:
+            - name: http-mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+          env:
+            - name: LINEAR_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.linearOauthClientId.secretKeyRef.name }}
+                  key: {{ .Values.env.linearOauthClientId.secretKeyRef.key }}
+            - name: LINEAR_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.env.linearOauthClientSecret.secretKeyRef.name }}
+                  key: {{ .Values.env.linearOauthClientSecret.secretKeyRef.key }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mcp
+  labels:
+    app.kubernetes.io/name: linearctl-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.mcp.service.type }}
+  selector:
+    app.kubernetes.io/name: linearctl-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http-mcp
+      port: {{ .Values.mcp.port }}
+      targetPort: http-mcp
+      protocol: TCP
+{{- end }}

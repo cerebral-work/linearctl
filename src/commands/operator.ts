@@ -33,9 +33,15 @@ import { usageError } from "../lib/errors.js";
  * and `--check` are mutually exclusive (an explicit error, not silent precedence).
  */
 
+import { readFileSync } from "node:fs";
 import { printJson } from "../lib/output.js";
 import { DEFAULT_OPERATOR_SOCKET, makeControlClient } from "../lib/control-socket.js";
 import { startOperator, type OperatorOptions } from "../core/operator.js";
+import {
+  emitOperatorCrdsJson,
+  emitOperatorCrdsYaml,
+  reconcileCrManifestJson,
+} from "../core/k8s-operator.js";
 import { getRole, type RoleDescriptor, type RoleRunner } from "../core/role-catalog.js";
 import { runIntakeTriage } from "../roles/intake-triage.js";
 import { runGrooming } from "../roles/grooming.js";
@@ -55,6 +61,12 @@ export interface OperatorCommandOptions {
   health?: boolean;
   /** Probe connect timeout in ms (default: 1000, env: LINEARCTL_OPERATOR_TIMEOUT). */
   timeout?: number | string;
+  /** Kubernetes namespace to watch/reconcile (default: linear-system). */
+  namespace?: string;
+  /** Emit CustomResourceDefinition manifests (YAML or JSON) and exit 0. */
+  emitCrds?: boolean;
+  /** Reconcile a single Custom Resource manifest from file or '-' for stdin and exit 0. */
+  reconcile?: string;
 }
 
 /** The parsed /readyz report body (presence-only — no secret values). */
@@ -125,7 +137,7 @@ function resolveRoles(
 }
 
 /**
- * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--json] [--check] [--health]`.
+ * `linearctl operator [--socket <path>] [--queue-poll-interval <ms>] [--role <name...>] [--namespace <ns>] [--emit-crds] [--reconcile <file|->] [--json] [--check] [--health]`.
  *
  * Starts the daemon and blocks until SIGINT/SIGTERM. The banner goes to
  * stderr so stdout stays clean for `--json` machine output. `--check` short-
@@ -134,6 +146,34 @@ function resolveRoles(
  * `/healthz`; the two are mutually exclusive.
  */
 export async function operator(opts: OperatorCommandOptions): Promise<void> {
+  if (opts.emitCrds) {
+    if (opts.json) {
+      printJson(emitOperatorCrdsJson());
+    } else {
+      process.stdout.write(emitOperatorCrdsYaml());
+    }
+    return;
+  }
+
+  const namespace = opts.namespace ?? "linear-system";
+
+  if (opts.reconcile) {
+    const raw =
+      opts.reconcile === "-"
+        ? readFileSync(0, "utf8")
+        : readFileSync(opts.reconcile, "utf8");
+    const reconciled = reconcileCrManifestJson(raw);
+    if (opts.json) {
+      printJson(reconciled);
+    } else {
+      const meta = (reconciled.metadata ?? {}) as Record<string, unknown>;
+      process.stdout.write(
+        `Reconciled ${String(reconciled.kind ?? "CR")}/${String(meta.name ?? "unnamed")} in namespace ${namespace}\n`,
+      );
+    }
+    return;
+  }
+
   // --health and --check are mutually exclusive — the liveness vs readiness
   // probes must not be conflated. An explicit error beats silent precedence.
   if (opts.health && opts.check) {
@@ -168,10 +208,16 @@ export async function operator(opts: OperatorCommandOptions): Promise<void> {
   const handle = await startOperator(operatorOpts);
 
   if (opts.json) {
-    printJson({ ok: true, socket: handle.socketPath, polling: handle.polling, roles: handle.roles });
+    printJson({
+      ok: true,
+      namespace,
+      socket: handle.socketPath,
+      polling: handle.polling,
+      roles: handle.roles,
+    });
   } else {
     process.stderr.write(
-      `linearctl operator listening on ${handle.socketPath}\n` +
+      `linearctl operator listening on ${handle.socketPath} (namespace: ${namespace})\n` +
         `  polling: ${handle.polling ? "on" : "off (set CF_ACCOUNT_ID/CF_QUEUE_ID/CF_API_TOKEN to enable)"}\n` +
         `  roles:   ${handle.roles.length ? handle.roles.join(", ") : "none (use --role <name>)"}\n` +
         `  stop:   SIGINT / SIGTERM\n`,

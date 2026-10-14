@@ -793,15 +793,78 @@ pub struct DigestGroup {
     pub items: Vec<SearchItem>,
 }
 
+fn default_digest_schema_version() -> u32 {
+    1
+}
+
 /// Output of `lnr digest`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DigestResult {
+    /// Frozen JSON contract version (`1`).
+    #[serde(default = "default_digest_schema_version")]
+    pub schema_version: u32,
     /// ISO-8601 lower bound timestamp.
     pub since: String,
     /// Total issues across all groups.
     pub total: usize,
     /// Issues grouped by workflow state type.
     pub groups: Vec<DigestGroup>,
+}
+
+/// Escape a string for double-quoted TOML output.
+fn escape_toml_basic_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render a [`DigestResult`] as a Blackwall task-batch TOML document (`schema_version = 1`).
+#[must_use]
+pub fn render_blackwall_toml(result: &DigestResult) -> String {
+    let mut lines = vec![
+        format!("schema_version = {}", result.schema_version),
+        format!("since = \"{}\"", escape_toml_basic_string(&result.since)),
+    ];
+    for group in &result.groups {
+        for item in &group.items {
+            let prompt = format!("Resolve {}: {}", item.identifier, item.title);
+            lines.push(String::new());
+            lines.push("[[task]]".to_string());
+            lines.push(format!(
+                "id = \"{}\"",
+                escape_toml_basic_string(&item.identifier)
+            ));
+            lines.push(format!(
+                "title = \"{}\"",
+                escape_toml_basic_string(&item.title)
+            ));
+            lines.push(format!(
+                "state = \"{}\"",
+                escape_toml_basic_string(&item.state)
+            ));
+            lines.push(format!(
+                "state_type = \"{}\"",
+                escape_toml_basic_string(&item.state_type)
+            ));
+            lines.push(format!("url = \"{}\"", escape_toml_basic_string(&item.url)));
+            lines.push(format!(
+                "prompt = \"{}\"",
+                escape_toml_basic_string(&prompt)
+            ));
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// Group flat [`SearchItem`] entries into canonical workflow state type buckets.
@@ -843,6 +906,7 @@ pub fn build_digest_groups(since: &str, items: Vec<SearchItem>) -> DigestResult 
         });
     }
     DigestResult {
+        schema_version: 1,
         since: since.to_string(),
         total,
         groups,

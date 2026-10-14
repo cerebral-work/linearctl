@@ -11,10 +11,14 @@ use lnr_domain::closest::closest_command;
 use lnr_domain::error::{format_cli_error, CliError};
 use lnr_domain::examples::{example_command_names, example_hint, get_example, EXAMPLES};
 use lnr_domain::handoff::{handoff_body_skeleton, HandoffStatus, NewHandoff};
+use lnr_domain::k8s::{
+    emit_operator_crds_json, emit_operator_crds_yaml, reconcile_cr_manifest_json,
+};
 use lnr_domain::loops::{lint_recipe, LintSeverity};
 use lnr_domain::models::{
     build_digest_groups, build_issue_filter, parse_bulk_spec, parse_file_batch_spec,
-    render_mine_text, render_standup_markdown, BulkSpecItem, SearchFilterInput,
+    render_blackwall_toml, render_mine_text, render_standup_markdown, BulkSpecItem,
+    SearchFilterInput,
 };
 use lnr_domain::plan::{
     compute_waves, generate_saga_plan, parse_saga_plan_toml, serialize_plan_to_toml,
@@ -1800,6 +1804,13 @@ fn handle_triage(args: &[String], wants_json: bool) -> Result<(), CliError> {
 }
 
 fn handle_digest(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let fmt = flag_value(args, "--format").unwrap_or_else(|| "default".to_string());
+    if !fmt.eq_ignore_ascii_case("default") && !fmt.eq_ignore_ascii_case("blackwall") {
+        return Err(CliError::usage(
+            format!("invalid --format \"{fmt}\": expected 'default' or 'blackwall'."),
+            "Example: linearctl digest --format blackwall",
+        ));
+    }
     let (filter_input, limit) = parse_search_filter_args(args)?;
     let client = LinearClient::from_env()?;
     for tk in &filter_input.team_keys {
@@ -1810,6 +1821,10 @@ fn handle_digest(args: &[String], wants_json: bool) -> Result<(), CliError> {
     let since = flag_value(args, "--since").unwrap_or_else(|| "24h".to_string());
     let items = client.search_issues(build_issue_filter(&filter_input), limit)?;
     let digest = build_digest_groups(&since, items);
+    if fmt.eq_ignore_ascii_case("blackwall") && !wants_json {
+        print!("{}", render_blackwall_toml(&digest));
+        return Ok(());
+    }
     print_output(
         &digest,
         wants_json,
@@ -2105,10 +2120,59 @@ fn handle_cache(args: &[String], wants_json: bool) -> Result<(), CliError> {
 }
 
 fn handle_operator(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    if has_flag(args, "--emit-crds") {
+        if wants_json {
+            let crds = emit_operator_crds_json();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&crds).unwrap_or_else(|_| "[]".to_string())
+            );
+        } else {
+            print!("{}", emit_operator_crds_yaml());
+        }
+        return Ok(());
+    }
+
+    let namespace = flag_value(args, "--namespace").unwrap_or_else(|| "linear-system".to_string());
+
+    if let Some(reconcile_path) = flag_value(args, "--reconcile") {
+        let raw = if reconcile_path == "-" {
+            read_stdin_string()?
+        } else {
+            std::fs::read_to_string(&reconcile_path).map_err(|e| {
+                CliError::usage(
+                    format!("failed reading {reconcile_path}: {e}"),
+                    "Pass a JSON Custom Resource file or - for stdin.",
+                )
+            })?
+        };
+        let reconciled = reconcile_cr_manifest_json(&raw, &now_iso()).map_err(|e| {
+            CliError::usage(
+                e.to_string(),
+                "Pass a valid Custom Resource JSON manifest (LinearProject, LinearDigestSchedule, or LinearTicketBinding).",
+            )
+        })?;
+        let kind = reconciled
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("CR");
+        let name = reconciled
+            .pointer("/metadata/name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed");
+        print_output(
+            &reconciled,
+            wants_json,
+            &format!("Reconciled {kind}/{name} in namespace {namespace}"),
+        );
+        return Ok(());
+    }
+
     let sock = operator_socket_path(flag_value(args, "--socket").as_deref());
     if has_flag(args, "--check") || has_flag(args, "--health") {
         let out = json!({
             "ok": true,
+            "namespace": namespace,
             "socketPath": sock.display().to_string(),
             "exists": sock.exists(),
         });
@@ -2123,6 +2187,7 @@ fn handle_operator(args: &[String], wants_json: bool) -> Result<(), CliError> {
     let out = json!({
         "ok": true,
         "mode": "operator",
+        "namespace": namespace,
         "socketPath": sock.display().to_string(),
     });
     print_output(&out, wants_json, "Operator ready");

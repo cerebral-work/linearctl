@@ -81,9 +81,43 @@ export interface DigestGroup {
 }
 
 export interface DigestResult {
+  schema_version?: 1;
   since: string;
   total: number;
   groups: DigestGroup[];
+}
+
+function escapeTomlBasicString(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+}
+
+/**
+ * Render a `DigestResult` as a Blackwall task-batch TOML document (`schema_version = 1`).
+ */
+export function renderBlackwallToml(result: DigestResult): string {
+  const lines: string[] = [
+    `schema_version = ${result.schema_version ?? 1}`,
+    `since = "${escapeTomlBasicString(result.since)}"`,
+  ];
+  for (const group of result.groups) {
+    for (const item of group.items) {
+      const prompt = `Resolve ${item.identifier}: ${item.title}`;
+      lines.push("");
+      lines.push("[[task]]");
+      lines.push(`id = "${escapeTomlBasicString(item.identifier)}"`);
+      lines.push(`title = "${escapeTomlBasicString(item.title)}"`);
+      lines.push(`state = "${escapeTomlBasicString(item.state)}"`);
+      lines.push(`state_type = "${escapeTomlBasicString(group.type)}"`);
+      lines.push(`url = "${escapeTomlBasicString(item.url)}"`);
+      lines.push(`prompt = "${escapeTomlBasicString(prompt)}"`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 // Workflow-state types in the order a digest should read.
@@ -136,7 +170,7 @@ export async function digest(
     .map(([type, items]) => ({ type, count: items.length, items }))
     .sort((a, b) => order(a.type) - order(b.type));
 
-  return { since: since.toISOString(), total: issues.length, groups };
+  return { schema_version: 1, since: since.toISOString(), total: issues.length, groups };
 }
 
 const DAY_MS = 86_400_000;
