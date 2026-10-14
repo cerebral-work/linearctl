@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/cerebral-work/linearctl/compare/v0.21.1...v0.22.0) (2026-10-14)
+
+
+### Features
+
+* rename project to lnr and scaffold estate Rust monorepo harness ([b1eb99e](https://github.com/cerebral-work/linearctl/commit/b1eb99e9a0ddc598daea134c94bbfc0cdb57504f))
+* rename project to lnr and scaffold estate Rust monorepo harness ([bbc549a](https://github.com/cerebral-work/linearctl/commit/bbc549acced38e09c689d71da826236492fb042c))
+
 ## [0.21.1](https://github.com/cerebral-work/linearctl/compare/v0.21.0...v0.21.1) (2026-10-12)
 
 
