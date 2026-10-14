@@ -271,6 +271,24 @@ Full reference: [`docs/spec.md` §6](./docs/spec.md). Product and architecture r
 In-cluster: resolved from [OpenBao](https://openbao.org) via `ExternalSecret`,
 injected as a `secretKeyRef`. A native OAuth `actor=app` path is future work.
 
+## Build
+
+```bash
+cargo xtask ci        # the CI gate: tools, toolchain-check, fmt-check, clippy, test,
+                      # doc-test, deny, typos, machete, then bun (stops at the first failure)
+cargo xtask install   # cargo xtask ci, then a --locked release build of every Rust binary
+```
+
+`cargo xtask tools` installs the pinned gate tools (cargo-deny, typos-cli,
+cargo-machete, cargo-nextest) with `cargo install --locked` when they are missing
+or at another version; their versions live in `xtask/src/gate.rs`. The Rust
+toolchain is pinned in `rust-toolchain.toml`.
+
+The TypeScript CLI is not a cargo project, so `cargo xtask ci` calls bun
+directly in its last step (`cargo xtask bun`): `bun install --frozen-lockfile`,
+`bun run typecheck`, `bun test` and `bun run build`, the commands ci.yml's
+`check` job runs. CI runs the same `cargo xtask ci` in the `xtask-ci` job.
+
 ## How it ships
 
 Conventional Commits → **release-please** → tag → **bun cross-compiles** 4
