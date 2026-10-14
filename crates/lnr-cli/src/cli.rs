@@ -6,6 +6,7 @@ use lnr_domain::beads::{
     build_issue_index, claim_issue, close_beads_issue, detect_cycles, get_issue_blockers,
     get_issue_dependents, get_ready_issues,
 };
+use lnr_domain::bm25::{Bm25IssueDoc, Bm25IssueIndex};
 use lnr_domain::closest::closest_command;
 use lnr_domain::error::{format_cli_error, CliError};
 use lnr_domain::examples::{example_command_names, example_hint, get_example, EXAMPLES};
@@ -17,7 +18,10 @@ use lnr_domain::plan::{
     PlanGenerateOptions,
 };
 use lnr_domain::priority::parse_priority;
+use lnr_domain::reviews::{plan_linear_code_review, LinearCodeReviewRequest};
 use lnr_domain::template::{parse_var_flags, render_template, template_vars};
+use lnr_domain::token_budget::{budget_json_response, opt_max_tokens};
+use lnr_domain::workstream::WorkstreamQueueConfig;
 use lnr_domain::{Item, ItemId, ItemRepository};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -45,6 +49,7 @@ pub const ROOT_COMMANDS: &[&str] = &[
     "comment",
     "comments",
     "cycle",
+    "dbr",
     "demo",
     "digest",
     "doc",
@@ -72,8 +77,10 @@ pub const ROOT_COMMANDS: &[&str] = &[
     "relate",
     "release-notes",
     "reorg",
+    "review-flow",
     "roadmap",
     "search",
+    "search-bm25",
     "show",
     "stale",
     "standup",
@@ -191,6 +198,9 @@ fn render_root_help(version: &str) -> String {
          \x20 comment         Post a markdown comment on an issue\n\
          \x20 show            Show full details for an issue\n\
          \x20 search          Search issues\n\
+         \x20 search-bm25     Rank local Beads issues with XERJ-derived BM25 scoring\n\
+         \x20 dbr             Evaluate Little's Law & Drum-Buffer-Rope queue admission\n\
+         \x20 review-flow     Plan a Linear Code Review Saga flow with CAS handoff key\n\
          \x20 dupcheck        Check for likely duplicate issues\n\
          \x20 project         List, create, or update Linear projects\n\
          \x20 milestone       List, create, update, or delete project milestones\n\
@@ -395,6 +405,9 @@ fn dispatch(
         "milestone" => handle_milestone(rest, wants_json),
         "stale" => handle_stale(rest, wants_json),
         "xref" => handle_xref(rest, wants_json),
+        "search-bm25" => handle_search_bm25(rest, wants_json),
+        "dbr" => handle_dbr(rest, wants_json),
+        "review-flow" => handle_review_flow(rest, wants_json),
         _ => {
             let client = LinearClient::from_env()?;
             if let Some(tk) = flag_value(rest, "--team") {
@@ -1406,5 +1419,120 @@ fn handle_xref(args: &[String], wants_json: bool) -> Result<(), CliError> {
     let _ = LinearClient::from_env()?;
     let out = json!({ "xref": [] });
     print_output(&out, wants_json, "0 xref findings");
+    Ok(())
+}
+
+fn handle_search_bm25(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(args, &["--limit", "--max-tokens"]);
+    let query = flag_value(args, "--query")
+        .or_else(|| pos.first().cloned())
+        .ok_or_else(|| {
+            CliError::usage(
+                "search-bm25 requires a <query> string.",
+                "Example: linearctl search-bm25 \"bm25 tokenizer\" --json",
+            )
+        })?;
+    let limit = flag_value(args, "--limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
+    let max_tokens_arg = flag_value(args, "--max-tokens").and_then(|s| s.parse::<i64>().ok());
+
+    let issues = load_beads_issues()?;
+    let docs: Vec<Bm25IssueDoc> = issues
+        .iter()
+        .map(|i| Bm25IssueDoc {
+            id: i.id.clone(),
+            identifier: i.id.clone(),
+            title: i.title.clone(),
+            description: i.description.clone(),
+            state: Some(format!("{:?}", i.status)),
+        })
+        .collect();
+    let index = Bm25IssueIndex::build(docs);
+    let hits = index.search(&query, limit);
+    let out = json!({
+        "query": query,
+        "count": hits.len(),
+        "hits": hits,
+    });
+    if wants_json {
+        let budget_val = json!({ "max_tokens": max_tokens_arg });
+        if let Ok(Some(budget)) = opt_max_tokens(&budget_val) {
+            let text =
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{\"hits\":[]}".to_string());
+            println!("{}", budget_json_response(&text, budget));
+            return Ok(());
+        }
+    }
+    print_output(&out, wants_json, &format!("{} BM25 hit(s)", hits.len()));
+    Ok(())
+}
+
+fn handle_dbr(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    use lnr_domain::workstream::{
+        WorkstreamQueueMetrics, DEFAULT_DBR_MAX_UTILIZATION, ESTATE_WAVE_CONCURRENCY_CAP,
+    };
+    let active_wip = flag_value(args, "--wip")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(2);
+    let current_buffer_depth = flag_value(args, "--buffer-depth")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
+    let arrival_rate_per_hour = flag_value(args, "--arrival-rate")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(10.0);
+    let service_rate_per_hour = flag_value(args, "--service-rate")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(20.0);
+
+    let cfg = WorkstreamQueueConfig {
+        active_wip,
+        current_buffer_depth,
+        max_buffer_depth: ESTATE_WAVE_CONCURRENCY_CAP * 2,
+        arrival_rate_per_hour,
+        service_rate_per_hour,
+        arrival_cv: 0.5,
+        service_cv: 0.5,
+        max_safe_utilization: DEFAULT_DBR_MAX_UTILIZATION,
+    };
+    let metrics = WorkstreamQueueMetrics::evaluate(&cfg);
+    print_output(
+        &metrics,
+        wants_json,
+        &format!(
+            "DBR admission: {:?} (Little's W {:.2}h, utilization {:.2})",
+            metrics.admission, metrics.littles_law_cycle_time_hours, metrics.utilization_rho
+        ),
+    );
+    Ok(())
+}
+
+fn handle_review_flow(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let issue_id = flag_value(args, "--issue").unwrap_or_else(|| "ENG-1".to_string());
+    let pr_number = flag_value(args, "--pr")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(1);
+    let title = flag_value(args, "--title")
+        .unwrap_or_else(|| format!("Automated code review flow for {issue_id}"));
+    let req = LinearCodeReviewRequest {
+        issue_id: Some(issue_id),
+        pr_number: Some(pr_number),
+        title,
+        diff_summary: flag_value(args, "--summary"),
+    };
+    let receipt = plan_linear_code_review(&req).map_err(|e| {
+        CliError::usage(
+            e.to_string(),
+            "Example: linearctl review-flow --issue ENG-1",
+        )
+    })?;
+    print_output(
+        &receipt,
+        wants_json,
+        &format!(
+            "Review flow {} (run {}, critical path {}s, gate {})",
+            receipt.flow_id, receipt.run_id, receipt.makespan_secs, receipt.gate_id
+        ),
+    );
     Ok(())
 }

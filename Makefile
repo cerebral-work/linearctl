@@ -10,6 +10,7 @@ NEXTEST_PROFILE ?= default
 
 .PHONY: help dev build build-ts build-rust typecheck fmt fmt-check clippy \
 	test test-ts test-rust doc-test deny bench spec-check toolchain-check \
+	projectfile-check versionset-check graph-audit xerj-check xtask-check \
 	check ci smoke hygiene typos machete cpm-check wave-runner
 
 help: ## Show this help message
@@ -71,6 +72,21 @@ spec-check: ## Validate specs/ (lean-spec rules)
 toolchain-check: ## Verify rustc matches rust-toolchain.toml
 	cargo run -q -p xtask --locked -j $(JOBS) -- toolchain-check
 
+projectfile-check: ## Verify projectfile.yaml against Cargo.toml and package.json
+	cargo run -q -p xtask --locked -j $(JOBS) -- projectfile-check
+
+versionset-check: ## Verify workspace dependency pinning and zero duplicate crate versions
+	cargo run -q -p xtask --locked -j $(JOBS) -- versionset-check
+
+graph-audit: ## Verify workspace crate DAG, leaf boundaries, and zero-I/O domain
+	cargo run -q -p xtask --locked -j $(JOBS) -- graph-audit
+
+xerj-check: ## Verify XERJ code search index readiness
+	cargo run -q -p xtask --locked -j $(JOBS) -- xerj-check
+
+xtask-check: ## Execute the 9-stage CPM-scheduled xtask verification DAG
+	XERJ_OPTIONAL=1 cargo run -q -p xtask --locked -j $(JOBS) -- check
+
 check: typecheck fmt-check clippy test doc-test deny ## Run all workspace quality gates
 
 ci: ## Run CI quality gates
@@ -92,7 +108,7 @@ smoke: typecheck ## Build and smoke-test both TS and Rust CLIs and verify zero d
 
 ##@ Hygiene & Orchestration
 
-hygiene: check smoke spec-check toolchain-check cpm-check ## Run full hygiene and preflight gates
+hygiene: check smoke spec-check toolchain-check projectfile-check versionset-check graph-audit cpm-check ## Run full hygiene and preflight gates
 	for f in scripts/*.sh; do bash -n "$$f"; done
 
 typos: ## Spell check
@@ -106,3 +122,4 @@ cpm-check: ## Verify CPM sprint wave tasks and boundaries
 
 wave-runner: ## Run preflight and wave execution
 	./scripts/cpm-wave-runner.sh --wave all
+

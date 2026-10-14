@@ -361,12 +361,14 @@ fn handoff_create_show_and_missing_lookup_work_end_to_end() {
 fn mcp_serve_responds_to_initialize_and_tools_list() {
     let input = concat!(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"queue_admission\",\"arguments\":{\"active_wip\":2}}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"review_flow\",\"arguments\":{\"issue_id\":\"TOD-77\",\"pr_number\":42,\"title\":\"Review TOD-77\"}}}\n"
     );
     let res = run_lnr(&["mcp", "serve"], input, None);
     assert_eq!(res.code, 0);
     let lines: Vec<&str> = res.out.lines().collect();
-    assert_eq!(lines.len(), 2);
+    assert_eq!(lines.len(), 4);
     let init_resp: Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(
         init_resp["result"]["serverInfo"]["name"].as_str(),
@@ -378,4 +380,43 @@ fn mcp_serve_responds_to_initialize_and_tools_list() {
     assert!(tools
         .iter()
         .any(|t| t["name"].as_str() == Some("file_issue")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("bm25_search")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("queue_admission")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("review_flow")));
+
+    let q_resp: Value = serde_json::from_str(lines[2]).unwrap();
+    assert!(q_resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("admit"));
+
+    let rev_resp: Value = serde_json::from_str(lines[3]).unwrap();
+    assert!(rev_resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("linear-code-review"));
+}
+
+#[test]
+fn borrowed_researchd_and_xerj_cli_commands_work() {
+    let dbr = run_lnr(&["dbr", "--wip", "2", "--json"], "", None);
+    assert_eq!(dbr.code, 0, "stderr={}", dbr.err);
+    let dbr_json: Value = serde_json::from_str(&dbr.out).unwrap();
+    assert_eq!(dbr_json["admission"].as_str(), Some("admit"));
+
+    let rev = run_lnr(
+        &["review-flow", "--issue", "TOD-99", "--pr", "12", "--json"],
+        "",
+        None,
+    );
+    assert_eq!(rev.code, 0, "stderr={}", rev.err);
+    let rev_json: Value = serde_json::from_str(&rev.out).unwrap();
+    assert_eq!(rev_json["flow_id"].as_str(), Some("linear-code-review"));
+    assert_eq!(rev_json["gate_id"].as_str(), Some("linear:code-review"));
 }

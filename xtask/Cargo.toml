@@ -11,6 +11,9 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+lnr-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
