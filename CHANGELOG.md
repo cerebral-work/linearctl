@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/cerebral-work/lnr/compare/v0.28.0...v0.29.0) (2026-10-14)
+
+
+### Features
+
+* **intake:** add escapement PlanSubmission intake command and setup runbook ([b318585](https://github.com/cerebral-work/lnr/commit/b31858507900ab2135a9c1f45992ae620437c17b))
+* **intake:** add escapement PlanSubmission intake command and setup runbook ([281394b](https://github.com/cerebral-work/lnr/commit/281394b960c2fc4510559006ce108bb8c5fbeb0f))
+
 ## [0.28.0](https://github.com/cerebral-work/lnr/compare/v0.27.0...v0.28.0) (2026-10-14)
 
 
