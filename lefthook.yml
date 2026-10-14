@@ -1,10 +1,10 @@
-# Conventional Commits + gitleaks (federated standard).
-# Skip: LEFTHOOK=0.
+# Conventional Commits + gitleaks + typecheck + affected-crate cargo checks.
+# Skip all hooks with LEFTHOOK=0.
 commit-msg:
   commands:
     conventional:
       run: |
-        head -1 {1} | grep -qE '^(feat|fix|perf|refactor|docs|test|ci|build|infra|security|style|chore)(\(.+\))?!?: .+' \
+        head -1 {1} | grep -qE '^((feat|fix|perf|refactor|docs|test|ci|build|infra|security|style|chore)(\(.+\))?!?: .+|Merge .+|Revert ".+")' \
           || { echo "commit-msg must be Conventional Commits: <type>(scope): <desc>"; exit 1; }
 
 pre-commit:
@@ -13,4 +13,18 @@ pre-commit:
     typecheck:
       run: bun run typecheck
     gitleaks:
-      run: gitleaks protect --staged --redact --no-banner || echo "gitleaks not installed — CI will enforce"
+      run: |
+        if command -v gitleaks >/dev/null 2>&1; then
+          gitleaks protect --staged --redact --no-banner
+        else
+          echo "gitleaks not installed - CI will enforce"
+        fi
+    affected-tests:
+      run: ./scripts/lefthook-affected-cargo.sh --staged test
+
+pre-push:
+  commands:
+    affected-clippy:
+      run: ./scripts/lefthook-affected-cargo.sh --push clippy
+    affected-tests:
+      run: ./scripts/lefthook-affected-cargo.sh --push test

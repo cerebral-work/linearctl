@@ -6,7 +6,7 @@ provider = "claude"
 model = "sonnet"
 
 [verify]
-command = "bun run typecheck && bun test && ./scripts/cpm-wave-runner.sh --check"
+command = "make check JOBS=2 && ./scripts/cpm-wave-runner.sh --check"
 
 [merge]
 automerge = false

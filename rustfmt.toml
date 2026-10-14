@@ -1,0 +1,4 @@
+# rustfmt config: matches the estate convention (tab_spaces 4, max_width 100).
+max_width = 100
+tab_spaces = 4
+edition = "2021"

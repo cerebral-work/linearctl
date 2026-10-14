@@ -55,7 +55,7 @@ jobs:
           app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_APP_KEY }}
           owner: cerebral-work
-          repositories: linearctl
+          repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
@@ -117,21 +117,28 @@ jobs:
         run: |
           bun build ./src/index.ts --compile --minify \
             --define 'process.env.DEV="false"' \
-            --target=${{ matrix.target }} --outfile linearctl
+            --target=${{ matrix.target }} --outfile lnr
+          cp -f lnr linearctl
 
       - name: Archive (GoReleaser-style name for mise asset scoring)
         id: archive
         run: |
           VER="${{ needs.release-please.outputs.tag_name || inputs.tag }}"
-          NAME="linearctl_${VER#v}_${{ matrix.asset }}.tar.gz"
-          tar -czf "$NAME" linearctl
+          NAME="lnr_${VER#v}_${{ matrix.asset }}.tar.gz"
+          LEGACY_NAME="linearctl_${VER#v}_${{ matrix.asset }}.tar.gz"
+          tar -czf "$NAME" lnr linearctl
           sha256sum "$NAME" > "$NAME.sha256"
+          tar -czf "$LEGACY_NAME" linearctl lnr
+          sha256sum "$LEGACY_NAME" > "$LEGACY_NAME.sha256"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "legacy_name=$LEGACY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ steps.archive.outputs.name }}
+          subject-path: |
+            ${{ steps.archive.outputs.name }}
+            ${{ steps.archive.outputs.legacy_name }}
 
       - name: Upload to release
         env:
@@ -139,7 +146,9 @@ jobs:
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name || inputs.tag }}" \
             "${{ steps.archive.outputs.name }}" \
-            "${{ steps.archive.outputs.name }}.sha256" --clobber
+            "${{ steps.archive.outputs.name }}.sha256" \
+            "${{ steps.archive.outputs.legacy_name }}" \
+            "${{ steps.archive.outputs.legacy_name }}.sha256" --clobber
 
   # macOS builds: compile on macos-latest (bun cross-compile from Linux produces
   # Mach-O binaries, but codesign + notarize require macOS + notarytool).
@@ -272,16 +281,23 @@ jobs:
       - name: Archive (GoReleaser-style name for mise asset scoring)
         id: archive
         run: |
+          cp -f linearctl lnr
           VER="${{ needs.release-please.outputs.tag_name || inputs.tag }}"
-          NAME="linearctl_${VER#v}_${{ matrix.asset }}.tar.gz"
-          tar -czf "$NAME" linearctl
+          NAME="lnr_${VER#v}_${{ matrix.asset }}.tar.gz"
+          LEGACY_NAME="linearctl_${VER#v}_${{ matrix.asset }}.tar.gz"
+          tar -czf "$NAME" lnr linearctl
           shasum -a 256 "$NAME" > "$NAME.sha256"
+          tar -czf "$LEGACY_NAME" linearctl lnr
+          shasum -a 256 "$LEGACY_NAME" > "$LEGACY_NAME.sha256"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "legacy_name=$LEGACY_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: ${{ steps.archive.outputs.name }}
+          subject-path: |
+            ${{ steps.archive.outputs.name }}
+            ${{ steps.archive.outputs.legacy_name }}
 
       - name: Upload to release
         env:
@@ -289,4 +305,6 @@ jobs:
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name || inputs.tag }}" \
             "${{ steps.archive.outputs.name }}" \
-            "${{ steps.archive.outputs.name }}.sha256" --clobber
+            "${{ steps.archive.outputs.name }}.sha256" \
+            "${{ steps.archive.outputs.legacy_name }}" \
+            "${{ steps.archive.outputs.legacy_name }}.sha256" --clobber

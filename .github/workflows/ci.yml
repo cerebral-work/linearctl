@@ -68,12 +68,56 @@ jobs:
       - name: Compile smoke
         run: |
           bun run build
+          ./dist/lnr --version
           ./dist/linearctl --version
-          ./dist/linearctl examples comment > "${RUNNER_TEMP}/linearctl-example.sh"
-          bash -n "${RUNNER_TEMP}/linearctl-example.sh"
-          grep -q -- "--body -" "${RUNNER_TEMP}/linearctl-example.sh"
+          ./dist/lnr examples comment > "${RUNNER_TEMP}/lnr-example.sh"
+          bash -n "${RUNNER_TEMP}/lnr-example.sh"
+          grep -q -- "--body -" "${RUNNER_TEMP}/lnr-example.sh"
           status=0
-          ./dist/linearctl bogus --help > "${RUNNER_TEMP}/unknown-help.out" 2> "${RUNNER_TEMP}/unknown-help.err" || status=$?
+          ./dist/lnr bogus --help > "${RUNNER_TEMP}/unknown-help.out" 2> "${RUNNER_TEMP}/unknown-help.err" || status=$?
           test "$status" -eq 2
           test ! -s "${RUNNER_TEMP}/unknown-help.out"
           grep -q "unknown command 'bogus'" "${RUNNER_TEMP}/unknown-help.err"
+
+  rust:
+    name: rust · fmt · clippy · test · deny
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-deny
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (-j 2)
+        run: cargo clippy --workspace --all-targets --locked -j 2 -- -D warnings
+
+      - name: Test (-j 2)
+        run: |
+          cargo test --workspace --locked -j 2
+          cargo test --doc --workspace --locked -j 2
+
+      - name: Cargo deny
+        run: cargo deny check
+
+      - name: Spec & toolchain checks (-j 2)
+        run: |
+          cargo run -q -p xtask --locked -j 2 -- spec-check
+          cargo run -q -p xtask --locked -j 2 -- toolchain-check

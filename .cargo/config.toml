@@ -1,0 +1,8 @@
+[alias]
+xtask = "run -q -p xtask --"
+
+[registries.crates-io]
+protocol = "sparse"
+
+[net]
+git-fetch-with-cli = true

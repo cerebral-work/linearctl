@@ -1,0 +1,54 @@
+# Cargo.toml for lnr (Linear CLI & Operator)
+# Host Throttling: Physical host ceres runs multiple active agent sessions.
+# All cargo invocations (in Makefile, moon tasks, scripts, and interactive runs)
+# MUST specify -j 2 to prevent memory exhaustion and CPU starvation.
+
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+edition = "2021"
+version = "0.21.1"
+rust-version = "1.85"
+publish = false
+license = "MIT"
+authors = ["Christian M. Todie <chris@todie.io>"]
+repository = "https://github.com/cerebral-work/lnr"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Estate Clippy restriction floor (EST-273)
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+unnecessary_map_or = "warn"
+
+[workspace.dependencies]
+# Derive (de)serialization for domain types and CLI output.
+serde = { version = "1", features = ["derive"] }
+# JSON output for the CLI.
+serde_json = "1"
+# Typed error enums in library crates.
+thiserror = "2"
+# Context-carrying errors in binaries and xtask.
+anyhow = "1"
+# Argument parsing for the CLI.
+clap = { version = "4", features = ["derive"] }
+# Structured logging facade.
+tracing = "0.1"
+# Log output and RUST_LOG filtering.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.dev]
+debug = "line-tables-only"

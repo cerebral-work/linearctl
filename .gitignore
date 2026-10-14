@@ -3,9 +3,17 @@ dist/
 *.tsbuildinfo
 
 # bun build / release artifacts
+/lnr
 /linearctl
 *.tar.gz
 *.sha256
+
+# Rust / moon build artifacts
+/target
+*.cdx.json
+junit.xml
+.moon/cache
+.tools/
 
 # never let a rendered secret ride along
 .env

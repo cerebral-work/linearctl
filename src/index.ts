@@ -61,9 +61,9 @@ import pkg from "../package.json";
 const program = new Command();
 
 program
-  .name("linearctl")
+  .name("lnr")
   .description(
-    "Headless CLI for frequently ad-hocced Linear workflows (built on @linear/sdk).",
+    "Headless CLI for frequently ad-hocced Linear workflows (built on @linear/sdk; compatibility alias: linearctl).",
   )
   .version(pkg.version);
 

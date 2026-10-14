@@ -26,9 +26,10 @@ RUN bun run build
 # Pinned by digest (canonical manifest) — no `latest` drift.
 FROM gcr.io/distroless/base-nossl-debian12:nonroot@sha256:be40c00dfabd86576d92666e87e406714d5618342de1a0c213ad232de255172e
 WORKDIR /app
+COPY --from=build /app/dist/lnr /app/lnr
 COPY --from=build /app/dist/linearctl /app/linearctl
 COPY --from=build /app/.linearctl /app/.linearctl
 USER nonroot:nonroot
-ENTRYPOINT ["/app/linearctl"]
+ENTRYPOINT ["/app/lnr"]
 # Default operator workload: boot both shipped roles, JSON output for logs.
 CMD ["operator", "--role", "intake-triage", "--role", "grooming", "--json"]
