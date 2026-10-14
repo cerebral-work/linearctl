@@ -736,7 +736,7 @@ pub struct PullIssue {
 }
 
 /// Issue surfaced by `lnr triage` with classification reasons.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TriageItem {
     /// Issue identifier.
@@ -751,10 +751,19 @@ pub struct TriageItem {
     pub assignee: Option<String>,
     /// Priority (`0..=4`).
     pub priority: u8,
+    /// Optional point estimate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<f64>,
     /// Reasons this issue needs triage (`"triage"`, `"unassigned"`, `"no-priority"`, `"unestimated"`).
     pub reasons: Vec<String>,
     /// Canonical URL.
     pub url: String,
+    /// Sorted issue label names.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Project name if assigned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// Compute triage reasons for an active issue.

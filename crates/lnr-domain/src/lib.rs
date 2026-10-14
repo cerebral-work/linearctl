@@ -32,6 +32,7 @@ pub mod error;
 pub mod examples;
 pub mod governance;
 pub mod handoff;
+pub mod intake;
 mod item;
 pub mod k8s;
 pub mod labels;

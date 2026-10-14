@@ -52,6 +52,7 @@ pub const EXAMPLES: &[(&str, &str)] = &[
     ("relate", include_str!("../../../examples/relate.sh")),
     ("beads", include_str!("../../../examples/beads.sh")),
     ("plan", include_str!("../../../examples/plan.sh")),
+    ("intake", include_str!("../../../examples/intake.sh")),
 ];
 
 /// Look up the embedded shell example script for `command`.
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn embeds_all_44_command_examples() {
-        assert_eq!(EXAMPLES.len(), 44);
+        assert_eq!(EXAMPLES.len(), 45);
         assert!(get_example("comment").unwrap().contains("--body -"));
         assert!(example_hint("file").contains("--desc -"));
     }

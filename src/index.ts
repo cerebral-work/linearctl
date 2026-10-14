@@ -55,6 +55,7 @@ import {
   beadsPlanCmd,
 } from "./commands/beads.js";
 import { planGenerateCmd, planScheduleCmd } from "./commands/plan.js";
+import { intakeCmd } from "./commands/intake.js";
 import { serve } from "./mcp/serve.js";
 import pkg from "../package.json";
 
@@ -966,6 +967,20 @@ reorgCmd
   .option("--include-already-applied", "also invert rows journaled alreadyApplied (changes the tool never wrote; skipped by default)")
   .option("--json", "emit JSON")
   .action((journal, opts) => reorgRollback(journal, opts));
+
+program
+  .command("intake")
+  .description("Translate Linear issues or triage items into escapement PlanSubmission payloads.")
+  .argument("[id]", "Linear issue identifier (e.g. ENG-123) for single-issue intake")
+  .option("--triage", "evaluate all untriaged/unstarted issues from the triage surface")
+  .option("--team <key...>", "restrict triage intake to team key(s)")
+  .option("--project <ref>", "restrict triage intake to a project (id or name)")
+  .option("--require-label <label...>", "require label(s) for intake eligibility (comma-separated or repeatable)")
+  .option("--all", "include filtered-out candidates and rejection reasons in output")
+  .option("--default-workflow <name>", "fallback escapement workflow name (default: feature)")
+  .option("--tokens-per-point <n>", "token budget per estimate point (default: 32000)")
+  .option("--json", "emit JSON")
+  .action((id, opts) => intakeCmd(id, opts));
 
 addExamples(program);
 await configureCli(program)();

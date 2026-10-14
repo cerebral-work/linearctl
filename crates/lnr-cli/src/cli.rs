@@ -11,6 +11,7 @@ use lnr_domain::closest::closest_command;
 use lnr_domain::error::{format_cli_error, CliError};
 use lnr_domain::examples::{example_command_names, example_hint, get_example, EXAMPLES};
 use lnr_domain::handoff::{handoff_body_skeleton, HandoffStatus, NewHandoff};
+use lnr_domain::intake::{evaluate_intake, IntakeCandidate, IntakePolicy};
 use lnr_domain::k8s::{
     emit_operator_crds_json, emit_operator_crds_yaml, reconcile_cr_manifest_json,
 };
@@ -69,6 +70,7 @@ pub const ROOT_COMMANDS: &[&str] = &[
     "help",
     "history",
     "initiative",
+    "intake",
     "issue",
     "label",
     "link",
@@ -420,6 +422,7 @@ fn dispatch(
         "search" => handle_search(rest, wants_json),
         "pull" => handle_pull(rest, wants_json),
         "triage" => handle_triage(rest, wants_json),
+        "intake" => handle_intake(rest, wants_json),
         "digest" => handle_digest(rest, wants_json),
         "standup" => handle_standup(rest, wants_json),
         "mine" => handle_mine(rest, wants_json),
@@ -1799,6 +1802,130 @@ fn handle_triage(args: &[String], wants_json: bool) -> Result<(), CliError> {
         &items,
         wants_json,
         &format!("{} issue(s) needing triage", items.len()),
+    );
+    Ok(())
+}
+
+fn handle_intake(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    let pos = positional_args(
+        args,
+        &[
+            "--team",
+            "--project",
+            "--require-label",
+            "--default-workflow",
+            "--tokens-per-point",
+            "--limit",
+        ],
+    );
+    let triage_mode = has_flag(args, "--triage");
+    let show_all = has_flag(args, "--all");
+    let issue_id = pos.first().cloned();
+    if issue_id.is_none() && !triage_mode {
+        return Err(CliError::usage(
+            "intake requires an issue <id> or --triage.",
+            format!("Example: {}", example_hint("intake")),
+        ));
+    }
+
+    let mut policy = IntakePolicy::default();
+    let required_labels: Vec<String> = flag_values(args, "--require-label")
+        .into_iter()
+        .flat_map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !required_labels.is_empty() {
+        policy.required_labels = required_labels;
+    }
+    if let Some(wf) = flag_value(args, "--default-workflow") {
+        let trimmed = wf.trim();
+        if !trimmed.is_empty() {
+            policy.default_workflow = trimmed.to_string();
+        }
+    }
+    if let Some(raw_tpp) = flag_value(args, "--tokens-per-point") {
+        let tpp = raw_tpp.parse::<u64>().map_err(|_| {
+            CliError::usage(
+                format!("invalid --tokens-per-point \"{raw_tpp}\""),
+                "Expected a positive integer.",
+            )
+        })?;
+        if tpp == 0 {
+            return Err(CliError::usage(
+                format!("invalid --tokens-per-point \"{raw_tpp}\""),
+                "Expected a positive integer.",
+            ));
+        }
+        policy.tokens_per_point = tpp;
+    }
+
+    let client = LinearClient::from_env()?;
+    if let Some(id) = issue_id {
+        if !triage_mode {
+            let candidate = client.intake_issue(&id)?;
+            let evaluation = evaluate_intake(&candidate, &policy);
+            if show_all || evaluation.submission.is_none() {
+                let summary = format!(
+                    "{}\teligible={}\treasons={}",
+                    evaluation.linear_issue_id,
+                    evaluation.eligible,
+                    evaluation.reasons.join("; ")
+                );
+                print_output(&evaluation, wants_json, &summary);
+            } else if let Some(sub) = &evaluation.submission {
+                let summary = format!(
+                    "{}\tworkflow={}\ttier={}\tmaxTokens={}\t{}",
+                    sub.linear_issue_id,
+                    sub.workflow,
+                    sub.tier.as_str(),
+                    sub.budget.max_tokens,
+                    sub.title
+                );
+                print_output(sub, wants_json, &summary);
+            }
+            return Ok(());
+        }
+    }
+
+    let (filter_input, _) = parse_search_filter_args(args)?;
+    for tk in &filter_input.team_keys {
+        if !tk.eq_ignore_ascii_case("all") {
+            let _ = client.resolve_team(tk)?;
+        }
+    }
+    let triage_items = client.triage_issues(build_issue_filter(&filter_input))?;
+    let evaluations: Vec<_> = triage_items
+        .iter()
+        .map(|item| {
+            let candidate = IntakeCandidate::from(item);
+            evaluate_intake(&candidate, &policy)
+        })
+        .collect();
+    if show_all {
+        let eligible_count = evaluations.iter().filter(|e| e.eligible).count();
+        print_output(
+            &evaluations,
+            wants_json,
+            &format!(
+                "Evaluated {} intake candidate(s) ({} eligible)",
+                evaluations.len(),
+                eligible_count
+            ),
+        );
+        return Ok(());
+    }
+    let submissions: Vec<_> = evaluations
+        .into_iter()
+        .filter_map(|e| if e.eligible { e.submission } else { None })
+        .collect();
+    print_output(
+        &submissions,
+        wants_json,
+        &format!("Emitted {} eligible PlanSubmission(s)", submissions.len()),
     );
     Ok(())
 }

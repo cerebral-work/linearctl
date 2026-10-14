@@ -8,6 +8,7 @@ use lnr_domain::closest::closest_names;
 use lnr_domain::error::{
     assert_batch_succeeded, classify_api_error, ApiErrorInput, BatchFailure, CliError,
 };
+use lnr_domain::intake::IntakeCandidate;
 use lnr_domain::labels::{pick_label_ids, NamedLabel};
 use lnr_domain::models::{
     build_batch_mutation, build_resolve_query, is_exhausted, is_uuid, parse_rate_limit_headers,
@@ -478,7 +479,37 @@ impl LinearClient {
                             "issue": {
                                 "id": "00000000-0000-4000-8000-000000000123",
                                 "identifier": "ENG-123",
-                                "title": "Fix timeout"
+                                "title": "Fix timeout",
+                                "priority": 2,
+                                "estimate": 3.0,
+                                "state": { "name": "Todo", "type": "unstarted" },
+                                "assignee": null,
+                                "project": { "name": "Core Platform" },
+                                "labels": { "nodes": [{ "name": "agent-eligible" }, { "name": "bug" }] }
+                            }
+                        }),
+                    })
+                } else if query.contains("TriageIssues") {
+                    Ok(RawGraphqlResponse {
+                        headers,
+                        data: json!({
+                            "issues": {
+                                "nodes": [
+                                    {
+                                        "id": "00000000-0000-4000-8000-000000000123",
+                                        "identifier": "ENG-123",
+                                        "title": "Fix timeout",
+                                        "description": "Investigate timeout in transport",
+                                        "url": "https://example.com/ENG-123",
+                                        "priority": 2,
+                                        "estimate": 3.0,
+                                        "updatedAt": "2026-10-14T00:00:00.000Z",
+                                        "state": { "name": "Todo", "type": "unstarted" },
+                                        "assignee": null,
+                                        "project": { "name": "Core Platform" },
+                                        "labels": { "nodes": [{ "name": "agent-eligible" }, { "name": "bug" }] }
+                                    }
+                                ]
                             }
                         }),
                     })
@@ -495,9 +526,11 @@ impl LinearClient {
                                         "description": "Investigate timeout in transport",
                                         "url": "https://example.com/ENG-123",
                                         "priority": 2,
+                                        "estimate": 3.0,
                                         "updatedAt": "2026-10-14T00:00:00.000Z",
                                         "state": { "name": "In Progress", "type": "started" },
                                         "assignee": { "displayName": "Alice", "name": "Alice" },
+                                        "project": { "name": "Core Platform" },
                                         "labels": { "nodes": [{ "name": "bug" }] }
                                     }
                                 ]
@@ -1380,6 +1413,8 @@ impl LinearClient {
                         estimate
                         state { name type }
                         assignee { displayName name }
+                        project { name }
+                        labels { nodes { name } }
                     }
                 }
             }",
@@ -1405,6 +1440,13 @@ impl LinearClient {
                 .and_then(|p| u8::try_from(p).ok())
                 .unwrap_or(0);
             let estimate = n.get("estimate").and_then(Value::as_f64);
+            let project = n.get("project").and_then(|p| opt_str_field(p, "name"));
+            let mut labels: Vec<String> = nodes_at(n, &["labels", "nodes"])
+                .iter()
+                .map(|l| str_field(l, "name"))
+                .filter(|s| !s.is_empty())
+                .collect();
+            labels.sort();
             let reasons = triage_reasons(&state_type, assignee.as_deref(), priority, estimate);
             if !reasons.is_empty() {
                 out.push(TriageItem {
@@ -1414,12 +1456,76 @@ impl LinearClient {
                     state_type,
                     assignee,
                     priority,
+                    estimate,
                     reasons,
                     url: str_field(n, "url"),
+                    labels,
+                    project,
                 });
             }
         }
         Ok(out)
+    }
+
+    /// Fetch a single issue as an `IntakeCandidate` (`lnr intake <id>`).
+    pub fn intake_issue(&self, id_or_identifier: &str) -> Result<IntakeCandidate, CliError> {
+        let data = self.execute(
+            "query IntakeIssue($id: String!) { issue(id: $id) { identifier title description url priority estimate state { name type } assignee { name displayName } team { key } project { name } labels { nodes { name } } } }",
+            json!({ "id": id_or_identifier }),
+        )?;
+        let n = data.get("issue").filter(|v| !v.is_null()).ok_or_else(|| {
+            CliError::not_found(
+                format!("issue \"{id_or_identifier}\" not found"),
+                "Try: linearctl search --text \"...\"",
+            )
+        })?;
+        let identifier = str_field(n, "identifier");
+        let state = n
+            .get("state")
+            .map(|s| str_field(s, "name"))
+            .unwrap_or_default();
+        let state_type = n
+            .get("state")
+            .map(|s| str_field(s, "type"))
+            .unwrap_or_default();
+        let assignee = n
+            .get("assignee")
+            .and_then(|a| opt_str_field(a, "displayName").or_else(|| opt_str_field(a, "name")));
+        let priority = n
+            .get("priority")
+            .and_then(Value::as_u64)
+            .and_then(|p| u8::try_from(p).ok())
+            .unwrap_or(0);
+        let estimate = n.get("estimate").and_then(Value::as_f64);
+        let team = n
+            .get("team")
+            .and_then(|t| opt_str_field(t, "key"))
+            .or_else(|| {
+                identifier
+                    .split_once('-')
+                    .map(|(prefix, _)| prefix.to_string())
+            });
+        let project = n.get("project").and_then(|p| opt_str_field(p, "name"));
+        let mut labels: Vec<String> = nodes_at(n, &["labels", "nodes"])
+            .iter()
+            .map(|l| str_field(l, "name"))
+            .filter(|s| !s.is_empty())
+            .collect();
+        labels.sort();
+        Ok(IntakeCandidate {
+            identifier,
+            title: str_field(n, "title"),
+            description: opt_str_field(n, "description"),
+            url: opt_str_field(n, "url"),
+            team,
+            project,
+            priority,
+            estimate,
+            state,
+            state_type,
+            labels,
+            assignee,
+        })
     }
 
     /// Wire issue relations (`lnr relate <id> --blocked-by ... --blocking ... --related-to ... --duplicate-of ...`).
