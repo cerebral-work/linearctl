@@ -54,6 +54,7 @@ pub const ROOT_COMMANDS: &[&str] = &[
     "digest",
     "doc",
     "dupcheck",
+    "estate-diag",
     "examples",
     "file",
     "handoff",
@@ -77,6 +78,7 @@ pub const ROOT_COMMANDS: &[&str] = &[
     "relate",
     "release-notes",
     "reorg",
+    "rerank",
     "review-flow",
     "roadmap",
     "search",
@@ -199,7 +201,9 @@ fn render_root_help(version: &str) -> String {
          \x20 show            Show full details for an issue\n\
          \x20 search          Search issues\n\
          \x20 search-bm25     Rank local Beads issues with XERJ-derived BM25 scoring\n\
+         \x20 rerank          Second-stage lexical judge reranking and min-p filtering\n\
          \x20 dbr             Evaluate Little's Law & Drum-Buffer-Rope queue admission\n\
+         \x20 estate-diag     Evaluate Cobham M/G/1, Graicunas/Garicano, and 5-Subject diagnostics\n\
          \x20 review-flow     Plan a Linear Code Review Saga flow with CAS handoff key\n\
          \x20 dupcheck        Check for likely duplicate issues\n\
          \x20 project         List, create, or update Linear projects\n\
@@ -408,6 +412,8 @@ fn dispatch(
         "search-bm25" => handle_search_bm25(rest, wants_json),
         "dbr" => handle_dbr(rest, wants_json),
         "review-flow" => handle_review_flow(rest, wants_json),
+        "estate-diag" => handle_estate_diag(rest, wants_json),
+        "rerank" => handle_rerank(rest, wants_json),
         _ => {
             let client = LinearClient::from_env()?;
             if let Some(tk) = flag_value(rest, "--team") {
@@ -1533,6 +1539,94 @@ fn handle_review_flow(args: &[String], wants_json: bool) -> Result<(), CliError>
             "Review flow {} (run {}, critical path {}s, gate {})",
             receipt.flow_id, receipt.run_id, receipt.makespan_secs, receipt.gate_id
         ),
+    );
+    Ok(())
+}
+
+fn handle_estate_diag(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    use lnr_domain::enterprise::{MeshCellDiagnostic, SubjectMatterMesh};
+    use lnr_domain::math::{default_fleet_profile, evaluate_cobham_mg1};
+    use lnr_domain::org_psych::FiveSubjectSuiteReport;
+
+    let agents = flag_value(args, "--agents")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(5);
+    let switch_cost_sec = flag_value(args, "--switch-cost")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(18.0);
+    let cobham = evaluate_cobham_mg1(&default_fleet_profile(agents, true), switch_cost_sec);
+    let w26_before = MeshCellDiagnostic::evaluate(
+        SubjectMatterMesh::OrchestrationAndMemory,
+        19,
+        19,
+        switch_cost_sec,
+    );
+    let pods_after = MeshCellDiagnostic::evaluate(
+        SubjectMatterMesh::ControlAndGovernance,
+        agents,
+        1,
+        switch_cost_sec,
+    );
+    let five_subject = FiveSubjectSuiteReport::evaluate_live_estate(
+        agents,
+        567,
+        250,
+        5,
+        cobham.effective_utilization,
+    );
+    let out = json!({
+        "cobham": cobham,
+        "w26_star_hub_before": w26_before,
+        "canonical_five_pods_after": pods_after,
+        "five_subject_suite": five_subject,
+    });
+    print_output(
+        &out,
+        wants_json,
+        &format!(
+            "Estate diag: Cobham rho={:.2}, Graicunas reduction {} -> {} relationships",
+            cobham.effective_utilization,
+            w26_before.graicunas.total_relationships,
+            pods_after.graicunas.total_relationships
+        ),
+    );
+    Ok(())
+}
+
+fn handle_rerank(args: &[String], wants_json: bool) -> Result<(), CliError> {
+    use lnr_domain::vector_rerank::{judge_and_filter, JudgeCandidate};
+
+    let pos = positional_args(args, &["--query", "--limit", "--min-p"]);
+    let query = flag_value(args, "--query")
+        .or_else(|| pos.first().cloned())
+        .ok_or_else(|| {
+            CliError::usage(
+                "rerank requires a <query> string.",
+                "Example: linearctl rerank \"bm25 tokenizer\" --json",
+            )
+        })?;
+    let min_p = flag_value(args, "--min-p").and_then(|s| s.parse::<f64>().ok());
+
+    let issues = load_beads_issues()?;
+    let candidates: Vec<JudgeCandidate> = issues
+        .iter()
+        .enumerate()
+        .map(|(ordinal, i)| JudgeCandidate {
+            ordinal,
+            title: Some(i.title.clone()),
+            text: i.description.clone().unwrap_or_default(),
+        })
+        .collect();
+    let ranked = judge_and_filter(&query, &candidates, min_p);
+    let out = json!({
+        "query": query,
+        "count": ranked.len(),
+        "candidates": ranked,
+    });
+    print_output(
+        &out,
+        wants_json,
+        &format!("{} reranked candidate(s)", ranked.len()),
     );
     Ok(())
 }

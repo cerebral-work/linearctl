@@ -421,6 +421,12 @@ impl FlowGraph {
         })
     }
 
+    /// Look up a step by its identifier.
+    #[must_use]
+    pub fn step(&self, id: &str) -> Option<&SagaStep> {
+        self.steps.iter().find(|s| s.id == id)
+    }
+
     /// Return steps in deterministic topologically sorted order.
     #[must_use]
     pub fn topological_order(&self) -> Vec<&SagaStep> {

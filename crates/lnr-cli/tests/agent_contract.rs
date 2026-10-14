@@ -389,6 +389,18 @@ fn mcp_serve_responds_to_initialize_and_tools_list() {
     assert!(tools
         .iter()
         .any(|t| t["name"].as_str() == Some("review_flow")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("estate_diagnostic")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("lexical_rerank")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("link_detect")));
+    assert!(tools
+        .iter()
+        .any(|t| t["name"].as_str() == Some("audit_verify")));
 
     let q_resp: Value = serde_json::from_str(lines[2]).unwrap();
     assert!(q_resp["result"]["content"][0]["text"]
@@ -419,4 +431,12 @@ fn borrowed_researchd_and_xerj_cli_commands_work() {
     let rev_json: Value = serde_json::from_str(&rev.out).unwrap();
     assert_eq!(rev_json["flow_id"].as_str(), Some("linear-code-review"));
     assert_eq!(rev_json["gate_id"].as_str(), Some("linear:code-review"));
+
+    let diag = run_lnr(&["estate-diag", "--agents", "5", "--json"], "", None);
+    assert_eq!(diag.code, 0, "stderr={}", diag.err);
+    let diag_json: Value = serde_json::from_str(&diag.out).unwrap();
+    assert_eq!(
+        diag_json["canonical_five_pods_after"]["graicunas"]["total_relationships"].as_u64(),
+        Some(100)
+    );
 }
