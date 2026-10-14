@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.0](https://github.com/cerebral-work/lnr/compare/v0.26.0...v0.27.0) (2026-10-14)
+
+
+### Features
+
+* **operator:** add Kubernetes CRDs, Blackwall digest format, and Helm MCP bridge ([1bb3e4f](https://github.com/cerebral-work/lnr/commit/1bb3e4f291423aed79ca09970833f56378096ff6))
+* **operator:** add Kubernetes CRDs, Blackwall digest format, and Helm MCP bridge ([04a098a](https://github.com/cerebral-work/lnr/commit/04a098a4d885cdd90896392733bc3c4f09768988))
+
 ## [0.26.0](https://github.com/cerebral-work/lnr/compare/v0.25.0...v0.26.0) (2026-10-14)
 
 
