@@ -529,3 +529,192 @@ pub fn save_beads_issues(
     }
     Ok(jsonl_path)
 }
+
+// ---------------------------------------------------------------------------
+// Local Cache Store & Operator Socket Helpers
+// ---------------------------------------------------------------------------
+
+/// Return the default local cache database path (`LINEARCTL_CACHE_DB` or `~/.local/state/linearctl/cache.db`).
+#[must_use]
+pub fn cache_db_path(override_path: Option<&str>) -> PathBuf {
+    if let Some(p) = override_path.map(str::trim).filter(|s| !s.is_empty()) {
+        return PathBuf::from(p);
+    }
+    for env_key in ["LINEARCTL_CACHE_DB", "LNR_CACHE_DB"] {
+        if let Ok(val) = std::env::var(env_key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
+    let base = std::env::var("XDG_STATE_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|h| h.join(".local").join("state")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    base.join("linearctl").join("cache.db")
+}
+
+/// Remove the local cache file (plus `-wal`, `-shm`, and `.json` sidecars) and return the number of files deleted.
+#[must_use]
+pub fn clear_cache_files(override_path: Option<&str>) -> (PathBuf, usize) {
+    let primary = cache_db_path(override_path);
+    let p_str = primary.display().to_string();
+    let candidates = [
+        primary.clone(),
+        PathBuf::from(format!("{p_str}-wal")),
+        PathBuf::from(format!("{p_str}-shm")),
+        PathBuf::from(format!("{p_str}.json")),
+    ];
+    let mut removed = 0usize;
+    for cand in &candidates {
+        if cand.exists() && fs::remove_file(cand).is_ok() {
+            removed += 1;
+        }
+    }
+    (primary, removed)
+}
+
+/// Snapshot of local cache status returned by `lnr cache status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStatusSnapshot {
+    /// Path to the cache database file.
+    pub db_path: String,
+    /// Size of the cache file on disk in bytes.
+    pub size_bytes: u64,
+    /// Last synchronization timestamp (ISO-8601) if available.
+    pub last_sync_at: Option<String>,
+    /// Entity counts.
+    pub counts: CacheEntityCounts,
+}
+
+/// Entity counts inside [`CacheStatusSnapshot`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheEntityCounts {
+    /// Cached issues count.
+    pub issues: usize,
+    /// Cached teams count.
+    pub teams: usize,
+    /// Cached workflow states count.
+    pub workflow_states: usize,
+    /// Cached issue labels count.
+    pub issue_labels: usize,
+    /// Cached projects count.
+    pub projects: usize,
+    /// Cached project milestones count.
+    pub project_milestones: usize,
+    /// Cached cycles count.
+    pub cycles: usize,
+    /// Cached issue relations count.
+    pub issue_relations: usize,
+    /// Cached users count.
+    pub users: usize,
+}
+
+/// Persist pulled issues into a JSON sidecar alongside the cache DB path and return [`CacheStatusSnapshot`].
+pub fn save_cached_issues(
+    override_path: Option<&str>,
+    issues: &[lnr_domain::models::PullIssue],
+    teams_count: usize,
+) -> Result<CacheStatusSnapshot, CliError> {
+    let db = cache_db_path(override_path);
+    if let Some(parent) = db.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let sidecar = PathBuf::from(format!("{}.json", db.display()));
+    let synced_at = now_iso();
+    let payload = serde_json::json!({
+        "lastSyncAt": synced_at,
+        "teamsCount": teams_count,
+        "issues": issues,
+    });
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+    fs::write(&sidecar, &text).map_err(|e| {
+        CliError::other(
+            format!("failed writing cache {}: {e}", sidecar.display()),
+            "",
+        )
+    })?;
+    if !db.exists() {
+        let _ = fs::write(&db, &text);
+    }
+    Ok(cache_status_snapshot(override_path))
+}
+
+/// Inspect local cache metadata and counts without requiring network access.
+#[must_use]
+pub fn cache_status_snapshot(override_path: Option<&str>) -> CacheStatusSnapshot {
+    let db = cache_db_path(override_path);
+    let sidecar = PathBuf::from(format!("{}.json", db.display()));
+    let size_bytes = fs::metadata(&db)
+        .or_else(|_| fs::metadata(&sidecar))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let mut counts = CacheEntityCounts::default();
+    let mut last_sync_at = None;
+    if let Ok(raw) = fs::read_to_string(&sidecar).or_else(|_| fs::read_to_string(&db)) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+            last_sync_at = val
+                .get("lastSyncAt")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            counts.issues = val
+                .get("issues")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            counts.teams = val
+                .get("teamsCount")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(0);
+        }
+    }
+    CacheStatusSnapshot {
+        db_path: db.display().to_string(),
+        size_bytes,
+        last_sync_at,
+        counts,
+    }
+}
+
+/// Load cached [`lnr_domain::models::PullIssue`] records from the local cache sidecar.
+#[must_use]
+pub fn load_cached_issues(override_path: Option<&str>) -> Vec<lnr_domain::models::PullIssue> {
+    let db = cache_db_path(override_path);
+    let sidecar = PathBuf::from(format!("{}.json", db.display()));
+    let Ok(raw) = fs::read_to_string(&sidecar).or_else(|_| fs::read_to_string(&db)) else {
+        return Vec::new();
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    val.get("issues")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+/// Return the default operator Unix domain socket path (`~/.local/state/linearctl/operator.sock`).
+#[must_use]
+pub fn operator_socket_path(override_path: Option<&str>) -> PathBuf {
+    if let Some(p) = override_path.map(str::trim).filter(|s| !s.is_empty()) {
+        return PathBuf::from(p);
+    }
+    if let Ok(env_sock) = std::env::var("LINEARCTL_OPERATOR_SOCKET") {
+        let trimmed = env_sock.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    let base = std::env::var("XDG_STATE_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|h| h.join(".local").join("state")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    base.join("linearctl").join("operator.sock")
+}

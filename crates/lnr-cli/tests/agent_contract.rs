@@ -440,3 +440,113 @@ fn borrowed_researchd_and_xerj_cli_commands_work() {
         Some(100)
     );
 }
+
+#[test]
+fn ported_linear_and_cache_commands_work_end_to_end() {
+    let search = run_lnr(
+        &["search", "--team", "ENG", "--text", "timeout", "--json"],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(search.code, 0, "stderr={}", search.err);
+    let search_json: Value = serde_json::from_str(&search.out).unwrap();
+    assert_eq!(search_json[0]["identifier"].as_str(), Some("ENG-123"));
+
+    let pull = run_lnr(&["pull", "--team", "ENG", "--json"], "", Some("mock"));
+    assert_eq!(pull.code, 0, "stderr={}", pull.err);
+    let pull_json: Value = serde_json::from_str(&pull.out).unwrap();
+    assert_eq!(pull_json[0]["labels"][0].as_str(), Some("bug"));
+
+    let digest = run_lnr(&["digest", "--since", "24h", "--json"], "", Some("mock"));
+    assert_eq!(digest.code, 0, "stderr={}", digest.err);
+    let digest_json: Value = serde_json::from_str(&digest.out).unwrap();
+    assert_eq!(digest_json["total"].as_u64(), Some(1));
+
+    let standup = run_lnr(&["standup", "--since", "24h", "--json"], "", Some("mock"));
+    assert_eq!(standup.code, 0, "stderr={}", standup.err);
+    let standup_json: Value = serde_json::from_str(&standup.out).unwrap();
+    assert!(standup_json["markdown"]
+        .as_str()
+        .unwrap()
+        .contains("ENG-123"));
+
+    let mine = run_lnr(&["mine", "--json"], "", Some("mock"));
+    assert_eq!(mine.code, 0, "stderr={}", mine.err);
+
+    let relate = run_lnr(
+        &[
+            "relate",
+            "ENG-123",
+            "--blocked-by",
+            "ENG-100",
+            "--related-to",
+            "ENG-101",
+            "--json",
+        ],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(relate.code, 0, "stderr={}", relate.err);
+    let relate_json: Value = serde_json::from_str(&relate.out).unwrap();
+    assert_eq!(
+        relate_json["relations"]["blockedBy"][0].as_str(),
+        Some("ENG-100")
+    );
+
+    let link = run_lnr(
+        &[
+            "link",
+            "ENG-123",
+            "https://github.com/cerebral-work/lnr/pull/226",
+            "--title",
+            "PR #226",
+            "--json",
+        ],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(link.code, 0, "stderr={}", link.err);
+
+    let hist = run_lnr(&["history", "ENG-123", "--json"], "", Some("mock"));
+    assert_eq!(hist.code, 0, "stderr={}", hist.err);
+    let hist_json: Value = serde_json::from_str(&hist.out).unwrap();
+    assert_eq!(hist_json["events"].as_array().unwrap().len(), 1);
+
+    let cycle = run_lnr(&["cycle", "--team", "ENG", "--json"], "", Some("mock"));
+    assert_eq!(cycle.code, 0, "stderr={}", cycle.err);
+    let cycle_json: Value = serde_json::from_str(&cycle.out).unwrap();
+    assert_eq!(cycle_json["cycle"]["number"].as_u64(), Some(12));
+
+    let op = run_lnr(&["operator", "--check", "--json"], "", None);
+    assert_eq!(op.code, 0, "stderr={}", op.err);
+    let op_json: Value = serde_json::from_str(&op.out).unwrap();
+    assert_eq!(op_json["ok"].as_bool(), Some(true));
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("lnr-cache-test-{nanos}.db"));
+    let db_str = db_path.to_str().unwrap();
+
+    let sync = run_lnr(
+        &["cache", "sync", "--db", db_str, "--json"],
+        "",
+        Some("mock"),
+    );
+    assert_eq!(sync.code, 0, "stderr={}", sync.err);
+
+    let query = run_lnr(
+        &[
+            "cache", "query", "--db", db_str, "--text", "timeout", "--json",
+        ],
+        "",
+        None,
+    );
+    assert_eq!(query.code, 0, "stderr={}", query.err);
+    let query_json: Value = serde_json::from_str(&query.out).unwrap();
+    assert_eq!(query_json.as_array().unwrap().len(), 1);
+
+    let clear = run_lnr(&["cache", "clear", "--db", db_str, "--json"], "", None);
+    assert_eq!(clear.code, 0, "stderr={}", clear.err);
+}

@@ -28,8 +28,12 @@ build: build-ts build-rust ## Build compiled CLI binaries (dist/lnr, dist/linear
 build-ts: ## Build compiled Bun single-binary (dist/lnr + dist/linearctl alias)
 	bun run build
 
-build-rust: ## Build the Rust workspace (-j 2)
+build-rust: ## Build the Rust workspace (-j 2) and install native binary to dist/lnr + dist/linearctl
 	cargo build --workspace --locked -j $(JOBS)
+	mkdir -p dist
+	target_dir="$$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)"
+	cp -f "$$target_dir/debug/lnr" dist/lnr
+	cp -f "$$target_dir/debug/lnr" dist/linearctl
 
 ##@ Quality & Gates
 
