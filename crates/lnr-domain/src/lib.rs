@@ -24,15 +24,21 @@
 
 pub mod beads;
 pub mod bm25;
+pub mod claims;
 pub mod closest;
 pub mod crypto;
+pub mod enterprise;
 pub mod error;
 pub mod examples;
+pub mod governance;
 pub mod handoff;
 mod item;
 pub mod labels;
+pub mod links;
 pub mod loops;
+pub mod math;
 pub mod models;
+pub mod org_psych;
 pub mod plan;
 pub mod priority;
 mod repository;
@@ -44,6 +50,7 @@ pub mod story;
 pub mod template;
 pub mod time;
 pub mod token_budget;
+pub mod vector_rerank;
 pub mod versionset;
 pub mod workstream;
 

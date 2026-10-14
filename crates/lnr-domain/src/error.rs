@@ -76,6 +76,32 @@ pub enum DomainError {
     /// A security containment, capability attenuation, or governance invariant failed.
     #[error("security violation: {0}")]
     SecurityViolation(String),
+
+    /// A required claim, finding, or paper field was empty or missing.
+    #[error("missing required field: {0}")]
+    MissingClaimField(&'static str),
+
+    /// A non-ASCII byte was found at the given byte offset.
+    #[error("non-ASCII byte at offset {0}")]
+    NonAscii(usize),
+
+    /// Invalid finding type string.
+    #[error("invalid finding type {0:?}; expected empirical, theoretical, or synthesis")]
+    InvalidType(String),
+
+    /// Invalid finding status string.
+    #[error("invalid finding status {0:?}; expected verified, provisional, or refuted")]
+    InvalidStatus(String),
+
+    /// Invalid ISO-8601 date string.
+    #[error("invalid date {0:?}; expected YYYY-MM-DD")]
+    InvalidDate(String),
+
+    /// Invalid source citation string.
+    #[error(
+        "invalid source citation {0:?}; expected owner/repo@sha:path, arxiv:, doi:, or https://"
+    )]
+    InvalidSource(String),
 }
 
 /// Stable CLI failure category mapped to a deterministic process exit code.

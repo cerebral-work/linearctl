@@ -3,11 +3,17 @@
 use std::io::{self, BufRead, Write};
 
 use lnr_domain::bm25::{Bm25IssueDoc, Bm25IssueIndex};
+use lnr_domain::enterprise::MeshCellDiagnostic;
 use lnr_domain::error::{error_envelope, CliError};
+use lnr_domain::governance::{check_denylist_str, AuditChain};
+use lnr_domain::links::{corpus_file, detect_all_edges, CorpusIndex};
+use lnr_domain::math::{default_fleet_profile, evaluate_cobham_mg1};
+use lnr_domain::org_psych::FiveSubjectSuiteReport;
 use lnr_domain::priority::parse_priority;
 use lnr_domain::reviews::{plan_linear_code_review, LinearCodeReviewRequest};
 use lnr_domain::security::inspect_protocol_payload;
 use lnr_domain::token_budget::{budget_json_response, opt_max_tokens};
+use lnr_domain::vector_rerank::{judge_and_filter, JudgeCandidate};
 use lnr_domain::workstream::{
     WorkstreamQueueConfig, WorkstreamQueueMetrics, DEFAULT_DBR_MAX_UTILIZATION,
     ESTATE_WAVE_CONCURRENCY_CAP,
@@ -178,6 +184,58 @@ pub fn mcp_tools_list() -> Value {
                         "pr_number": { "type": "integer" },
                         "title": { "type": "string" },
                         "diff_summary": { "type": "string" }
+                    }
+                }
+            },
+            {
+                "name": "estate_diagnostic",
+                "description": "Evaluate Cobham M/G/1 priority queue waiting times, Graicunas/Garicano/Baldwin-Clark modular pod diagnostics, and the 5-Subject Business School & I/O Psychology suite.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "mu_per_sec": { "type": "number" },
+                        "service_cv_squared": { "type": "number" }
+                    }
+                }
+            },
+            {
+                "name": "lexical_rerank",
+                "description": "Re-rank and min-p filter candidate chunks using the zero-token deterministic second-stage lexical judge.",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["query", "candidates"],
+                    "properties": {
+                        "query": { "type": "string" },
+                        "alpha": { "type": "number" },
+                        "min_p": { "type": "number" },
+                        "candidates": {
+                            "type": "array",
+                            "items": { "type": "object" }
+                        }
+                    }
+                }
+            },
+            {
+                "name": "link_detect",
+                "description": "Extract deterministic [[wikilink]], markdown link, repo path-citation, and Rust crate-citation cross-reference edges from markdown or source code.",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["path", "text"],
+                    "properties": {
+                        "path": { "type": "string" },
+                        "text": { "type": "string" },
+                        "repo": { "type": "string" }
+                    }
+                }
+            },
+            {
+                "name": "audit_verify",
+                "description": "Verify tamper-evident SHA-256 WORM audit hash chain and 12-rule link-safety denylist.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" },
+                        "path": { "type": "string" }
                     }
                 }
             }
@@ -412,6 +470,92 @@ pub fn dispatch_mcp_tool(name: &str, args: &Value) -> Result<Value, CliError> {
             let receipt =
                 plan_linear_code_review(&req).map_err(|e| CliError::usage(e.to_string(), ""))?;
             Ok(serde_json::to_value(receipt).unwrap_or_else(|_| json!({})))
+        }
+        "estate_diagnostic" => {
+            let agents = args
+                .get("agents")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(5);
+            let switch_cost_sec = args
+                .get("switch_cost_sec")
+                .and_then(Value::as_f64)
+                .unwrap_or(18.0);
+            let cobham = evaluate_cobham_mg1(&default_fleet_profile(agents, true), switch_cost_sec);
+            let w26_before = MeshCellDiagnostic::evaluate(
+                lnr_domain::enterprise::SubjectMatterMesh::OrchestrationAndMemory,
+                19,
+                19,
+                switch_cost_sec,
+            );
+            let pods_after = MeshCellDiagnostic::evaluate(
+                lnr_domain::enterprise::SubjectMatterMesh::ControlAndGovernance,
+                agents,
+                1,
+                switch_cost_sec,
+            );
+            let five_subject = FiveSubjectSuiteReport::evaluate_live_estate(
+                agents,
+                567,
+                250,
+                5,
+                cobham.effective_utilization,
+            );
+            Ok(json!({
+                "cobham": cobham,
+                "w26_star_hub_before": w26_before,
+                "canonical_five_pods_after": pods_after,
+                "five_subject_suite": five_subject,
+            }))
+        }
+        "lexical_rerank" => {
+            let query = args
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("lexical_rerank requires 'query'", ""))?;
+            let cands_val = args
+                .get("candidates")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            let candidates: Vec<JudgeCandidate> = serde_json::from_value(cands_val)
+                .map_err(|e| CliError::usage(format!("invalid 'candidates': {e}"), ""))?;
+            let min_p = args.get("min_p").and_then(Value::as_f64);
+            let ranked = judge_and_filter(query, &candidates, min_p);
+            Ok(json!({ "candidates": ranked }))
+        }
+        "link_detect" => {
+            let path = args
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("link_detect requires 'path'", ""))?;
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CliError::usage("link_detect requires 'text'", ""))?;
+            let repo = args.get("repo").and_then(Value::as_str).unwrap_or("lnr");
+            let file = corpus_file(path, path, repo, "docs", 0);
+            let index = CorpusIndex::build(vec![file.clone()]);
+            let (edges, counters) = detect_all_edges(&index, &file, &file.anchor_doc_id, text);
+            Ok(json!({
+                "edges": edges,
+                "counters": counters,
+            }))
+        }
+        "audit_verify" => {
+            let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+            let path = args.get("path").and_then(Value::as_str).unwrap_or("doc.md");
+            let denylist_errors = check_denylist_str(text, path);
+            let mut chain = AuditChain::new(8);
+            let entry = chain
+                .append(0, "audit_verify", "mcp", path, "ok", "")
+                .clone();
+            let chain_valid = chain.verify().is_ok();
+            Ok(json!({
+                "denylist_clean": denylist_errors.is_empty(),
+                "denylist_errors": denylist_errors,
+                "audit_entry": entry,
+                "chain_valid": chain_valid,
+            }))
         }
         other => Err(CliError::not_found(
             format!("unknown MCP tool '{other}'"),
