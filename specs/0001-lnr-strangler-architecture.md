@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 created: 2026-10-13
 tags: [architecture, rust, cli, rename]
 priority: high
